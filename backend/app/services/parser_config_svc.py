@@ -40,6 +40,10 @@ class ParserConfig(BaseModel):
         ge=0,
         description="종료 페이지 번호 (0-indexed)",
     )
+    preserve_newlines: bool = Field(
+        default=True,
+        description="파싱/문장 단위 줄바꿈 보존 여부",
+    )
 
 
 def get_default_parser_config() -> ParserConfig:
@@ -52,6 +56,7 @@ def get_default_parser_config() -> ParserConfig:
         all_pages=True,
         start_page=0,
         end_page=2,
+        preserve_newlines=True,
     )
 
 

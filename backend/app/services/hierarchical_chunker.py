@@ -110,17 +110,87 @@ class HierarchicalChunker:
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
 
-    @staticmethod
-    def normalize_parent_text(text: str) -> str:
+    @classmethod
+    def repair_soft_wraps(cls, text: str) -> str:
+        """
+        PDF 너비 한계(Column Width) 및 OCR 레이아웃으로 인해 발생한
+        단순 줄바꿈(Soft-wrap)을 단일 공백으로 치환하여 문장을 복원하고,
+        의미 있는 구조적 경계(조항, 항·호, 번호 목록, 문장 종결)의 줄바꿈은 보존합니다.
+        """
+        if not text:
+            return ""
+
+        # 1. 영문 하이픈 줄바꿈 복원 (e.g., 'multi-\nlingual' -> 'multilingual')
+        text = re.sub(r'(\w+)-\s*[\r\n]+\s*(\w+)', r'\1\2', text)
+
+        # 2. 줄 단위로 분할
+        raw_lines = [l.strip() for l in text.splitlines()]
+        lines = [l for l in raw_lines if l]
+        if not lines:
+            return ""
+
+        # 구조적 시작 정규식
+        re_struct_start = re.compile(
+            r'^(?:'
+            r'제\s*\d+\s*조(?:\s*\([^)]+\))?|'   # 제1조, 제1조(목적)
+            r'부\s*칙|별\s*[표지]|'             # 부칙, 별표
+            r'[①-⑳]|'                         # ① ~ ⑳
+            r'\d+\.\s*|'                       # 1. 2.
+            r'[가-하]\.\s*|'                   # 가. 나.
+            r'\(\d+\)|'                        # (1) (2)
+            r'\([가-하]\)|'                    # (가) (나)
+            r'[-*•※■▶◆○●]\s*|'               # 불릿 기호
+            r'#{1,6}\s*|'                      # 마크다운 헤딩
+            r'<table|\|'                       # 표 시작
+            r')'
+        )
+
+        # 문장 종결 정규식
+        re_sentence_end = re.compile(
+            r'(?:'
+            r'(?:다|음|함|임|됨|시오|세|요|까|냐)\.|'  # 한국어 종결어미 + 마침표
+            r'[.!?]|'                                 # 일반 종결 기호
+            r'<개정\s*[^>]+>|'                         # <개정 2022.6.9.>
+            r'\[본조신설\s*[^\]]+\]|'                  # [본조신설 ...]
+            r':$'                                     # 콜론
+            r')[)\]"\'”’]*$'
+        )
+
+        result_lines: List[str] = []
+        curr_line = lines[0]
+
+        for next_line in lines[1:]:
+            is_b_struct = bool(re_struct_start.match(next_line))
+            is_a_end = bool(re_sentence_end.search(curr_line))
+
+            if is_b_struct or is_a_end:
+                result_lines.append(curr_line)
+                curr_line = next_line
+            else:
+                # Soft-wrap: 단일 공백으로 결합
+                curr_line = f"{curr_line} {next_line}"
+                curr_line = re.sub(r'[ \t]+', ' ', curr_line)
+
+        result_lines.append(curr_line)
+        return "\n".join(result_lines)
+
+    @classmethod
+    def normalize_parent_text(cls, text: str, preserve_newlines: bool = False) -> str:
         """
         LLM 답변 생성용(Parent Chunk) 문맥 텍스트 정규화.
         - 문단 간 구분(\\n\\n) 및 목록 번호/조항 앞 개행은 보존
         - 문장 중간에 너비 한계로 인해 들어간 단순 줄바꿈은 단일 공백으로 연결
+        - preserve_newlines=True인 경우 soft-wrap을 보정하고 문장/구조적 줄바꿈은 보존
         """
         if not text:
             return ""
         # 1. 영문 하이픈 줄바꿈 복원
         text = re.sub(r'(\w+)-\s*[\r\n]+\s*(\w+)', r'\1\2', text)
+
+        if preserve_newlines:
+            paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
+            cleaned_paragraphs = [cls.repair_soft_wraps(para) for para in paragraphs if para]
+            return '\n\n'.join(cleaned_paragraphs).strip()
 
         # 2. 단락 단위(\\n\\s*\\n)로 분할
         paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
@@ -178,6 +248,8 @@ class HierarchicalChunker:
 
         # 영문/숫자 하이픈 줄바꿈 사전 복원 (e.g. multi-\nlingual -> multilingual)
         clean_text = re.sub(r'(\w+)-\s*[\r\n]+\s*(\w+)', r'\1\2', clean_text)
+        # PDF 너비 한계에 의한 단순 개행(Soft-wrap) 자동 보정
+        clean_text = cls.repair_soft_wraps(clean_text)
 
         # 1단계: 법률 모드일 경우 항·호 단위 1차 분할
         if is_legal:
@@ -303,20 +375,24 @@ class HierarchicalChunker:
         res_text = "\n".join(lines).strip()
         return res_text
 
-    def __init__(self, doc_id: Optional[str] = None, filter_headers_footers: bool = True):
+    def __init__(self, doc_id: Optional[str] = None, filter_headers_footers: bool = True, preserve_newlines: bool = False):
         self.doc_id = self.generate_doc_id(doc_id)
         self.filter_headers_footers = filter_headers_footers
+        self.preserve_newlines = preserve_newlines
 
     def chunk_content_list(
         self,
         content_list: List[Any],
         doc_title: str = "Document",
-        strategy: str = "general"
+        strategy: str = "general",
+        preserve_newlines: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         MinerU의 content_list를 순회하여 정규 3단계 계층 구조
         (Section - Parent Chunk - Child Chunk)를 생성합니다.
         """
+        if preserve_newlines is not None:
+            self.preserve_newlines = preserve_newlines
         if not content_list:
             return {
                 "doc_id": self.doc_id,
@@ -831,7 +907,21 @@ class HierarchicalChunker:
             if not current_text_units:
                 return
 
-            full_child_text = self.normalize_text_for_embedding(" ".join(current_text_units))
+            cleaned_units = [u.strip() for u in current_text_units if u.strip()]
+            if not cleaned_units:
+                current_text_units = []
+                current_tokens = 0
+                current_start_page = None
+                current_end_page = None
+                return
+
+            if self.preserve_newlines:
+                full_child_text = "\n".join(
+                    self.normalize_text_for_embedding(u) for u in cleaned_units if u
+                )
+            else:
+                full_child_text = self.normalize_text_for_embedding(" ".join(cleaned_units))
+
             if not full_child_text:
                 current_text_units = []
                 current_tokens = 0
@@ -1023,7 +1113,7 @@ class HierarchicalChunker:
             bc_str = " > ".join(first_c.get("breadcrumbs", [sec_title]))
             context_header = f"[{bc_str}]"
             raw_parent_text = f"{context_header}\n\n{body_text}".strip()
-            parent_full_text = self.normalize_parent_text(raw_parent_text)
+            parent_full_text = self.normalize_parent_text(raw_parent_text, preserve_newlines=self.preserve_newlines)
 
             title_val = current_parent_title or first_c.get("metadata", {}).get("article_display") or sec_title
 

@@ -150,6 +150,7 @@ export interface HierarchicalEtlResult {
   elapsed_time?: number;
   active_pdf?: string;
   total_pages?: number;
+  preserve_newlines?: boolean;
 }
 
 // 하위 호환성 타입 별칭
@@ -165,6 +166,7 @@ export interface ParseRequestParams {
   method?: string;
   formula?: boolean;
   strategy?: 'general' | 'legal' | string;
+  preserve_newlines?: boolean;
 }
 
 export interface JobStatusResponse {
@@ -293,6 +295,7 @@ export interface ParserConfig {
   all_pages: boolean;
   start_page: number;
   end_page: number;
+  preserve_newlines?: boolean;
 }
 
 // 8. 작업공간 및 문서 백업/원복(복원) 관련 타입

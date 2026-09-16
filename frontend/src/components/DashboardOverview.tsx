@@ -62,6 +62,8 @@ interface DashboardOverviewProps {
   setStartPage: (v: number) => void;
   endPage: number;
   setEndPage: (v: number) => void;
+  preserveNewlines: boolean;
+  setPreserveNewlines: (v: boolean) => void;
   onSaveParserConfig?: () => Promise<void>;
   onResetParserConfig?: () => Promise<void>;
   isSavingParserConfig?: boolean;
@@ -98,6 +100,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   setStartPage,
   endPage,
   setEndPage,
+  preserveNewlines,
+  setPreserveNewlines,
   onSaveParserConfig,
   onResetParserConfig,
   isSavingParserConfig = false,
@@ -425,6 +429,24 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   />
                   <span className="text-slate-700 dark:text-slate-300 font-medium">
                     LaTeX 수식 인식 활성화
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* 4.5. Preserve Newlines Toggle */}
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5">문장 단위 줄바꿈</label>
+              <div className="flex items-center gap-2 pt-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={preserveNewlines}
+                    onChange={(e) => setPreserveNewlines(e.target.checked)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700"
+                  />
+                  <span className="text-slate-700 dark:text-slate-300 font-medium">
+                    문장/파싱 단위 줄바꿈 보존
                   </span>
                 </label>
               </div>
@@ -1267,6 +1289,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         defaultAllPages={allPages}
         defaultStartPage={startPage}
         defaultEndPage={endPage}
+        defaultPreserveNewlines={preserveNewlines}
         onRun={async (params, saveAsDefault) => {
           await onRunEtl(params, saveAsDefault);
         }}

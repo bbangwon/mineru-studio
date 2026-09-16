@@ -23,6 +23,7 @@ interface RunEtlModalProps {
   defaultAllPages: boolean;
   defaultStartPage: number;
   defaultEndPage: number;
+  defaultPreserveNewlines?: boolean;
   onRun: (params: ParseRequestParams, saveAsDefault?: boolean) => Promise<void>;
   isParsing: boolean;
 }
@@ -38,6 +39,7 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
   defaultAllPages,
   defaultStartPage,
   defaultEndPage,
+  defaultPreserveNewlines = true,
   onRun,
   isParsing,
 }) => {
@@ -48,6 +50,7 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
   const [allPages, setAllPages] = useState(defaultAllPages);
   const [startPage, setStartPage] = useState(defaultStartPage);
   const [endPage, setEndPage] = useState(defaultEndPage);
+  const [preserveNewlines, setPreserveNewlines] = useState(defaultPreserveNewlines);
   const [saveAsDefault, setSaveAsDefault] = useState(false);
 
   // Whenever modal opens or target item changes, sync with default or previous doc settings
@@ -59,13 +62,14 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
       setStrategy(targetItem.strategy || defaultStrategy || 'general');
       setFormula(defaultFormula);
       setAllPages(defaultAllPages);
+      setPreserveNewlines(defaultPreserveNewlines);
       
       const maxPage = Math.max(0, targetItem.total_pages - 1);
       setStartPage(Math.min(defaultStartPage, maxPage));
       setEndPage(defaultAllPages ? maxPage : Math.min(defaultEndPage, maxPage));
       setSaveAsDefault(false);
     }
-  }, [isOpen, targetItem, defaultEngine, defaultMethod, defaultFormula, defaultStrategy, defaultAllPages, defaultStartPage, defaultEndPage]);
+  }, [isOpen, targetItem, defaultEngine, defaultMethod, defaultFormula, defaultStrategy, defaultAllPages, defaultStartPage, defaultEndPage, defaultPreserveNewlines]);
 
   if (!isOpen || !targetItem) return null;
 
@@ -90,6 +94,7 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
       all_pages: allPages,
       start_page: allPages ? null : startPage,
       end_page: allPages ? null : endPage,
+      preserve_newlines: preserveNewlines,
       lang: 'korean',
     };
 
@@ -298,6 +303,27 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
                   type="checkbox"
                   checked={formula}
                   onChange={(e) => setFormula(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+
+            {/* 4.5. Preserve Newlines & Soft-wrap Repair Toggle */}
+            <div className="sm:col-span-2 bg-slate-50 dark:bg-slate-950/70 p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 block">
+                  문장/파싱 단위 줄바꿈 보존 (Soft-wrap 자동 보정)
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  PDF 너비로 인해 끊긴 단순 개행은 연결하고, 조항 및 문장 종결 단위로 줄바꿈하여 청크 가독성을 높입니다.
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={preserveNewlines}
+                  onChange={(e) => setPreserveNewlines(e.target.checked)}
                   className="sr-only peer"
                 />
                 <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-indigo-600"></div>

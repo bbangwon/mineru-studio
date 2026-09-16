@@ -98,6 +98,7 @@ class ParseRequest(BaseModel):
     method: Optional[str] = "auto"
     formula: Optional[bool] = True
     strategy: Optional[str] = "general"
+    preserve_newlines: Optional[bool] = True
 
 
 def process_etl_job(task_id: str, req_data: dict, pdf_path_str: str):
@@ -120,6 +121,7 @@ def process_etl_job(task_id: str, req_data: dict, pdf_path_str: str):
     backend = req_data.get("backend") or "pipeline"
     lang = req_data.get("lang") or "korean"
     strategy = req_data.get("strategy") or "general"
+    preserve_newlines = True if req_data.get("preserve_newlines") is None else req_data.get("preserve_newlines")
 
     output_dir = BASE_DIR / "output" / f"mineru_{backend}_{method}_{lang}"
 
@@ -154,8 +156,8 @@ def process_etl_job(task_id: str, req_data: dict, pdf_path_str: str):
 
         stem_nfc = unicodedata.normalize("NFC", pdf_path.stem)
         pdf_name_nfc = unicodedata.normalize("NFC", pdf_path.name)
-        chunker = HierarchicalChunker(doc_id=stem_nfc)
-        etl_res = chunker.chunk_content_list(content_list, doc_title=stem_nfc, strategy=strategy)
+        chunker = HierarchicalChunker(doc_id=stem_nfc, preserve_newlines=preserve_newlines)
+        etl_res = chunker.chunk_content_list(content_list, doc_title=stem_nfc, strategy=strategy, preserve_newlines=preserve_newlines)
         etl_res["elapsed_time"] = parse_res.get("elapsed_time", round(time.time() - start_time, 1))
         etl_res["active_pdf"] = pdf_name_nfc
         etl_res["total_pages"] = get_pdf_page_count(pdf_path)
@@ -163,6 +165,7 @@ def process_etl_job(task_id: str, req_data: dict, pdf_path_str: str):
         etl_res["backend"] = backend
         etl_res["method"] = method
         etl_res["strategy"] = strategy
+        etl_res["preserve_newlines"] = preserve_newlines
 
         latest_etl_result = etl_res
         current_selected_pdf_name = pdf_name_nfc
@@ -886,6 +889,7 @@ async def save_etl_result(req: Dict[str, Any]):
 
 class ResetRequest(BaseModel):
     strategy: Optional[str] = "general"
+    preserve_newlines: Optional[bool] = True
 
 
 @app.post("/api/etl/reset")
@@ -917,11 +921,13 @@ async def reset_etl_result(req: Optional[ResetRequest] = None):
         raise HTTPException(status_code=500, detail=f"원본 데이터 로드 실패: {str(e)}")
 
     strat = (req.strategy if req and req.strategy else None) or "general"
+    preserve_newlines = True if (req and req.preserve_newlines is None) else (req.preserve_newlines if req else True)
     preferred_name = current_selected_pdf_name or target_content_list_path.parent.parent.name
     doc_name = unicodedata.normalize("NFC", Path(preferred_name).stem)
-    chunker = HierarchicalChunker(doc_id=doc_name)
-    etl_res = chunker.chunk_content_list(content_list, doc_title=doc_name, strategy=strat)
+    chunker = HierarchicalChunker(doc_id=doc_name, preserve_newlines=preserve_newlines)
+    etl_res = chunker.chunk_content_list(content_list, doc_title=doc_name, strategy=strat, preserve_newlines=preserve_newlines)
     etl_res["active_pdf"] = unicodedata.normalize("NFC", preferred_name)
+    etl_res["preserve_newlines"] = preserve_newlines
 
     latest_etl_result = etl_res
     return etl_res
@@ -951,6 +957,7 @@ async def run_etl_parse(req: ParseRequest):
 
     method = req.method or "auto"
     formula = True if req.formula is None else req.formula
+    preserve_newlines = True if req.preserve_newlines is None else req.preserve_newlines
     output_dir = BASE_DIR / "output" / f"mineru_{req.backend}_{method}_{req.lang}"
     parse_res = mineru_svc.parse_pdf(
         pdf_path=pdf_path,
@@ -978,14 +985,15 @@ async def run_etl_parse(req: ParseRequest):
             content_list = found[1]
 
     chunk_strat = req.strategy or "general"
-    chunker = HierarchicalChunker(doc_id=pdf_path.stem)
-    etl_res = chunker.chunk_content_list(content_list, doc_title=pdf_path.stem, strategy=chunk_strat)
+    chunker = HierarchicalChunker(doc_id=pdf_path.stem, preserve_newlines=preserve_newlines)
+    etl_res = chunker.chunk_content_list(content_list, doc_title=pdf_path.stem, strategy=chunk_strat, preserve_newlines=preserve_newlines)
     etl_res["elapsed_time"] = parse_res.get("elapsed_time", 0)
     etl_res["active_pdf"] = pdf_path.name
     etl_res["total_pages"] = get_pdf_page_count(pdf_path)
     etl_res["backend"] = req.backend or "pipeline"
     etl_res["method"] = method
     etl_res["strategy"] = chunk_strat
+    etl_res["preserve_newlines"] = preserve_newlines
 
     latest_etl_result = etl_res
 

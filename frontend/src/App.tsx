@@ -92,6 +92,7 @@ export function App() {
   const [allPages, setAllPages] = useState(true);
   const [startPage, setStartPage] = useState(0);
   const [endPage, setEndPage] = useState(2);
+  const [preserveNewlines, setPreserveNewlines] = useState(true);
   const [isSavingParserConfig, setIsSavingParserConfig] = useState(false);
 
   const [isParsing, setIsParsing] = useState(false);
@@ -326,6 +327,7 @@ export function App() {
           if (cfg.all_pages !== undefined) setAllPages(cfg.all_pages);
           if (cfg.start_page !== undefined) setStartPage(cfg.start_page);
           if (cfg.end_page !== undefined) setEndPage(cfg.end_page);
+          if (cfg.preserve_newlines !== undefined) setPreserveNewlines(cfg.preserve_newlines);
         })
         .catch((err) => {
           console.warn('Failed to load default parser config:', err);
@@ -487,6 +489,7 @@ export function App() {
         all_pages: override?.all_pages ?? allPages,
         start_page: override?.start_page ?? startPage,
         end_page: override?.end_page ?? endPage,
+        preserve_newlines: override?.preserve_newlines ?? preserveNewlines,
       };
       await saveParserConfig(cfgToSave);
       showToast('기본 파서 설정이 output/parser_config.json에 저장되었습니다.');
@@ -508,6 +511,7 @@ export function App() {
       setAllPages(cfg.all_pages);
       setStartPage(cfg.start_page);
       setEndPage(cfg.end_page);
+      if (cfg.preserve_newlines !== undefined) setPreserveNewlines(cfg.preserve_newlines);
       showToast('기본 파서 설정이 초기 권장값으로 리셋되었습니다.');
     } catch (err: any) {
       showToast(err.message || '기본 파서 설정 초기화 실패', true);
@@ -527,6 +531,7 @@ export function App() {
     let overrideAllPages = allPages;
     let overrideStartPage: number | null = allPages ? null : startPage;
     let overrideEndPage: number | null = allPages ? null : endPage;
+    let overridePreserveNewlines = preserveNewlines;
 
     if (typeof targetOrParams === 'string') {
       docToParse = targetOrParams;
@@ -539,6 +544,7 @@ export function App() {
       if (targetOrParams.all_pages !== undefined) overrideAllPages = targetOrParams.all_pages;
       if (targetOrParams.start_page !== undefined) overrideStartPage = targetOrParams.start_page;
       if (targetOrParams.end_page !== undefined) overrideEndPage = targetOrParams.end_page;
+      if (targetOrParams.preserve_newlines !== undefined) overridePreserveNewlines = targetOrParams.preserve_newlines;
     }
 
     if (!docToParse) {
@@ -563,6 +569,7 @@ export function App() {
     setAllPages(overrideAllPages);
     if (overrideStartPage !== null) setStartPage(overrideStartPage);
     if (overrideEndPage !== null) setEndPage(overrideEndPage);
+    setPreserveNewlines(overridePreserveNewlines);
 
     if (saveAsDefault) {
       // 백엔드 parser_config.json 에도 영구 저장
@@ -574,6 +581,7 @@ export function App() {
         all_pages: overrideAllPages,
         start_page: overrideStartPage ?? 0,
         end_page: overrideEndPage ?? 2,
+        preserve_newlines: overridePreserveNewlines,
       }).catch((err) => {
         console.warn('Failed to persist parser config on run:', err);
       });
@@ -590,6 +598,7 @@ export function App() {
         method: overrideMethod,
         formula: overrideFormula,
         strategy: overrideStrategy,
+        preserve_newlines: overridePreserveNewlines,
         lang: 'korean',
       });
 
@@ -2699,6 +2708,8 @@ export function App() {
             setStartPage={setStartPage}
             endPage={endPage}
             setEndPage={setEndPage}
+            preserveNewlines={preserveNewlines}
+            setPreserveNewlines={setPreserveNewlines}
             onSaveParserConfig={handleSaveParserConfig}
             onResetParserConfig={handleResetParserConfig}
             isSavingParserConfig={isSavingParserConfig}

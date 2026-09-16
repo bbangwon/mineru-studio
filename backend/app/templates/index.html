@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MinerU RAG ETL Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    .prose-custom table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.8125rem;
+    }
+    .prose-custom th, .prose-custom td {
+      border: 1px solid #cbd5e1;
+      padding: 0.4rem 0.65rem;
+      text-align: left;
+    }
+    .prose-custom th {
+      background-color: #f1f5f9;
+      font-weight: 600;
+      color: #334155;
+    }
+    .prose-custom h1, .prose-custom h2, .prose-custom h3 {
+      font-weight: 700;
+      color: #1e293b;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .prose-custom h1 { font-size: 1.35rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
+    .prose-custom h2 { font-size: 1.15rem; }
+    .prose-custom h3 { font-size: 1rem; }
+    .prose-custom p { margin-bottom: 0.6rem; line-height: 1.55; }
+    
+    .tree-item:hover {
+      background-color: #f1f5f9;
+    }
+    .tree-item.active {
+      background-color: #e0e7ff;
+      border-left: 3px solid #4f46e5;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans">
+
+  <!-- Top Navbar -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="bg-gradient-to-r from-indigo-600 to-violet-600 text-white p-2.5 rounded-xl shadow-sm">
+          <i class="fa-solid fa-brain text-lg"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-base font-bold text-slate-900 leading-tight">MinerU RAG ETL Studio</h1>
+            <span class="text-[11px] bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-200">v2.0 ETL</span>
+          </div>
+          <p class="text-xs text-slate-500">부모-자식 계층 청킹 & 원형 보존 표 파싱 파이프라인</p>
+        </div>
+      </div>
+
+      <!-- Right Badges & Actions -->
+      <div class="flex items-center space-x-3">
+        <span class="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+          Apple Silicon Metal
+        </span>
+        <a href="/api/etl/export/jsonl" download="rag_chunks.jsonl" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+          <i class="fa-solid fa-download"></i> RAG JSONL 다운로드
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Wrapper -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- ========================================== -->
+    <!-- VIEW 1: RAG ETL PIPELINE & HIERARCHY CHUNKER -->
+    <!-- ========================================== -->
+    <div id="viewEtlStudio" class="space-y-6">
+
+      <!-- Target PDF & ETL Controller Bar -->
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+        <!-- Row 1: Document Selection & Upload -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div class="flex items-center space-x-3">
+            <div class="p-2.5 bg-indigo-50 text-indigo-600 rounded-lg">
+              <i class="fa-solid fa-file-pdf text-2xl"></i>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">대상 PDF 문서:</span>
+                <span id="pdfTotalPagesBadge" class="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-[11px] font-mono font-semibold">
+                  23 Pages
+                </span>
+              </div>
+              <div class="flex items-center gap-2 mt-0.5">
+                <select id="pdfSelect" onchange="onPdfChange()" class="text-sm font-bold text-slate-800 bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-indigo-500 max-w-md truncate">
+                  <option value="">불러오는 중...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Upload Button -->
+          <div class="flex items-center gap-2">
+            <input type="file" id="pdfFileInput" accept=".pdf" onchange="handleFileUpload(event)" class="hidden">
+            <button onclick="document.getElementById('pdfFileInput').click()" class="text-xs bg-white hover:bg-slate-50 text-slate-700 font-semibold px-3 py-2 rounded-lg border border-slate-300 transition shadow-xs flex items-center gap-1.5">
+              <i class="fa-solid fa-cloud-arrow-up text-indigo-600"></i> 새 PDF 업로드
+            </button>
+          </div>
+        </div>
+
+        <!-- Row 2: Parsing Engine & Page Range Configuration -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <div class="flex flex-wrap items-center gap-3">
+            <!-- Engine Select -->
+            <div class="flex items-center gap-1.5 text-xs text-slate-600">
+              <span class="font-medium text-slate-500">엔진:</span>
+              <select id="etlBackend" class="text-xs bg-slate-50 border border-slate-300 rounded px-2 py-1">
+                <option value="pipeline" selected>Pipeline (한국어 최적화)</option>
+                <option value="hybrid-engine">Hybrid-Engine (VLM 레이아웃)</option>
+              </select>
+            </div>
+
+            <!-- Method Select (Auto / OCR / Txt) -->
+            <div class="flex items-center gap-1.5 text-xs text-slate-600">
+              <span class="font-medium text-slate-500">추출 방식:</span>
+              <select id="etlMethod" class="text-xs bg-slate-50 border border-slate-300 rounded px-2 py-1" title="CMap 결함으로 숫자나 괄호가 누락될 경우 OCR 모드를 선택하세요">
+                <option value="auto" selected>Auto (자동 판별)</option>
+                <option value="ocr">OCR (강제 OCR - 숫자/괄호 보존)</option>
+                <option value="txt">Txt (디지털 텍스트 직접 추출)</option>
+              </select>
+            </div>
+
+            <!-- All Pages Toggle -->
+            <label class="flex items-center gap-1.5 cursor-pointer select-none text-xs font-semibold text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded border border-indigo-200 transition">
+              <input type="checkbox" id="chkAllPages" onchange="toggleAllPages(this.checked)" checked class="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300">
+              <span><i class="fa-solid fa-layer-group text-indigo-600 mr-1"></i> 전체 페이지 파싱</span>
+            </label>
+
+            <!-- Page Range Inputs -->
+            <div id="pageRangeBox" class="flex items-center gap-1.5 text-xs opacity-50 transition">
+              <span class="text-slate-500">범위:</span>
+              <input id="etlStartPage" type="number" min="0" value="0" disabled class="w-12 px-1.5 py-1 bg-slate-100 border border-slate-300 rounded text-center font-mono text-xs">
+              <span class="text-slate-400">~</span>
+              <input id="etlEndPage" type="number" min="0" value="22" disabled class="w-12 px-1.5 py-1 bg-slate-100 border border-slate-300 rounded text-center font-mono text-xs">
+              <span class="text-[10px] text-slate-400">(0-based)</span>
+            </div>
+          </div>
+
+          <!-- Run Button -->
+          <button id="btnRunEtl" onclick="runEtlPipeline()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+            <i class="fa-solid fa-bolt"></i> ETL 실행 & 계층 청킹
+          </button>
+        </div>
+      </div>
+
+      <!-- ETL Statistics Scoreboard -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-400 mb-1">
+            <span class="text-[11px] font-semibold uppercase">부모 섹션 (Parent)</span>
+            <i class="fa-solid fa-folder-tree text-indigo-500"></i>
+          </div>
+          <div id="statEtlParents" class="text-2xl font-bold text-slate-800">-</div>
+          <p class="text-[10px] text-slate-400 mt-0.5">Heading 계층 분할</p>
+        </div>
+
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-400 mb-1">
+            <span class="text-[11px] font-semibold uppercase">총 자식 청크 (Child)</span>
+            <i class="fa-solid fa-cubes text-blue-500"></i>
+          </div>
+          <div id="statEtlTotalChunks" class="text-2xl font-bold text-slate-800">-</div>
+          <p class="text-[10px] text-slate-400 mt-0.5">임베딩 인덱스 대상</p>
+        </div>
+
+        <div class="bg-white p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/20 shadow-sm">
+          <div class="flex items-center justify-between text-indigo-700 mb-1">
+            <span class="text-[11px] font-semibold uppercase">표 청크 (Atomic Table)</span>
+            <i class="fa-solid fa-table text-indigo-600"></i>
+          </div>
+          <div id="statEtlTables" class="text-2xl font-black text-indigo-700">-</div>
+          <p class="text-[10px] text-indigo-600 font-medium mt-0.5">🚨 원형 100% 무손실 보존</p>
+        </div>
+
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-400 mb-1">
+            <span class="text-[11px] font-semibold uppercase">문단 청크 (Text)</span>
+            <i class="fa-solid fa-align-left text-slate-400"></i>
+          </div>
+          <div id="statEtlParagraphs" class="text-2xl font-bold text-slate-800">-</div>
+          <p class="text-[10px] text-slate-400 mt-0.5">자연 문맥 문단</p>
+        </div>
+
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between text-slate-400 mb-1">
+            <span class="text-[11px] font-semibold uppercase">단어 수 (Words)</span>
+            <i class="fa-solid fa-font text-slate-400"></i>
+          </div>
+          <div id="statEtlWords" class="text-2xl font-bold text-slate-800">-</div>
+          <p class="text-[10px] text-slate-400 mt-0.5">추정 토큰 기반</p>
+        </div>
+      </div>
+
+      <!-- Main ETL Workspace: Hierarchy Tree + Chunk Explorer -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Left Column (4 cols): Heading Hierarchy Tree -->
+        <div class="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[780px]">
+          <div class="p-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50 rounded-t-xl">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-sitemap text-indigo-600 text-xs"></i>
+              <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider">문서 계층 구조 (Tree)</h3>
+            </div>
+            <button onclick="filterBySection(null)" class="text-[11px] text-indigo-600 hover:underline font-medium">
+              전체 보기
+            </button>
+          </div>
+          <div class="p-2 border-b border-slate-100 bg-slate-50 text-[11px] text-slate-500">
+            <i class="fa-solid fa-circle-info mr-1 text-slate-400"></i> 섹션을 클릭하면 해당 부모에 속한 자식 청크만 필터링됩니다.
+          </div>
+          <div id="hierarchyTreeContainer" class="p-3 overflow-y-auto flex-1 space-y-1 text-xs font-medium">
+            <div class="text-slate-400 text-center py-10">계층 구조를 분석하는 중...</div>
+          </div>
+        </div>
+
+        <!-- Right Column (8 cols): Chunk Inspector -->
+        <div class="lg:col-span-8 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[780px]">
+          <div class="p-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50/50 rounded-t-xl">
+            <div class="flex items-center gap-3">
+              <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <i class="fa-solid fa-cubes-stacked text-indigo-600"></i> 청크 뷰어 (Chunk Viewer)
+              </h3>
+              <span id="currentFilterBadge" class="text-[11px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-mono">
+                전체 청크
+              </span>
+            </div>
+
+            <!-- Filter Buttons -->
+            <div class="flex items-center space-x-1">
+              <button onclick="setChunkTypeFilter('all')" id="btnFilterAll" class="px-2.5 py-1 text-xs rounded bg-indigo-100 text-indigo-800 font-semibold">
+                전체
+              </button>
+              <button onclick="setChunkTypeFilter('table')" id="btnFilterTable" class="px-2.5 py-1 text-xs rounded text-slate-600 hover:bg-slate-100 font-medium flex items-center gap-1">
+                <i class="fa-solid fa-table text-indigo-600"></i> 표만 보기
+              </button>
+              <button onclick="setChunkTypeFilter('paragraph')" id="btnFilterPara" class="px-2.5 py-1 text-xs rounded text-slate-600 hover:bg-slate-100 font-medium">
+                문단만 보기
+              </button>
+            </div>
+          </div>
+
+          <!-- Chunk Cards List -->
+          <div id="chunkCardsContainer" class="p-4 overflow-y-auto flex-1 space-y-4 bg-slate-50/50">
+            <div class="text-slate-400 text-center py-10">청크 데이터를 불러오는 중...</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+
+  </main>
+
+  <!-- JSONL Line Preview Modal -->
+  <div id="jsonlModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-code text-indigo-600"></i>
+          <h3 class="font-bold text-slate-800 text-sm">RAG JSONL 레코드 미리보기</h3>
+        </div>
+        <button onclick="closeJsonlModal()" class="text-slate-400 hover:text-slate-600">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+      <p class="text-xs text-slate-500">
+        Vector DB나 RAG 파이프라인에 그대로 적재되는 표준 JSONL 형태의 단일 레코드입니다.
+      </p>
+      <div class="relative">
+        <pre id="jsonlModalContent" class="bg-slate-900 text-emerald-400 p-4 rounded-xl text-xs font-mono overflow-x-auto max-h-96 whitespace-pre-wrap break-all"></pre>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="copyModalJsonl()" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold px-3 py-2 rounded-lg transition">
+          <i class="fa-regular fa-copy mr-1"></i> 레코드 복사
+        </button>
+        <button onclick="closeJsonlModal()" class="text-xs bg-slate-800 hover:bg-slate-900 text-white font-semibold px-4 py-2 rounded-lg transition">
+          닫기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let etlData = null;
+    let selectedSectionId = null;
+    let currentChunkFilter = 'all';
+    let pdfList = [];
+    let currentPdf = null;
+
+    // 1. Initialize
+    window.onload = async () => {
+      await fetchPdfList();
+      await fetchEtlSample();
+    };
+
+    // PDF Management
+    async function fetchPdfList() {
+      try {
+        const res = await fetch('/api/pdf/list');
+        if (!res.ok) return;
+        const data = await res.json();
+        pdfList = data.pdfs || [];
+        currentPdf = data.current;
+
+        const select = document.getElementById('pdfSelect');
+        select.innerHTML = '';
+        pdfList.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.filename;
+          opt.innerText = `${p.filename} (${p.total_pages}p)`;
+          if (p.filename === currentPdf) opt.selected = true;
+          select.appendChild(opt);
+        });
+
+        updatePdfBadge();
+      } catch (err) {
+        console.error('PDF list load error:', err);
+      }
+    }
+
+    function updatePdfBadge() {
+      const select = document.getElementById('pdfSelect');
+      if (!select) return;
+      const selName = select.value;
+      const found = pdfList.find(p => p.filename === selName);
+      if (found) {
+        const badge = document.getElementById('pdfTotalPagesBadge');
+        if (badge) badge.innerText = `${found.total_pages} Pages`;
+        const endPageInput = document.getElementById('etlEndPage');
+        if (endPageInput) endPageInput.value = Math.max(0, found.total_pages - 1);
+      }
+    }
+
+    async function onPdfChange() {
+      const select = document.getElementById('pdfSelect');
+      const filename = select.value;
+      if (!filename) return;
+      updatePdfBadge();
+      try {
+        await fetch('/api/pdf/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/pdf/upload', {
+          method: 'POST',
+          body: formData
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || '업로드 실패');
+        }
+        const result = await res.json();
+        alert(`PDF 업로드 성공: ${result.filename} (${result.total_pages} 페이지)`);
+        await fetchPdfList();
+      } catch (err) {
+        alert('업로드 오류: ' + err.message);
+      } finally {
+        event.target.value = '';
+      }
+    }
+
+    function toggleAllPages(checked) {
+      const startInput = document.getElementById('etlStartPage');
+      const endInput = document.getElementById('etlEndPage');
+      const rangeBox = document.getElementById('pageRangeBox');
+
+      startInput.disabled = checked;
+      endInput.disabled = checked;
+
+      if (checked) {
+        rangeBox.classList.add('opacity-50');
+        startInput.classList.remove('bg-white');
+        endInput.classList.remove('bg-white');
+        startInput.classList.add('bg-slate-100');
+        endInput.classList.add('bg-slate-100');
+      } else {
+        rangeBox.classList.remove('opacity-50');
+        startInput.classList.remove('bg-slate-100');
+        endInput.classList.remove('bg-slate-100');
+        startInput.classList.add('bg-white');
+        endInput.classList.add('bg-white');
+      }
+    }
+
+    // 3. Fetch ETL Sample
+    async function fetchEtlSample() {
+      try {
+        const res = await fetch('/api/etl/sample');
+        if (!res.ok) throw new Error('ETL 데이터를 불러올 수 없습니다.');
+        etlData = await res.json();
+        renderEtlData(etlData);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // 4. Render ETL Data
+    function renderEtlData(data) {
+      if (!data) return;
+
+      // Safe Stats Update
+      const titleEl = document.getElementById('etlDocTitle');
+      if (titleEl) titleEl.innerText = data.doc_title || '석면폐증 업무처리 지침';
+
+      const parentsEl = document.getElementById('statEtlParents');
+      if (parentsEl) parentsEl.innerText = data.stats?.total_parent_sections ?? '-';
+
+      const chunksEl = document.getElementById('statEtlTotalChunks');
+      if (chunksEl) chunksEl.innerText = data.stats?.total_child_chunks ?? '-';
+
+      const tablesEl = document.getElementById('statEtlTables');
+      if (tablesEl) tablesEl.innerText = data.stats?.table_chunks ?? '-';
+
+      const paraEl = document.getElementById('statEtlParagraphs');
+      if (paraEl) paraEl.innerText = data.stats?.paragraph_chunks ?? '-';
+
+      const wordsEl = document.getElementById('statEtlWords');
+      if (wordsEl) wordsEl.innerText = (data.stats?.total_words || 0).toLocaleString();
+
+      // Sync active PDF dropdown if provided
+      if (data.active_pdf) {
+        const select = document.getElementById('pdfSelect');
+        if (select && select.value !== data.active_pdf) {
+          select.value = data.active_pdf;
+          updatePdfBadge();
+        }
+      }
+
+      // Render Tree
+      renderHierarchyTree(data.parent_sections || []);
+
+      // Render Chunks
+      renderChunkCards();
+    }
+
+    // 5. Render Hierarchy Tree
+    function renderHierarchyTree(sections) {
+      const container = document.getElementById('hierarchyTreeContainer');
+      container.innerHTML = '';
+
+      sections.forEach(sec => {
+        const isRoot = sec.level === 0;
+        const indentClass = sec.level === 0 ? 'pl-2' : (sec.level === 1 ? 'pl-4' : (sec.level === 2 ? 'pl-6' : 'pl-8'));
+        const icon = isRoot ? 'fa-book text-indigo-500' : (sec.level <= 2 ? 'fa-folder text-amber-500' : 'fa-file-lines text-slate-400');
+        const isActive = selectedSectionId === sec.id;
+
+        const item = document.createElement('div');
+        item.className = `tree-item ${indentClass} py-2 px-2.5 rounded-lg cursor-pointer flex items-center justify-between transition ${isActive ? 'active' : ''}`;
+        item.onclick = () => filterBySection(sec.id);
+
+        item.innerHTML = `
+          <div class="flex items-center gap-2 truncate pr-2">
+            <i class="fa-solid ${icon} text-xs"></i>
+            <span class="truncate ${isRoot ? 'font-bold text-slate-800' : 'text-slate-700'}">${sec.title}</span>
+          </div>
+          <span class="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono flex-shrink-0">
+            ${sec.child_chunk_ids.length}
+          </span>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function filterBySection(secId) {
+      selectedSectionId = secId;
+      renderHierarchyTree(etlData.parent_sections);
+      
+      const badge = document.getElementById('currentFilterBadge');
+      if (badge) {
+        if (!secId) {
+          badge.innerText = '전체 청크';
+        } else {
+          const sec = etlData.parent_sections.find(s => s.id === secId);
+          badge.innerText = sec ? `섹션: ${sec.title}` : '필터됨';
+        }
+      }
+      renderChunkCards();
+    }
+
+    function setChunkTypeFilter(type) {
+      currentChunkFilter = type;
+      ['all', 'table', 'paragraph'].forEach(t => {
+        const btn = document.getElementById(t === 'all' ? 'btnFilterAll' : (t === 'table' ? 'btnFilterTable' : 'btnFilterPara'));
+        if (t === type) {
+          btn.className = 'px-2.5 py-1 text-xs rounded bg-indigo-100 text-indigo-800 font-semibold';
+        } else {
+          btn.className = 'px-2.5 py-1 text-xs rounded text-slate-600 hover:bg-slate-100 font-medium';
+        }
+      });
+      renderChunkCards();
+    }
+
+    // 6. Render Chunk Cards
+    function renderChunkCards() {
+      const container = document.getElementById('chunkCardsContainer');
+      container.innerHTML = '';
+
+      if (!etlData || !etlData.child_chunks) return;
+
+      let chunks = etlData.child_chunks;
+
+      // Filter by section
+      if (selectedSectionId) {
+        chunks = chunks.filter(c => c.parent_id === selectedSectionId);
+      }
+
+      // Filter by type
+      if (currentChunkFilter !== 'all') {
+        chunks = chunks.filter(c => c.chunk_type === currentChunkFilter);
+      }
+
+      if (chunks.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-16 bg-white rounded-xl border border-dashed border-slate-300">
+            <i class="fa-solid fa-filter text-slate-300 text-3xl mb-2"></i>
+            <p class="text-xs text-slate-400">조건에 일치하는 청크가 없습니다.</p>
+          </div>
+        `;
+        return;
+      }
+
+      const parentMap = {};
+      etlData.parent_sections.forEach(p => parentMap[p.id] = p);
+
+      chunks.forEach(c => {
+        const parent = parentMap[c.parent_id] || { title: '루트 문서' };
+        const isTable = c.chunk_type === 'table';
+
+        const card = document.createElement('div');
+        card.className = `p-4 rounded-xl border shadow-sm transition bg-white ${isTable ? 'border-indigo-300 ring-1 ring-indigo-200' : 'border-slate-200'}`;
+
+        // Breadcrumbs formatting
+        const breadcrumbsHtml = (c.breadcrumbs || []).map((b, idx) => 
+          `<span class="${idx === c.breadcrumbs.length - 1 ? 'font-semibold text-slate-700' : 'text-slate-400'}">${b}</span>`
+        ).join(' <i class="fa-solid fa-chevron-right text-[9px] text-slate-300 mx-1"></i> ');
+
+        // Card Header
+        let typeBadge = isTable 
+          ? `<span class="bg-indigo-600 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-xs flex items-center gap-1">
+               <i class="fa-solid fa-table"></i> ATOMIC TABLE (원형 보존)
+             </span>`
+          : `<span class="bg-slate-100 text-slate-600 text-[11px] font-medium px-2 py-0.5 rounded">
+               <i class="fa-solid fa-paragraph mr-1 text-slate-400"></i> 문단
+             </span>`;
+
+        let contentHtml = '';
+        if (isTable) {
+          contentHtml = `
+            <div class="space-y-2 mt-2">
+              <div class="prose-custom overflow-x-auto bg-slate-50/70 p-3 rounded-lg border border-slate-200">
+                ${c.raw_html}
+              </div>
+              <div class="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                <span class="flex items-center gap-1.5">
+                  <i class="fa-solid fa-shield-halved text-emerald-600"></i>
+                  <span>잘림 없는 독립 엔티티 (RAG 검색 시 Multi-Vector / 요약 인덱싱 지원)</span>
+                </span>
+                ${c.image_url ? `<a href="${c.image_url}" target="_blank" class="text-indigo-600 hover:underline flex items-center gap-1">
+                  <i class="fa-solid fa-image"></i> 원본 표 이미지 보기
+                </a>` : ''}
+              </div>
+            </div>
+          `;
+        } else {
+          contentHtml = `
+            <div class="text-xs text-slate-700 leading-relaxed mt-2 whitespace-pre-line bg-slate-50/50 p-3 rounded-lg border border-slate-100 font-sans">
+              ${c.text}
+            </div>
+          `;
+        }
+
+        card.innerHTML = `
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+            <div class="flex items-center gap-2">
+              ${typeBadge}
+              <span class="font-mono text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${c.chunk_id}</span>
+              <span class="text-[11px] text-slate-400">Page ${c.page_number}</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <button onclick="openJsonlModalById('${c.chunk_id}')" class="text-[11px] text-slate-500 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-2 py-1 rounded transition flex items-center gap-1 font-medium">
+                <i class="fa-solid fa-code"></i> JSONL 레코드
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-2 text-[11px] text-slate-500 flex items-center flex-wrap">
+            <i class="fa-solid fa-location-dot text-indigo-500 mr-1.5"></i>
+            ${breadcrumbsHtml}
+          </div>
+
+          ${contentHtml}
+
+          <div class="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+            <span>부모 섹션 ID: <strong class="text-slate-600 font-mono">${c.parent_id}</strong> (${parent.title})</span>
+            <span>추정 단어: ~${c.token_estimate} words</span>
+          </div>
+        `;
+
+        container.appendChild(card);
+      });
+    }
+
+    // 7. Run ETL Pipeline
+    async function runEtlPipeline() {
+      const btn = document.getElementById('btnRunEtl');
+      const filename = document.getElementById('pdfSelect').value;
+      const allPages = document.getElementById('chkAllPages').checked;
+      const start = document.getElementById('etlStartPage').value;
+      const end = document.getElementById('etlEndPage').value;
+      const backend = document.getElementById('etlBackend').value;
+      const method = document.getElementById('etlMethod') ? document.getElementById('etlMethod').value : 'auto';
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 파싱 및 청킹 중...';
+
+      try {
+        const res = await fetch('/api/etl/parse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: filename,
+            all_pages: allPages,
+            start_page: allPages ? null : parseInt(start),
+            end_page: allPages ? null : parseInt(end),
+            backend: backend,
+            method: method,
+            lang: 'korean'
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'ETL 실행 실패');
+        }
+        etlData = await res.json();
+        renderEtlData(etlData);
+        alert(`MinerU 파싱 및 계층 청킹 완료! (소요 시간: ${etlData.elapsed_time || 0}초, 청크: ${etlData.stats.total_child_chunks}개)`);
+      } catch (err) {
+        alert('ETL 파이프라인 에러: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-bolt"></i> ETL 실행 & 청킹';
+      }
+    }
+
+    // 8. JSONL Modal
+    let modalJsonlString = '';
+    function openJsonlModalById(chunkId) {
+      if (!etlData || !etlData.child_chunks) return;
+      const chunk = etlData.child_chunks.find(c => c.chunk_id === chunkId);
+      if (!chunk) return;
+
+      const parentMap = {};
+      (etlData.parent_sections || []).forEach(p => parentMap[p.id] = p);
+      const parent = parentMap[chunk.parent_id] || {};
+
+      const record = {
+        id: chunk.chunk_id,
+        parent_id: chunk.parent_id,
+        parent_title: parent.title || '',
+        chunk_type: chunk.chunk_type,
+        text: chunk.text,
+        page: chunk.page_number,
+        breadcrumbs: chunk.breadcrumbs,
+        breadcrumbs_str: (chunk.breadcrumbs || []).join(' > '),
+        metadata: {
+          ...chunk.metadata,
+          parent_breadcrumbs: chunk.breadcrumbs,
+          is_atomic_table: (chunk.chunk_type === 'table')
+        }
+      };
+      if (chunk.chunk_type === 'table') {
+        record.raw_html = chunk.raw_html || '';
+      }
+
+      modalJsonlString = JSON.stringify(record, null, 2);
+      document.getElementById('jsonlModalContent').innerText = modalJsonlString;
+      document.getElementById('jsonlModal').classList.remove('hidden');
+    }
+
+    function closeJsonlModal() {
+      document.getElementById('jsonlModal').classList.add('hidden');
+    }
+
+    function copyModalJsonl() {
+      navigator.clipboard.writeText(modalJsonlString).then(() => {
+        alert('JSONL 레코드가 복사되었습니다.');
+      });
+    }
+  </script>
+</body>
+</html>

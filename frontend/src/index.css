@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+.prose-custom table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.8125rem;
+}
+.prose-custom th, .prose-custom td {
+  border: 1px solid #cbd5e1;
+  padding: 0.4rem 0.65rem;
+  text-align: left;
+}
+.prose-custom th {
+  background-color: #f1f5f9;
+  font-weight: 600;
+  color: #334155;
+}
+.prose-custom h1, .prose-custom h2, .prose-custom h3 {
+  font-weight: 700;
+  color: #1e293b;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+.prose-custom h1 { font-size: 1.35rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
+.prose-custom h2 { font-size: 1.15rem; }
+.prose-custom h3 { font-size: 1rem; }
+.prose-custom p { margin-bottom: 0.6rem; line-height: 1.55; }
+
+/* Dark mode overrides for prose-custom */
+.dark .prose-custom th, .dark .prose-custom td {
+  border-color: #334155;
+}
+.dark .prose-custom th {
+  background-color: #1e293b;
+  color: #cbd5e1;
+}
+.dark .prose-custom h1, .dark .prose-custom h2, .dark .prose-custom h3 {
+  color: #f1f5f9;
+}
+.dark .prose-custom h1 {
+  border-bottom-color: #334155;
+}

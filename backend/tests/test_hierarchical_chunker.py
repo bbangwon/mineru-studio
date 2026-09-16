@@ -217,6 +217,29 @@ class TestHierarchicalChunker(unittest.TestCase):
             self.assertIn("metadata", record)
             self.assertEqual(record["metadata"]["doc_title"], "사규")
 
+    def test_export_to_jsonl_table_footnote(self):
+        chunker = HierarchicalChunker(doc_id="tbl_jsonl_test")
+        sample_content_list = [
+            {
+                "type": "table",
+                "table_caption": [{"type": "text", "content": "임금표"}],
+                "table_footnote": [{"type": "text", "content": "* 세전 기준, 수당 별도"}],
+                "html": "<table><tr><th>직급</th><th>금액</th></tr><tr><td>사원</td><td>300</td></tr></table>",
+                "page_idx": 0,
+            }
+        ]
+        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="보수규정", strategy="general")
+        jsonl_str = chunker.export_to_jsonl(etl_res)
+        lines = [json.loads(line) for line in jsonl_str.split("\n") if line.strip()]
+        self.assertEqual(len(lines), 1)
+        record = lines[0]
+        self.assertTrue(record["is_atomic_table"])
+        self.assertEqual(record["table_caption"], "임금표")
+        self.assertEqual(record["table_footnote"], "* 세전 기준, 수당 별도")
+        self.assertEqual(record["metadata"]["table_caption"], "임금표")
+        self.assertEqual(record["metadata"]["table_footnote"], "* 세전 기준, 수당 별도")
+        self.assertIn("(주: * 세전 기준, 수당 별도)", record["text"])
+
     def test_huge_table_promoted_to_parent(self):
         # Create a table exceeding 2048 tokens
         large_rows = "".join(f"<tr><td>항목{i}</td><td>상세설명내용_{i}_데이터테스트</td><td>비고{i}</td></tr>" for i in range(250))

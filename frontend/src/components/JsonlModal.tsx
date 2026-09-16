@@ -65,12 +65,15 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
       page_end: endPage,
       pages: pages,
       is_atomic_table: isAtomicTable,
+      ...(chunk.table_caption ? { table_caption: chunk.table_caption } : {}),
+      ...(chunk.table_footnote ? { table_footnote: chunk.table_footnote } : {}),
     },
   };
 
   if (isAtomicTable) {
     record.raw_html = chunk.raw_html || '';
     if (chunk.table_caption) record.table_caption = chunk.table_caption;
+    if (chunk.table_footnote) record.table_footnote = chunk.table_footnote;
   }
 
   const jsonString = JSON.stringify(record, null, 2);

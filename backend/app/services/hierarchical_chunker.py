@@ -451,11 +451,28 @@ class HierarchicalChunker:
                         "bbox": item.get("bbox", [])
                     }
                 elif b_type == "table":
+                    caption_val = item.get("table_caption", "")
+                    if isinstance(caption_val, list):
+                        cap_list = caption_val
+                    elif isinstance(caption_val, str) and caption_val:
+                        cap_list = [{"type": "text", "content": caption_val}]
+                    else:
+                        cap_list = []
+
+                    footnote_val = item.get("table_footnote", "")
+                    if isinstance(footnote_val, list):
+                        fn_list = footnote_val
+                    elif isinstance(footnote_val, str) and footnote_val:
+                        fn_list = [{"type": "text", "content": footnote_val}]
+                    else:
+                        fn_list = []
+
                     block = {
                         "type": "table",
                         "content": {
                             "html": item.get("table_body", "") or item.get("html", ""),
-                            "table_caption": [{"type": "text", "content": item.get("table_caption", "")}],
+                            "table_caption": cap_list,
+                            "table_footnote": fn_list,
                             "image_source": {"path": item.get("img_path", "")}
                         },
                         "bbox": item.get("bbox", [])
@@ -1221,6 +1238,12 @@ class HierarchicalChunker:
             meta.pop("image_path", None)
             meta.pop("image_url", None)
 
+            if is_table:
+                if chunk.get("table_caption"):
+                    meta["table_caption"] = chunk.get("table_caption")
+                if chunk.get("table_footnote"):
+                    meta["table_footnote"] = chunk.get("table_footnote")
+
             parent_text = parent.get("text", "")
             if breadcrumbs_str and not parent_text.startswith(f"[{breadcrumbs_str}]"):
                 parent_context_text = f"[{breadcrumbs_str}]\n{parent_text}".strip()
@@ -1250,6 +1273,7 @@ class HierarchicalChunker:
             if is_table:
                 record["raw_html"] = chunk.get("raw_html", "")
                 record["table_caption"] = chunk.get("table_caption", "")
+                record["table_footnote"] = chunk.get("table_footnote", "")
 
             lines.append(json.dumps(record, ensure_ascii=False))
 

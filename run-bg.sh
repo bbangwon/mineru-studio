@@ -5,6 +5,7 @@ cd "$SCRIPT_DIR"
 
 BACKEND_PORT=${PORT:-8001}
 FRONTEND_PORT=${FRONTEND_PORT:-5174}
+HOST_IP=${HOST_IP:-$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "localhost")}
 
 BACKEND_PID_FILE="$SCRIPT_DIR/backend.pid"
 FRONTEND_PID_FILE="$SCRIPT_DIR/frontend.pid"
@@ -84,7 +85,7 @@ fi
 # --- Start Frontend if not already running ---
 if [ ! -f "$FRONTEND_PID_FILE" ]; then
     echo "Starting Frontend (Vite) on port $FRONTEND_PORT..."
-    (cd frontend && nohup npm run dev -- --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 & echo $! > "$FRONTEND_PID_FILE")
+    (cd frontend && nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 & echo $! > "$FRONTEND_PID_FILE")
     FRONTEND_PID=$(cat "$FRONTEND_PID_FILE")
 else
     FRONTEND_PID=$(cat "$FRONTEND_PID_FILE")
@@ -108,9 +109,9 @@ echo "========================================================"
 if [ "$BACKEND_OK" -eq 1 ] && [ "$FRONTEND_OK" -eq 1 ]; then
     echo " MinerU Studio started successfully in background!"
     echo "--------------------------------------------------------"
-    echo " Frontend UI : http://localhost:$FRONTEND_PORT"
-    echo " Backend API : http://localhost:$BACKEND_PORT"
-    echo " Swagger Docs: http://localhost:$BACKEND_PORT/docs"
+    echo " Frontend UI : http://$HOST_IP:$FRONTEND_PORT (Local: http://localhost:$FRONTEND_PORT)"
+    echo " Backend API : http://$HOST_IP:$BACKEND_PORT (Local: http://localhost:$BACKEND_PORT)"
+    echo " Swagger Docs: http://$HOST_IP:$BACKEND_PORT/docs"
     echo "--------------------------------------------------------"
     echo " Backend  PID: $BACKEND_PID | Log: $BACKEND_LOG"
     echo " Frontend PID: $FRONTEND_PID | Log: $FRONTEND_LOG"

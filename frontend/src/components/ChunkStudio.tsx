@@ -2788,126 +2788,127 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
               {/* Scrollable Editor Body */}
               <div className="flex-1 p-4 overflow-y-auto space-y-4">
-                {/* Level 2 Parent Chunk Info Banner */}
-                {activeParentChunk && (
-                  <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/40 rounded-xl border border-indigo-100 dark:border-indigo-900/60 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-indigo-900 dark:text-indigo-200 flex items-center gap-1">
-                        <FolderTree className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                        <span>상위 Parent:</span>
-                      </span>
-                      <CopyableBadge
-                        id={activeParentChunk.parent_chunk_id || activeParentChunk.id}
-                        type="parent"
-                        titlePrefix="전체 Parent ID"
-                        className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300 bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-700 shrink-0"
-                      />
-                      {activeParentChunk.title && (
-                        <span className="text-slate-700 dark:text-slate-200 font-medium truncate max-w-xs">
-                          · {activeParentChunk.title}
-                        </span>
-                      )}
-                      {onUpdateParent && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTargetParentForEdit(activeParentChunk);
-                            setIsEditParentModalOpen(true);
-                          }}
-                          className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline flex items-center gap-1 font-semibold ml-1 cursor-pointer"
-                          title="Parent 정보 수정"
-                        >
-                          <Edit2 className="w-2.5 h-2.5" />
-                          <span>수정</span>
-                        </button>
-                      )}
-                      {onReparentChildChunk && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenReparentSingleChunk(activeChunk)}
-                          className="text-[11px] text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 hover:underline flex items-center gap-1 font-semibold ml-1 cursor-pointer"
-                          title="이 Child 청크의 상위 Parent를 다른 Parent로 재할당하거나 새 Parent를 생성합니다."
-                        >
-                          <FolderTree className="w-2.5 h-2.5" />
-                          <span>Parent 재할당</span>
-                        </button>
-                      )}
-                      {onMoveParent && (() => {
-                        const apId = activeParentChunk.parent_chunk_id || activeParentChunk.id || '';
-                        const aSec = parentMap.get(activeParentChunk.section_id);
-                        const secPids = aSec?.parent_chunk_ids && aSec.parent_chunk_ids.length > 0
-                          ? aSec.parent_chunk_ids
-                          : (parentChunksBySection.get(activeParentChunk.section_id) || []).map((p) => p.parent_chunk_id || p.id || '');
-                        const pIdx = secPids.indexOf(apId);
-                        const isFirst = pIdx === 0;
-                        const isLast = pIdx === secPids.length - 1 || pIdx === -1;
-                        if (secPids.length <= 1) return null;
-                        return (
-                          <div className="flex items-center gap-0.5 ml-1 bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-800 rounded p-0.5 shadow-2xs">
-                            <button
-                              type="button"
-                              disabled={isFirst}
-                              onClick={() => onMoveParent(apId, 'up')}
-                              className={`p-0.5 rounded transition ${
-                                isFirst
-                                  ? 'text-slate-300 dark:text-slate-700 cursor-not-allowed'
-                                  : 'text-purple-600 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
-                              }`}
-                              title={isFirst ? '해당 섹션의 첫 번째 Parent입니다' : '위로 이동 (순서 맞바꾸기)'}
-                            >
-                              <ChevronUp className="w-2.5 h-2.5" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isLast}
-                              onClick={() => onMoveParent(apId, 'down')}
-                              className={`p-0.5 rounded transition ${
-                                isLast
-                                  ? 'text-slate-300 dark:text-slate-700 cursor-not-allowed'
-                                  : 'text-purple-600 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
-                              }`}
-                              title={isLast ? '해당 섹션의 마지막 Parent입니다' : '아래로 이동 (순서 맞바꾸기)'}
-                            >
-                              <ChevronDown className="w-2.5 h-2.5" />
-                            </button>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    <div className="flex items-center gap-3 text-[11px] text-slate-600 dark:text-slate-400 font-mono">
-                      <span>
-                        소속 자식 청크: <strong>{activeParentChunk.child_chunk_ids?.length || 1}</strong>개
-                      </span>
-                      <span
-                        className={
-                          (activeParentChunk.token_estimate || 0) > 2048
-                            ? 'text-amber-700 dark:text-amber-400 font-bold'
-                            : 'text-slate-600 dark:text-slate-400'
-                        }
-                      >
-                        Parent 토큰: ~{activeParentChunk.token_estimate || 0} tok {(activeParentChunk.token_estimate || 0) > 2048 ? '(비대 알림)' : ''}
-                      </span>
-                    </div>
+                {/* 1. 상단: Section & Parent 위계 영역 (Level 1 & Level 2) */}
+                <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/60 space-y-2.5">
+                  {/* (1) Section 위계 맥락 (Breadcrumbs) */}
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400 flex items-center flex-wrap gap-1.5 bg-white/80 dark:bg-slate-900/70 px-2.5 py-1.5 rounded-lg border border-indigo-100/80 dark:border-indigo-900/40">
+                    <span className="font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1 shrink-0">
+                      <FolderTree className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                      <span>소속 위계 맥락:</span>
+                    </span>
+                    {(activeChunk.breadcrumbs || []).length > 0 ? (
+                      activeChunk.breadcrumbs.map((b, idx) => (
+                        <React.Fragment key={idx}>
+                          <span className={idx === (activeChunk.breadcrumbs?.length || 0) - 1 ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}>
+                            {b}
+                          </span>
+                          {idx < (activeChunk.breadcrumbs?.length || 0) - 1 && (
+                            <ChevronRight className="w-3 h-3 text-slate-300 dark:text-slate-600 shrink-0" />
+                          )}
+                        </React.Fragment>
+                      ))
+                    ) : (
+                      <span className="text-slate-500 dark:text-slate-400">{activeParent?.title || '루트'}</span>
+                    )}
                   </div>
-                )}
-                
-                {/* 1. Parent Section, Page Range & Exclude Setting Row */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800">
-                  {/* Parent Section Reassign */}
-                  <div className="min-w-0">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
-                        <FolderTree className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                        Parent 소속 섹션 변경
-                      </span>
-                      {activeChunk.parent_chunk_id && (
+
+                  {/* (2) Parent 청크 정보 행 */}
+                  {activeParentChunk && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 shrink-0 flex items-center gap-1">
+                          <FolderTree className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                          <span>상위 Parent:</span>
+                        </span>
                         <CopyableBadge
-                          id={activeChunk.parent_chunk_id}
+                          id={activeParentChunk.parent_chunk_id || activeParentChunk.id}
                           type="parent"
-                          titlePrefix="상위 Parent ID"
-                          className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/80 px-1.5 py-0.2 rounded shrink-0 border border-indigo-200/50 dark:border-indigo-800/50 truncate max-w-[120px]"
+                          titlePrefix="전체 Parent ID"
+                          className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300 bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-700 shrink-0"
                         />
-                      )}
+                        {activeParentChunk.title && (
+                          <span className="text-slate-700 dark:text-slate-200 font-medium truncate max-w-xs" title={activeParentChunk.title}>
+                            · {activeParentChunk.title}
+                          </span>
+                        )}
+                        {onUpdateParent && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTargetParentForEdit(activeParentChunk);
+                              setIsEditParentModalOpen(true);
+                            }}
+                            className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline flex items-center gap-0.5 font-semibold ml-0.5 cursor-pointer"
+                            title="Parent 정보 수정"
+                          >
+                            <Edit2 className="w-2.5 h-2.5" />
+                            <span>수정</span>
+                          </button>
+                        )}
+                        {onMoveParent && (() => {
+                          const apId = activeParentChunk.parent_chunk_id || activeParentChunk.id || '';
+                          const aSec = parentMap.get(activeParentChunk.section_id);
+                          const secPids = aSec?.parent_chunk_ids && aSec.parent_chunk_ids.length > 0
+                            ? aSec.parent_chunk_ids
+                            : (parentChunksBySection.get(activeParentChunk.section_id) || []).map((p) => p.parent_chunk_id || p.id || '');
+                          const pIdx = secPids.indexOf(apId);
+                          const isFirst = pIdx === 0;
+                          const isLast = pIdx === secPids.length - 1 || pIdx === -1;
+                          if (secPids.length <= 1) return null;
+                          return (
+                            <div className="flex items-center gap-0.5 ml-1 bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-800 rounded p-0.5 shadow-2xs">
+                              <button
+                                type="button"
+                                disabled={isFirst}
+                                onClick={() => onMoveParent(apId, 'up')}
+                                className={`p-0.5 rounded transition ${
+                                  isFirst
+                                    ? 'text-slate-300 dark:text-slate-700 cursor-not-allowed'
+                                    : 'text-purple-600 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
+                                }`}
+                                title={isFirst ? '해당 섹션의 첫 번째 Parent입니다' : '위로 이동 (순서 맞바꾸기)'}
+                              >
+                                <ChevronUp className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isLast}
+                                onClick={() => onMoveParent(apId, 'down')}
+                                className={`p-0.5 rounded transition ${
+                                  isLast
+                                    ? 'text-slate-300 dark:text-slate-700 cursor-not-allowed'
+                                    : 'text-purple-600 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
+                                }`}
+                                title={isLast ? '해당 섹션의 마지막 Parent입니다' : '아래로 이동 (순서 맞바꾸기)'}
+                              >
+                                <ChevronDown className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-slate-600 dark:text-slate-400 font-mono shrink-0">
+                        <span>
+                          소속 자식 청크: <strong className="text-slate-800 dark:text-slate-200">{activeParentChunk.child_chunk_ids?.length || 1}</strong>개
+                        </span>
+                        <span
+                          className={
+                            (activeParentChunk.token_estimate || 0) > 2048
+                              ? 'text-amber-700 dark:text-amber-400 font-bold'
+                              : 'text-slate-600 dark:text-slate-400'
+                          }
+                        >
+                          Parent 토큰: ~{activeParentChunk.token_estimate || 0} tok {(activeParentChunk.token_estimate || 0) > 2048 ? '(비대 알림)' : ''}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* (3) Parent 단위 Section 재할당 드롭다운 */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-indigo-100/80 dark:border-indigo-900/50">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 shrink-0 whitespace-nowrap">
+                      <FolderTree className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <span>Parent 소속 섹션 변경:</span>
                     </label>
                     <select
                       value={activeChunk.section_id || activeChunk.parent_id}
@@ -2920,7 +2921,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                           handleFieldChange('parent_id', newSecId);
                         }
                       }}
-                      className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                      className="flex-1 min-w-0 text-xs font-medium bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 truncate cursor-pointer shadow-2xs"
                       title="소속된 상위 Parent 청크 전체의 섹션을 변경합니다."
                     >
                       {parentSections.map((sec) => (
@@ -2929,17 +2930,31 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         </option>
                       ))}
                     </select>
-
-                    {onReparentChildChunk && (
+                  </div>
+                </div>
+                
+                {/* 2. 하단: Child 청크 제어 영역 (Level 3) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800">
+                  {/* Child 단위 Parent 재할당 */}
+                  <div className="flex flex-col justify-between min-w-0">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between gap-1">
+                      <span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                        <FolderTree className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                        Child 단위 Parent 재할당
+                      </span>
+                    </label>
+                    {onReparentChildChunk ? (
                       <button
                         type="button"
                         onClick={() => handleOpenReparentSingleChunk(activeChunk)}
-                        className="mt-1.5 w-full py-1 px-2 text-[11px] font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                        className="w-full py-1.5 px-2 text-xs font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
                         title="이 Child 청크만 다른 Parent로 이동하거나 새 Parent를 생성하여 독립시킵니다."
                       >
-                        <FolderTree className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                        <FolderTree className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
                         <span>이 청크만 Parent 재할당</span>
                       </button>
+                    ) : (
+                      <div className="text-xs text-slate-400 italic py-1">재할당 비활성화</div>
                     )}
                   </div>
 
@@ -3046,25 +3061,6 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                       </div>
                     </label>
                   </div>
-                </div>
-
-                {/* Breadcrumbs Display */}
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center flex-wrap gap-1 bg-slate-50/50 dark:bg-slate-950/60 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">위계 맥락:</span>
-                  {(activeChunk.breadcrumbs || []).length > 0 ? (
-                    activeChunk.breadcrumbs.map((b, idx) => (
-                      <React.Fragment key={idx}>
-                        <span className={idx === activeChunk.breadcrumbs.length - 1 ? 'font-semibold text-indigo-700 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}>
-                          {b}
-                        </span>
-                        {idx < activeChunk.breadcrumbs.length - 1 && (
-                          <ChevronRight className="w-3 h-3 text-slate-300 dark:text-slate-600 shrink-0" />
-                        )}
-                      </React.Fragment>
-                    ))
-                  ) : (
-                    <span>{activeParent?.title || '루트'}</span>
-                  )}
                 </div>
 
                 {/* Table Specific Fields & Tabs */}

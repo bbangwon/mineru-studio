@@ -350,5 +350,13 @@ export interface RestoreBackupResponse {
   message: string;
 }
 
-
-
+// 9. Child 청크 단위 Parent 재할당 매개변수
+export interface ReparentChildChunkParams {
+  chunkIds: string[];
+  targetParentChunkId: string | null;
+  createNewParent?: {
+    sectionId: string;
+    title: string;
+    insertPosition?: ParentInsertPosition;
+  };
+}

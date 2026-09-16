@@ -15,12 +15,13 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react';
-import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse } from '../types';
+import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, ReparentChildChunkParams } from '../types';
 import { syncChunkPageMetadata, formatChunkPageFull } from '../utils/pageUtils';
 import { estimateKoreanTokens } from '../utils/idUtils';
 import { refineChunkText } from '../api/client';
 import { RefineDiffModal } from './RefineDiffModal';
 import { CopyableBadge } from './CopyableBadge';
+import { ReparentChildModal } from './ReparentChildModal';
 
 interface ChunkEditModalProps {
   chunk: ChildChunk | null;
@@ -30,6 +31,7 @@ interface ChunkEditModalProps {
   onClose: () => void;
   onSave: (updatedChunk: ChildChunk) => void;
   onReassignParentSection?: (parentChunkId: string, newSectionId: string) => void;
+  onReparentChildChunk?: (params: ReparentChildChunkParams) => void;
 }
 
 export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
@@ -40,6 +42,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
   onClose,
   onSave,
   onReassignParentSection,
+  onReparentChildChunk,
 }) => {
   const [text, setText] = useState(chunk?.text || '');
   const [sectionId, setSectionId] = useState(chunk?.section_id || chunk?.parent_id || '');
@@ -60,6 +63,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
   const [refineError, setRefineError] = useState<string | null>(null);
   const [diffData, setDiffData] = useState<LLMRefineResponse | null>(null);
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
+  const [isReparentModalOpen, setIsReparentModalOpen] = useState(false);
 
   const runRefineText = async (targetText: string) => {
     if (!targetText || !targetText.trim()) {
@@ -227,6 +231,16 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
                 <span className="text-slate-700 font-medium truncate max-w-xs">
                   · {currentParent.title}
                 </span>
+              )}
+              {onReparentChildChunk && (
+                <button
+                  type="button"
+                  onClick={() => setIsReparentModalOpen(true)}
+                  className="text-[11px] text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 px-2 py-0.5 rounded border border-purple-200 font-semibold cursor-pointer ml-1 transition"
+                  title="이 Child 청크의 상위 Parent 재할당"
+                >
+                  Parent 변경
+                </button>
               )}
             </div>
 
@@ -570,6 +584,25 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
           }
         }}
       />
+
+      {/* Reparent Child Modal Overlay */}
+      {isReparentModalOpen && chunk && (
+        <ReparentChildModal
+          isOpen={isReparentModalOpen}
+          onClose={() => setIsReparentModalOpen(false)}
+          targetChunks={[chunk]}
+          parentSections={parentSections}
+          parentChunks={parentChunks || []}
+          childChunks={[]}
+          onReparent={(params) => {
+            if (onReparentChildChunk) {
+              onReparentChildChunk(params);
+            }
+            setIsReparentModalOpen(false);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 };

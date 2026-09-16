@@ -53,6 +53,7 @@ import type {
   ParentInsertPosition,
   JobStatusResponse,
   ParseRequestParams,
+  ReparentChildChunkParams,
 } from './types';
 
 /**
@@ -1612,6 +1613,251 @@ export function App() {
     );
   };
 
+  // 10-0b. Reassign Child Chunk Parent Handler (Single or Multi-select Child Reparenting)
+  const handleReparentChildChunk = (params: ReparentChildChunkParams) => {
+    const { chunkIds, targetParentChunkId, createNewParent } = params;
+    if (!etlData || chunkIds.length === 0) return;
+
+    const sections = etlData.sections || etlData.parent_sections || [];
+    let parentChunks = [...(etlData.parent_chunks || [])];
+    let childChunks = [...(etlData.child_chunks || [])];
+    const targetChildIdSet = new Set(chunkIds);
+    const targetChildObjs = childChunks.filter((c) => targetChildIdSet.has(c.chunk_id));
+
+    if (targetChildObjs.length === 0) {
+      showToast('재할당할 대상 청크를 찾을 수 없습니다.', true);
+      return;
+    }
+
+    const docId = etlData.doc_id || generateDocId(etlData.doc_title);
+    let finalTargetParentId: string = targetParentChunkId || '';
+    let finalTargetSectionId: string = '';
+    let destParentTitle: string | undefined;
+
+    // 1) Case B: 새 Parent 생성
+    let updatedSections = [...sections];
+    if (createNewParent) {
+      const newPid = getNextParentChunkId(parentChunks, docId);
+      finalTargetParentId = newPid;
+      finalTargetSectionId = createNewParent.sectionId;
+      destParentTitle = createNewParent.title;
+
+      const targetSec = updatedSections.find((s) => s.id === createNewParent.sectionId);
+      if (!targetSec) {
+        showToast(`대상 섹션(${createNewParent.sectionId})을 찾을 수 없습니다.`, true);
+        return;
+      }
+
+      const combinedText = targetChildObjs
+        .map((c) => c.text)
+        .filter(Boolean)
+        .join('\n\n');
+      const minPage = Math.min(...targetChildObjs.map((c) => c.page_number || 1));
+      const maxPage = Math.max(...targetChildObjs.map((c) => c.page_end || c.page_number || 1));
+
+      const newParent: ParentChunk = {
+        parent_chunk_id: newPid,
+        id: newPid,
+        section_id: createNewParent.sectionId,
+        title: createNewParent.title,
+        text: combinedText,
+        token_estimate: estimateKoreanTokens(combinedText),
+        child_chunk_ids: [...chunkIds],
+        page_range: [minPage, maxPage],
+        is_edited: true,
+      };
+      parentChunks.push(newParent);
+
+      // Section의 parent_chunk_ids에 newPid 삽입
+      updatedSections = updatedSections.map((sec) => {
+        if (sec.id === createNewParent.sectionId) {
+          const oldPids = [...(sec.parent_chunk_ids || [])];
+          const pos = createNewParent.insertPosition || { type: 'end' };
+          let newPids: string[];
+          if (pos.type === 'start') {
+            newPids = [newPid, ...oldPids];
+          } else if (pos.type === 'after' && pos.parentId) {
+            const idx = oldPids.indexOf(pos.parentId);
+            if (idx !== -1) {
+              newPids = [...oldPids.slice(0, idx + 1), newPid, ...oldPids.slice(idx + 1)];
+            } else {
+              newPids = [...oldPids, newPid];
+            }
+          } else {
+            newPids = [...oldPids, newPid];
+          }
+          return {
+            ...sec,
+            parent_chunk_ids: newPids,
+          };
+        }
+        return sec;
+      });
+    } else {
+      // Case A: 기존 Parent로 이동
+      const destParent = parentChunks.find(
+        (p) => (p.parent_chunk_id === finalTargetParentId) || (p.id === finalTargetParentId)
+      );
+      if (!destParent) {
+        showToast(`대상 Parent 청크(${finalTargetParentId})를 찾을 수 없습니다.`, true);
+        return;
+      }
+      finalTargetSectionId = destParent.section_id;
+      destParentTitle = destParent.title;
+
+      // 대상 Parent에 chunkIds 추가 (중복 방지)
+      const mergedChildIds = [...(destParent.child_chunk_ids || [])];
+      for (const cid of chunkIds) {
+        if (!mergedChildIds.includes(cid)) mergedChildIds.push(cid);
+      }
+
+      parentChunks = parentChunks.map((p) => {
+        const pid = p.parent_chunk_id || p.id;
+        if (pid === finalTargetParentId) {
+          return {
+            ...p,
+            child_chunk_ids: mergedChildIds,
+            is_edited: true,
+          };
+        }
+        return p;
+      });
+    }
+
+    // 2) Source Parents 정리: targetChunks가 빠져나간 기존 부모들의 child_chunk_ids 정리 및 토큰/텍스트/페이지 재계산
+    const sourceParentIds = new Set<string>();
+    targetChildObjs.forEach((c) => {
+      const pid = c.parent_chunk_id || c.parent_id;
+      if (pid) sourceParentIds.add(pid);
+    });
+
+    const prunedParentIds = new Set<string>();
+    parentChunks = parentChunks
+      .map((p) => {
+        const pid = p.parent_chunk_id || p.id || '';
+        // 신규 Parent는 소스 정리에 포함하지 않음
+        if (pid === finalTargetParentId) return p;
+
+        if (sourceParentIds.has(pid)) {
+          const remainingCids = p.child_chunk_ids.filter((cid) => !targetChildIdSet.has(cid));
+          if (remainingCids.length === 0) {
+            prunedParentIds.add(pid);
+            return null; // Auto-prune empty parent
+          }
+          const remainingChildObjs = remainingCids
+            .map((cid) => childChunks.find((c) => c.chunk_id === cid))
+            .filter(Boolean) as ChildChunk[];
+          const pText = remainingChildObjs.map((c) => c.text).filter(Boolean).join('\n\n');
+          const minP = remainingChildObjs.length > 0 ? Math.min(...remainingChildObjs.map((c) => c.page_number || 1)) : p.page_range[0];
+          const maxP = remainingChildObjs.length > 0 ? Math.max(...remainingChildObjs.map((c) => c.page_end || c.page_number || 1)) : p.page_range[1];
+
+          return {
+            ...p,
+            child_chunk_ids: remainingCids,
+            text: pText,
+            token_estimate: estimateKoreanTokens(pText),
+            page_range: [minP, maxP] as [number, number],
+            is_edited: true,
+          };
+        }
+        return p;
+      })
+      .filter(Boolean) as ParentChunk[];
+
+    // 3) 대상 Parent(destParent) 텍스트, 토큰, 페이지 범위 최종 재계산
+    const chunkMap = new Map<string, ChildChunk>();
+    for (const c of childChunks) {
+      chunkMap.set(c.chunk_id, c);
+    }
+
+    parentChunks = parentChunks.map((p) => {
+      const pid = p.parent_chunk_id || p.id;
+      if (pid === finalTargetParentId) {
+        const pChildren = p.child_chunk_ids
+          .map((cid) => chunkMap.get(cid))
+          .filter(Boolean) as ChildChunk[];
+        const pText = pChildren.map((c) => c.text).filter(Boolean).join('\n\n');
+        const minP = pChildren.length > 0 ? Math.min(...pChildren.map((c) => c.page_number || 1)) : p.page_range[0];
+        const maxP = pChildren.length > 0 ? Math.max(...pChildren.map((c) => c.page_end || c.page_number || 1)) : p.page_range[1];
+
+        return {
+          ...p,
+          text: pText,
+          token_estimate: estimateKoreanTokens(pText),
+          page_range: [minP, maxP] as [number, number],
+          is_edited: true,
+        };
+      }
+      return p;
+    });
+
+    // 4) Sections에서 정리된 Pruned Parent 제거
+    if (prunedParentIds.size > 0) {
+      updatedSections = updatedSections.map((sec) => {
+        const remainingPids = (sec.parent_chunk_ids || []).filter((pid) => !prunedParentIds.has(pid));
+        return {
+          ...sec,
+          parent_chunk_ids: remainingPids,
+        };
+      });
+    }
+
+    // 5) 이동된 Child 청크들의 parent_chunk_id, parent_id, section_id, breadcrumbs 갱신
+    const destSec = updatedSections.find((s) => s.id === finalTargetSectionId);
+    const baseSecBcs = destSec?.breadcrumbs && destSec.breadcrumbs.length > 0
+      ? destSec.breadcrumbs
+      : (destSec?.title ? [destSec.title] : []);
+
+    childChunks = childChunks.map((c) => {
+      if (targetChildIdSet.has(c.chunk_id)) {
+        let newBreadcrumbs = destParentTitle ? [...baseSecBcs, destParentTitle] : [...baseSecBcs];
+        const isArticle = c.chunk_type === 'article' || c.chunk_type === 'article_clause';
+        if (isArticle && c.metadata?.article_no) {
+          const artDisplay = c.metadata?.article_title
+            ? `${c.metadata.article_no}(${c.metadata.article_title})`
+            : c.metadata.article_no;
+          newBreadcrumbs.push(artDisplay);
+        }
+
+        return {
+          ...c,
+          parent_chunk_id: finalTargetParentId,
+          parent_id: finalTargetParentId,
+          section_id: finalTargetSectionId,
+          breadcrumbs: newBreadcrumbs,
+          is_edited: true,
+        };
+      }
+      return c;
+    });
+
+    // 6) Stats 갱신
+    const updatedStats = {
+      ...etlData.stats,
+      total_parent_chunks: parentChunks.length,
+      total_child_chunks: childChunks.length,
+    };
+
+    // 7) syncHierarchyOrder 일괄 동기화
+    const intermediateEtl = {
+      ...etlData,
+      parent_chunks: parentChunks,
+      child_chunks: childChunks,
+      sections: updatedSections,
+      parent_sections: updatedSections,
+      stats: updatedStats,
+    };
+    const syncedEtl = syncHierarchyOrder(intermediateEtl);
+
+    setEtlData(syncedEtl);
+    setIsDirty(true);
+    setSelectedParentChunkId(finalTargetParentId);
+    if (finalTargetSectionId) setSelectedSectionId(finalTargetSectionId);
+
+    const pruneNote = prunedParentIds.size > 0 ? ` (빈 Parent ${prunedParentIds.size}개 자동 정리)` : '';
+    showToast(`청크 ${chunkIds.length}개의 상위 Parent가 '${destParentTitle || finalTargetParentId}'(으)로 재할당되었습니다.${pruneNote}`);
+  };
+
   // 10-1. Add Parent Chunk Handler (with Initial Child Chunk & Insertion Position)
   const handleAddParent = (data: {
     sectionId: string;
@@ -2783,6 +3029,7 @@ export function App() {
                 onMergeChunks={handleMergeChunks}
                 onDeleteChunks={handleDeleteChunks}
                 onReassignParentSection={handleReassignParentSection}
+                onReparentChildChunk={handleReparentChildChunk}
                 onBatchCleanEmptyChunks={handleBatchCleanEmptyChunks}
                 onReindexIds={handleReindexIds}
                 onBulkUpdateMetadata={handleBulkUpdateMetadata}
@@ -2828,6 +3075,7 @@ export function App() {
         }}
         onSave={handleUpdateChunk}
         onReassignParentSection={handleReassignParentSection}
+        onReparentChildChunk={handleReparentChildChunk}
       />
 
       {/* Qdrant Configuration Modal */}

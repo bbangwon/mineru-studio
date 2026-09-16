@@ -1,5 +1,5 @@
 import React from 'react';
-import { Table2, AlignLeft, FileCode2, ChevronRight, MapPin, ShieldCheck, Image as ImageIcon, ExternalLink, Scale, Edit3, EyeOff, CheckCircle2, AlertTriangle, Info, Trash2, Sparkles } from 'lucide-react';
+import { Table2, AlignLeft, FileCode2, ChevronRight, MapPin, ShieldCheck, Image as ImageIcon, ExternalLink, Scale, Edit3, EyeOff, CheckCircle2, AlertTriangle, Info, Trash2, Sparkles, FolderTree } from 'lucide-react';
 import type { ChildChunk, ParentSection } from '../types';
 import { formatChunkPageFull } from '../utils/pageUtils';
 import { estimateKoreanTokens } from '../utils/idUtils';
@@ -12,6 +12,7 @@ interface ChunkCardProps {
   onEditChunk?: (chunk: ChildChunk) => void;
   onDeleteChunk?: (chunkId: string) => void;
   onRefineChunk?: (chunk: ChildChunk) => void;
+  onReparentChunk?: (chunk: ChildChunk) => void;
 }
 
 export const ChunkCard: React.FC<ChunkCardProps> = ({
@@ -21,6 +22,7 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
   onEditChunk,
   onDeleteChunk,
   onRefineChunk,
+  onReparentChunk,
 }) => {
   const isTable = chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table);
   const isArticle = chunk.chunk_type === 'article' || chunk.chunk_type === 'article_clause';
@@ -125,6 +127,18 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
             >
               <Edit3 className="w-3.5 h-3.5" />
               <span>수정</span>
+            </button>
+          )}
+
+          {onReparentChunk && (
+            <button
+              type="button"
+              onClick={() => onReparentChunk(chunk)}
+              className="text-[11px] text-purple-700 dark:text-purple-300 hover:text-purple-900 dark:hover:text-purple-100 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 px-2.5 py-1 rounded transition flex items-center gap-1 font-semibold cursor-pointer border border-purple-200/80 dark:border-purple-800"
+              title="상위 Parent 재할당"
+            >
+              <FolderTree className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+              <span>Parent 변경</span>
             </button>
           )}
 

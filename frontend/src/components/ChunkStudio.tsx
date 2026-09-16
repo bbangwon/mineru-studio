@@ -43,7 +43,7 @@ import {
   CornerDownRight,
   CornerUpLeft,
 } from 'lucide-react';
-import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition } from '../types';
+import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams } from '../types';
 import { ChunkSplitModal } from './ChunkSplitModal';
 import { ChunkMergeModal } from './ChunkMergeModal';
 import { AddSectionModal } from './AddSectionModal';
@@ -52,6 +52,7 @@ import { AddChildModal } from './AddChildModal';
 import { EditParentModal } from './EditParentModal';
 import { BulkMetadataModal } from './BulkMetadataModal';
 import { ReparentSectionModal } from './ReparentSectionModal';
+import { ReparentChildModal } from './ReparentChildModal';
 import {
   formatChunkPage,
   formatChunkPageFull,
@@ -128,6 +129,7 @@ interface ChunkStudioProps {
   ) => void;
   onDeleteChunks?: (chunkIds: string[]) => void;
   onReassignParentSection?: (parentChunkId: string, newSectionId: string) => void;
+  onReparentChildChunk?: (params: ReparentChildChunkParams) => void;
   onBatchCleanEmptyChunks?: () => void;
   onReindexIds?: () => void;
   onBulkUpdateMetadata?: (params: {
@@ -168,6 +170,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   onMergeChunks,
   onDeleteChunks,
   onReassignParentSection,
+  onReparentChildChunk,
   onBatchCleanEmptyChunks,
   onReindexIds,
   onBulkUpdateMetadata,
@@ -182,6 +185,22 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
   const [reparentModalSection, setReparentModalSection] = useState<ParentSection | null>(null);
   const [isReparentModalOpen, setIsReparentModalOpen] = useState(false);
+
+  const [isReparentChildModalOpen, setIsReparentChildModalOpen] = useState(false);
+  const [reparentTargetChunks, setReparentTargetChunks] = useState<ChildChunk[]>([]);
+
+  const handleOpenReparentSingleChunk = (chunk: ChildChunk, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setReparentTargetChunks([chunk]);
+    setIsReparentChildModalOpen(true);
+  };
+
+  const handleOpenReparentSelectedChunks = () => {
+    const selectedList = childChunks.filter((c) => selectedChunkIds.has(c.chunk_id));
+    if (selectedList.length === 0) return;
+    setReparentTargetChunks(selectedList);
+    setIsReparentChildModalOpen(true);
+  };
 
   const [isEditParentModalOpen, setIsEditParentModalOpen] = useState(false);
   const [targetParentForEdit, setTargetParentForEdit] = useState<ParentChunk | null>(null);
@@ -2185,6 +2204,18 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                   <span>선택 삭제 ({selectedChunkIds.size})</span>
                 </button>
 
+                {onReparentChildChunk && (
+                  <button
+                    type="button"
+                    onClick={handleOpenReparentSelectedChunks}
+                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                    title="선택한 청크들을 다른 Parent 청크로 이동하거나 새 Parent를 생성하여 독립시킵니다."
+                  >
+                    <FolderTree className="w-3.5 h-3.5" />
+                    <span>Parent 재할당 ({selectedChunkIds.size})</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   disabled={selectedChunkIds.size < 2 || !onMergeChunks}
@@ -2528,6 +2559,18 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                   {isIgnored ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                                 </button>
 
+                                {/* Quick Reparent Button */}
+                                {onReparentChildChunk && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleOpenReparentSingleChunk(chunk, e)}
+                                    className="p-1 rounded transition cursor-pointer text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800"
+                                    title="상위 Parent 재할당 (이 청크를 다른 Parent로 이동하거나 새 Parent 생성)"
+                                  >
+                                    <FolderTree className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+
                                 {/* Quick Single Delete Button */}
                                 {onDeleteChunks && (
                                   <button
@@ -2778,6 +2821,17 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                           <span>수정</span>
                         </button>
                       )}
+                      {onReparentChildChunk && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenReparentSingleChunk(activeChunk)}
+                          className="text-[11px] text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 hover:underline flex items-center gap-1 font-semibold ml-1 cursor-pointer"
+                          title="이 Child 청크의 상위 Parent를 다른 Parent로 재할당하거나 새 Parent를 생성합니다."
+                        >
+                          <FolderTree className="w-2.5 h-2.5" />
+                          <span>Parent 재할당</span>
+                        </button>
+                      )}
                       {onMoveParent && (() => {
                         const apId = activeParentChunk.parent_chunk_id || activeParentChunk.id || '';
                         const aSec = parentMap.get(activeParentChunk.section_id);
@@ -2844,7 +2898,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
                         <FolderTree className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                        소속 섹션 재할당
+                        Parent 소속 섹션 변경
                       </span>
                       {activeChunk.parent_chunk_id && (
                         <CopyableBadge
@@ -2867,6 +2921,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         }
                       }}
                       className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                      title="소속된 상위 Parent 청크 전체의 섹션을 변경합니다."
                     >
                       {parentSections.map((sec) => (
                         <option key={sec.id} value={sec.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
@@ -2874,6 +2929,18 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         </option>
                       ))}
                     </select>
+
+                    {onReparentChildChunk && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenReparentSingleChunk(activeChunk)}
+                        className="mt-1.5 w-full py-1 px-2 text-[11px] font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                        title="이 Child 청크만 다른 Parent로 이동하거나 새 Parent를 생성하여 독립시킵니다."
+                      >
+                        <FolderTree className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                        <span>이 청크만 Parent 재할당</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Page Number & Range Selector */}
@@ -3575,6 +3642,26 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
           onReparent={(secId, newParentId) => {
             if (onReparentSection) {
               onReparentSection(secId, newParentId);
+            }
+          }}
+        />
+      )}
+
+      {/* Reparent Child Chunk Modal */}
+      {isReparentChildModalOpen && reparentTargetChunks.length > 0 && (
+        <ReparentChildModal
+          isOpen={isReparentChildModalOpen}
+          onClose={() => {
+            setIsReparentChildModalOpen(false);
+            setReparentTargetChunks([]);
+          }}
+          targetChunks={reparentTargetChunks}
+          parentSections={parentSections}
+          parentChunks={parentChunks || []}
+          childChunks={childChunks}
+          onReparent={(params) => {
+            if (onReparentChildChunk) {
+              onReparentChildChunk(params);
             }
           }}
         />

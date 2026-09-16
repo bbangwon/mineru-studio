@@ -95,9 +95,10 @@ magic-pdf.json
 models/
 .cache/
 
-# Logs
+# Logs & Process IDs
 *.log
 logs/
+*.pid
 
 pdfs/
 

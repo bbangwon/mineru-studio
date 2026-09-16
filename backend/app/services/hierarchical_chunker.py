@@ -1008,6 +1008,23 @@ class HierarchicalChunker:
                 child_counter += 1
                 cid = f"{self.doc_id}_c{child_counter:04d}"
 
+                effective_breadcrumbs = list(current_breadcrumbs) if current_breadcrumbs else list(breadcrumbs)
+
+                tbl_meta = {
+                    "doc_title": doc_title,
+                    "type": "table",
+                    "is_table": True,
+                    "is_atomic_table": True,
+                    "page": tbl_start_p,
+                    "page_start": tbl_start_p,
+                    "page_end": tbl_end_p,
+                    "pages": tbl_pages,
+                }
+                if current_meta.get("article_display"):
+                    tbl_meta["article_no"] = current_meta.get("article_no", "")
+                    tbl_meta["article_title"] = current_meta.get("article_title", "")
+                    tbl_meta["article_display"] = current_meta.get("article_display", "")
+
                 child_chunks.append({
                     "chunk_id": cid,
                     "parent_chunk_id": "",
@@ -1022,19 +1039,10 @@ class HierarchicalChunker:
                     "token_estimate": self.estimate_korean_tokens(search_text),
                     "page_number": tbl_start_p,
                     "page_end": tbl_end_p,
-                    "breadcrumbs": list(breadcrumbs),
+                    "breadcrumbs": effective_breadcrumbs,
                     "is_table": True,
                     "is_atomic_table": True,
-                    "metadata": {
-                        "doc_title": doc_title,
-                        "type": "table",
-                        "is_table": True,
-                        "is_atomic_table": True,
-                        "page": tbl_start_p,
-                        "page_start": tbl_start_p,
-                        "page_end": tbl_end_p,
-                        "pages": tbl_pages,
-                    }
+                    "metadata": tbl_meta,
                 })
                 continue
 
@@ -1066,7 +1074,7 @@ class HierarchicalChunker:
                 flush_child_chunk()
                 current_breadcrumbs = breadcrumbs + [item.get("title", "")]
                 current_chunk_type = "paragraph"
-                current_meta = {"heading": item.get("title", "")}
+                current_meta = {}
                 continue
 
             raw_text = item.get("text", "")
@@ -1128,7 +1136,10 @@ class HierarchicalChunker:
 
             first_c = current_children[0]
             bc_str = " > ".join(first_c.get("breadcrumbs", [sec_title]))
-            context_header = f"[{bc_str}]"
+            if current_parent_title and current_parent_title.endswith(" (계속)"):
+                context_header = f"[{bc_str} (계속)]"
+            else:
+                context_header = f"[{bc_str}]"
             raw_parent_text = f"{context_header}\n\n{body_text}".strip()
             parent_full_text = self.normalize_parent_text(raw_parent_text, preserve_newlines=self.preserve_newlines)
 
@@ -1171,20 +1182,25 @@ class HierarchicalChunker:
                 flush_parent()
                 continue
 
-            # 2. 조문(article_display) 변경 감지 시 독립 Parent 생성
+            # 2. 제목 식별: 법률 조문(article_display) 또는 일반 문서 Heading(breadcrumbs[-1])
             art_disp = child.get("metadata", {}).get("article_display")
-            if art_disp and current_parent_title and current_parent_title != art_disp:
+            child_bc = child.get("breadcrumbs", [])
+            target_heading = art_disp or (child_bc[-1] if child_bc else sec_title)
+
+            # 제목 변경 감지 시 독립 Parent 생성 (단, '(계속)' 접미사가 붙은 현재 제목의 베이스 타이틀과 비교)
+            base_parent_title = current_parent_title.replace(" (계속)", "") if current_parent_title else None
+            if base_parent_title and target_heading and base_parent_title != target_heading:
                 flush_parent()
 
-            if not current_parent_title and art_disp:
-                current_parent_title = art_disp
+            if not current_parent_title and target_heading:
+                current_parent_title = target_heading
 
             # 3. 2048 토큰 초과 검사
             c_tokens = child.get("token_estimate", 0)
             if current_tokens + c_tokens > 2048 and current_children:
                 flush_parent()
-                if art_disp:
-                    current_parent_title = f"{art_disp} (계속)"
+                if target_heading:
+                    current_parent_title = f"{target_heading} (계속)"
 
             current_children.append(child)
             current_tokens += c_tokens

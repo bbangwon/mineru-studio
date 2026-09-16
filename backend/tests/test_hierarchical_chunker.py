@@ -854,6 +854,149 @@ class TestHierarchicalChunker(unittest.TestCase):
         iv_sec = next(s for s in reindexed["sections"] if s["title"] == "IV. 조사 및 판정절차")
         self.assertEqual(iv_sec["page_range"], [11, 15])
 
+    def test_general_chunking_heading_parent_split(self):
+        """일반 문서에서 H3 소제목 변경 시 Parent 청크가 분할되고 metadata에 heading이 없는지 검증"""
+        chunker = HierarchicalChunker(doc_id="test_heading_split")
+        sample_content_list = [
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1. 서론"}], "level": 1},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1.1 연구 배경"}], "level": 3},
+                "page_idx": 0
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "본 연구의 배경입니다. 중요한 연구 과제입니다."}]},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1.2 연구 목적"}], "level": 3},
+                "page_idx": 1
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "본 연구의 핵심 목적을 기술합니다."}]},
+                "page_idx": 1
+            },
+        ]
+
+        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="연구보고서", strategy="general")
+
+        parents = etl_res["parent_chunks"]
+        children = etl_res["child_chunks"]
+
+        # 1. 서로 다른 H3 제목에 따라 Parent가 분할되었는지 검증 (최소 2개)
+        self.assertEqual(len(parents), 2)
+        self.assertEqual(parents[0]["title"], "1.1 연구 배경")
+        self.assertEqual(parents[1]["title"], "1.2 연구 목적")
+
+        # 2. Child 청크가 각 Parent를 정확히 가리키는지 검증
+        self.assertEqual(children[0]["parent_chunk_id"], parents[0]["parent_chunk_id"])
+        self.assertEqual(children[1]["parent_chunk_id"], parents[1]["parent_chunk_id"])
+
+        # 3. Child 청크의 metadata에 'heading'이 제거되었는지 검증
+        self.assertNotIn("heading", children[0]["metadata"])
+        self.assertNotIn("heading", children[1]["metadata"])
+
+        # 4. breadcrumbs에 직속 제목이 포함되어 있는지 검증
+        self.assertEqual(children[0]["breadcrumbs"][-1], "1.1 연구 배경")
+        self.assertEqual(children[1]["breadcrumbs"][-1], "1.2 연구 목적")
+
+    def test_general_chunking_token_overflow_parent_split(self):
+        """일반 문서에서 단일 Heading 하위 내용이 2048 토큰을 초과할 때 '(계속)' 타이틀로 분할되는지 검증"""
+        chunker = HierarchicalChunker(doc_id="test_token_overflow")
+
+        # 1.1 하위에 약 3000 토큰 분량의 긴 단락들 생성
+        long_unit = "가나다라마바사 아자차카타파하 " * 50
+        paragraphs = []
+        for i in range(25):
+            paragraphs.append({
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": f"단락 {i}: {long_unit}"}]},
+                "page_idx": i // 5
+            })
+
+        sample_content_list = [
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1. 서론"}], "level": 1},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1.1 방대한 배경"}], "level": 3},
+                "page_idx": 0
+            },
+            *paragraphs
+        ]
+
+        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="방대보고서", strategy="general")
+
+        parents = etl_res["parent_chunks"]
+        # 2048 토큰 한도로 인해 최소 2개 이상의 Parent로 분할되어야 함
+        self.assertGreaterEqual(len(parents), 2)
+        self.assertEqual(parents[0]["title"], "1.1 방대한 배경")
+        self.assertTrue(parents[1]["title"].endswith("(계속)"))
+        self.assertIn("1.1 방대한 배경 (계속)", parents[1]["title"])
+
+    def test_general_chunking_table_inside_heading_not_split(self):
+        """동일 Heading 하위에 표가 포함되어 있어도 2048 토큰 미만이면 Parent가 분할되지 않고 하나로 묶이는지 검증"""
+        chunker = HierarchicalChunker(doc_id="test_table_no_split")
+        sample_content_list = [
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1. 서론"}], "level": 1},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1.1 연구 데이터"}], "level": 3},
+                "page_idx": 0
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "표에 대한 사전 설명 단락입니다."}]},
+                "page_idx": 0
+            },
+            {
+                "type": "table",
+                "content": {
+                    "html": "<table><tr><th>항목</th><th>수치</th></tr><tr><td>측정값</td><td>100</td></tr></table>",
+                    "table_caption": [{"type": "text", "content": "측정 데이터표"}],
+                    "table_footnote": []
+                },
+                "page_idx": 0
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "표에 대한 사후 분석 단락입니다."}]},
+                "page_idx": 0
+            }
+        ]
+
+        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="연구보고서", strategy="general")
+
+        parents = etl_res["parent_chunks"]
+        children = etl_res["child_chunks"]
+
+        # 1. Heading 하위의 [본문1, 표, 본문2]가 불필요하게 쪼개지지 않고 단 1개의 Parent로 묶여야 함!
+        self.assertEqual(len(parents), 1, f"Expected 1 parent chunk, but got {len(parents)}: {[p['title'] for p in parents]}")
+        self.assertEqual(parents[0]["title"], "1.1 연구 데이터")
+
+        # 2. Child는 총 3개 (본문1, 표, 본문2)
+        self.assertEqual(len(children), 3)
+
+        # 3. 3개 Child 모두 동일한 Parent ID를 바라봐야 함
+        parent_id = parents[0]["parent_chunk_id"]
+        for c in children:
+            self.assertEqual(c["parent_chunk_id"], parent_id)
+            self.assertEqual(c["breadcrumbs"][-1], "1.1 연구 데이터")
+
 
 if __name__ == "__main__":
     unittest.main()

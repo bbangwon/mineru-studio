@@ -70,8 +70,16 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
     },
   };
 
-  if (isAtomicTable) {
-    record.raw_html = chunk.raw_html || '';
+  const chunkTables = chunk.tables || chunk.metadata?.tables || [];
+  const hasTables = isAtomicTable || chunkTables.length > 0;
+
+  if (chunkTables.length > 0) {
+    record.tables = chunkTables;
+    record.metadata.tables = chunkTables;
+  }
+
+  if (hasTables) {
+    if (chunk.raw_html) record.raw_html = chunk.raw_html;
     if (chunk.table_caption) record.table_caption = chunk.table_caption;
     if (chunk.table_footnote) record.table_footnote = chunk.table_footnote;
   }

@@ -929,6 +929,51 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     onUpdateChunk(updated, true);
   };
 
+  // Update caption or footnote of a specific table inside a composite chunk
+  const handleCompositeTableFieldChange = (
+    tableIndex: number,
+    field: 'caption' | 'footnote',
+    value: string
+  ) => {
+    if (!activeChunk) return;
+    const currentTables: EmbeddedTableItem[] = [
+      ...(activeChunk.tables || activeChunk.metadata?.tables || []),
+    ];
+    if (tableIndex < 0 || tableIndex >= currentTables.length) return;
+
+    currentTables[tableIndex] = {
+      ...currentTables[tableIndex],
+      [field]: value,
+    };
+
+    // Aggregate captions and footnotes for chunk-level search & display
+    const aggregatedCaption = currentTables
+      .map((t) => t.caption?.trim())
+      .filter(Boolean)
+      .join(' / ') || undefined;
+
+    const aggregatedFootnote = currentTables
+      .map((t) => t.footnote?.trim())
+      .filter(Boolean)
+      .join(' / ') || undefined;
+
+    const updated: ChildChunk = {
+      ...activeChunk,
+      tables: currentTables,
+      table_caption: aggregatedCaption,
+      table_footnote: aggregatedFootnote,
+      is_edited: true,
+      metadata: {
+        ...(activeChunk.metadata || {}),
+        tables: currentTables,
+        ...(aggregatedCaption ? { table_caption: aggregatedCaption } : {}),
+        ...(aggregatedFootnote ? { table_footnote: aggregatedFootnote } : {}),
+      },
+    };
+
+    onUpdateChunk(updated, true);
+  };
+
   // Add custom metadata tag
   const handleAddMetaTag = () => {
     if (!activeChunk || !newMetaKey.trim()) return;
@@ -3169,28 +3214,63 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                             </div>
                           </div>
                         ) : isActiveComposite && activeTableList.length > 0 ? (
-                          <div className="space-y-1.5">
-                            <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                              포함된 개별 표 목록 ({activeTableList.length}개)
-                            </label>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                포함된 개별 표 목록 ({activeTableList.length}개) — 표별 제목/각주 편집
+                              </label>
+                              <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
+                                수정 시 청크 상위 메타데이터에 자동 반영
+                              </span>
+                            </div>
+                            <div className="space-y-2">
                               {activeTableList.map((tbl: EmbeddedTableItem, idx: number) => (
-                                <div key={idx} className="p-2 bg-white dark:bg-slate-900 rounded-lg border border-indigo-100 dark:border-indigo-900/60 flex items-center justify-between text-xs">
-                                  <div className="min-w-0 pr-1">
-                                    <span className="font-semibold text-[11px] text-slate-800 dark:text-slate-200 block truncate">
-                                      {tbl.caption ? `[표 ${idx + 1}] ${tbl.caption}` : `[표 ${idx + 1}] 데이터 표`}
+                                <div
+                                  key={idx}
+                                  className="p-2.5 bg-white dark:bg-slate-900 rounded-lg border border-indigo-100 dark:border-indigo-900/60 shadow-2xs space-y-2"
+                                >
+                                  <div className="flex items-center justify-between text-xs border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                                    <span className="font-bold text-[11px] text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5">
+                                      <Table2 className="w-3.5 h-3.5" />
+                                      표 {idx + 1}
+                                      {tbl.page_number && (
+                                        <span className="text-[10px] font-normal text-slate-400">
+                                          (p.{tbl.page_number})
+                                        </span>
+                                      )}
                                     </span>
-                                    {tbl.footnote && (
-                                      <span className="text-[10px] text-slate-400 block truncate">
-                                        {tbl.footnote}
+                                    {tbl.row_count ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono">
+                                        {tbl.row_count}행
                                       </span>
-                                    )}
+                                    ) : null}
                                   </div>
-                                  {tbl.row_count ? (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono shrink-0">
-                                      {tbl.row_count}행
-                                    </span>
-                                  ) : null}
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] font-medium text-slate-600 dark:text-slate-400 mb-0.5">
+                                        표 {idx + 1} 제목 (Caption)
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={tbl.caption || ''}
+                                        onChange={(e) => handleCompositeTableFieldChange(idx, 'caption', e.target.value)}
+                                        placeholder={`예: [표 ${idx + 1}] 세부 내역`}
+                                        className="w-full text-xs bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-md px-2.5 py-1 text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden transition"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] font-medium text-slate-600 dark:text-slate-400 mb-0.5">
+                                        표 {idx + 1} 각주 (Footnote)
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={tbl.footnote || ''}
+                                        onChange={(e) => handleCompositeTableFieldChange(idx, 'footnote', e.target.value)}
+                                        placeholder="예: ※ 기준치 초과 시 재검사"
+                                        className="w-full text-xs bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-md px-2.5 py-1 text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden transition"
+                                      />
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>

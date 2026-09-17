@@ -278,6 +278,7 @@ class EmbeddingService:
                 "table_type": chunk.get("table_type"),
                 "is_table": bool(chunk.get("is_table") or chunk.get("chunk_type") == "table"),
                 "is_atomic_table": bool(chunk.get("is_atomic_table")),
+                "tables": chunk.get("tables") or chunk_meta.get("tables"),
                 "metadata": chunk_meta,
             }
 
@@ -403,6 +404,7 @@ class EmbeddingService:
                 "table_caption": p.get("table_caption"),
                 "table_footnote": p.get("table_footnote"),
                 "is_table": p.get("is_table", False),
+                "tables": p.get("tables"),
                 "metadata": p.get("metadata", {}),
                 "payload": p,
             })

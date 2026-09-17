@@ -15,7 +15,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react';
-import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, ReparentChildChunkParams } from '../types';
+import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, ReparentChildChunkParams, EmbeddedTableItem } from '../types';
 import { syncChunkPageMetadata, formatChunkPageFull } from '../utils/pageUtils';
 import { estimateKoreanTokens } from '../utils/idUtils';
 import { refineChunkText } from '../api/client';
@@ -51,12 +51,16 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
   const [isIgnored, setIsIgnored] = useState(Boolean(chunk?.is_ignored));
   const [activeTab, setActiveTab] = useState<'text' | 'raw_html' | 'preview'>('text');
 
-  // Table specific state
+  // Table & Composite specific state
   const isTable = chunk?.chunk_type === 'table' || Boolean(chunk?.is_atomic_table);
   const isArticle = chunk?.chunk_type === 'article' || chunk?.chunk_type === 'article_clause';
+  const initialCompositeTables: EmbeddedTableItem[] = chunk?.tables || chunk?.metadata?.tables || [];
+  const isComposite = chunk?.chunk_type === 'composite' || (initialCompositeTables.length > 0 && chunk?.chunk_type !== 'table');
+
   const [rawHtml, setRawHtml] = useState(chunk?.raw_html || '');
   const [tableCaption, setTableCaption] = useState(chunk?.table_caption || '');
   const [tableFootnote, setTableFootnote] = useState(chunk?.table_footnote || '');
+  const [compositeTables, setCompositeTables] = useState<EmbeddedTableItem[]>(initialCompositeTables);
 
   // AI Refinement State
   const [isRefining, setIsRefining] = useState(false);
@@ -88,6 +92,16 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
     runRefineText(textToRefine);
   };
 
+  const handleCompositeTableChange = (idx: number, field: 'caption' | 'footnote', value: string) => {
+    setCompositeTables((prev) => {
+      const updated = [...prev];
+      if (idx >= 0 && idx < updated.length) {
+        updated[idx] = { ...updated[idx], [field]: value };
+      }
+      return updated;
+    });
+  };
+
   useEffect(() => {
     if (!chunk) return;
     setText(chunk.text || '');
@@ -98,6 +112,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
     setRawHtml(chunk.raw_html || '');
     setTableCaption(chunk.table_caption || '');
     setTableFootnote(chunk.table_footnote || '');
+    setCompositeTables(chunk.tables || chunk.metadata?.tables || []);
     setActiveTab('text');
     setRefineError(null);
     setDiffData(null);
@@ -162,6 +177,21 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
       updated.raw_html = rawHtml;
       updated.table_caption = tableCaption;
       updated.table_footnote = tableFootnote;
+    } else if (isComposite && compositeTables.length > 0) {
+      const aggCaption = compositeTables.map((t) => t.caption?.trim()).filter(Boolean).join(' / ') || undefined;
+      const aggFootnote = compositeTables.map((t) => t.footnote?.trim()).filter(Boolean).join(' / ') || undefined;
+      updated.tables = compositeTables;
+      updated.table_caption = aggCaption;
+      updated.table_footnote = aggFootnote;
+      if (rawHtml) {
+        updated.raw_html = rawHtml;
+      }
+      updated.metadata = {
+        ...(updated.metadata || {}),
+        tables: compositeTables,
+        ...(aggCaption ? { table_caption: aggCaption } : {}),
+        ...(aggFootnote ? { table_footnote: aggFootnote } : {}),
+      };
     }
 
     onSave(updated);
@@ -175,7 +205,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/70">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-              {isTable ? (
+              {isTable || isComposite ? (
                 <Table2 className="w-5 h-5" />
               ) : isArticle ? (
                 <Scale className="w-5 h-5 text-purple-600" />
@@ -199,7 +229,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                {formatChunkPageFull(chunk)} · {isTable ? '원형 보존 표 청크 (Atomic Table)' : isArticle ? '조문 청크' : '일반 문단 청크'}
+                {formatChunkPageFull(chunk)} · {isComposite ? `복합 청크 (표 ${compositeTables.length || 1}개 결합)` : isTable ? '원형 보존 표 청크 (Atomic Table)' : isArticle ? '조문 청크' : '일반 문단 청크'}
               </p>
             </div>
           </div>
@@ -350,8 +380,8 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
             </div>
           </div>
 
-          {/* Table Special Fields */}
-          {isTable && (
+          {/* Table & Composite Special Fields */}
+          {(isTable || (isComposite && compositeTables.length > 0)) && (
             <div className="space-y-3 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
               <div className="flex items-center justify-between border-b border-indigo-200/60 pb-2">
                 <div className="flex items-center gap-2">
@@ -364,7 +394,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
                         : 'text-indigo-700 hover:bg-indigo-100'
                     }`}
                   >
-                    표 텍스트 (검색용 요약)
+                    {isComposite ? '본문/마크다운 텍스트' : '표 텍스트 (검색용 요약)'}
                   </button>
                   <button
                     type="button"
@@ -386,38 +416,102 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
                         : 'text-indigo-700 hover:bg-indigo-100'
                     }`}
                   >
-                    HTML 미리보기
+                    {isComposite ? '통합 미리보기' : 'HTML 미리보기'}
                   </button>
                 </div>
 
                 <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  표 원형 보존 상태 (Atomic Table)
+                  {isComposite ? `복합 청크 (표 ${compositeTables.length || 1}개 결합)` : '표 원형 보존 상태 (Atomic Table)'}
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">표 제목 (Caption)</label>
-                  <input
-                    type="text"
-                    value={tableCaption}
-                    onChange={(e) => setTableCaption(e.target.value)}
-                    placeholder="예: [표 1] 검사항목별 세부기준"
-                    className="w-full text-xs bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-                  />
+              {isTable ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">표 제목 (Caption)</label>
+                    <input
+                      type="text"
+                      value={tableCaption}
+                      onChange={(e) => setTableCaption(e.target.value)}
+                      placeholder="예: [표 1] 검사항목별 세부기준"
+                      className="w-full text-xs bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">표 각주 (Footnote)</label>
+                    <input
+                      type="text"
+                      value={tableFootnote}
+                      onChange={(e) => setTableFootnote(e.target.value)}
+                      placeholder="예: ※ 1일 기준 최대 허용치"
+                      className="w-full text-xs bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">표 각주 (Footnote)</label>
-                  <input
-                    type="text"
-                    value={tableFootnote}
-                    onChange={(e) => setTableFootnote(e.target.value)}
-                    placeholder="예: ※ 1일 기준 최대 허용치"
-                    className="w-full text-xs bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-                  />
+              ) : isComposite && compositeTables.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-700">
+                      포함된 개별 표 목록 ({compositeTables.length}개) — 표별 제목/각주 편집
+                    </label>
+                    <span className="text-[11px] text-indigo-600 font-medium">
+                      저장 시 청크 상위 메타데이터에 자동 반영
+                    </span>
+                  </div>
+                  <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                    {compositeTables.map((tbl, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-white rounded-lg border border-indigo-100 shadow-2xs space-y-2"
+                      >
+                        <div className="flex items-center justify-between text-xs border-b border-slate-100 pb-1.5">
+                          <span className="font-bold text-indigo-700 flex items-center gap-1.5 text-xs">
+                            <Table2 className="w-3.5 h-3.5" />
+                            표 {idx + 1}
+                            {tbl.page_number && (
+                              <span className="text-[10px] font-normal text-slate-400">
+                                (p.{tbl.page_number})
+                              </span>
+                            )}
+                          </span>
+                          {tbl.row_count ? (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded font-mono">
+                              {tbl.row_count}행
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-600 mb-0.5">
+                              표 {idx + 1} 제목 (Caption)
+                            </label>
+                            <input
+                              type="text"
+                              value={tbl.caption || ''}
+                              onChange={(e) => handleCompositeTableChange(idx, 'caption', e.target.value)}
+                              placeholder={`예: [표 ${idx + 1}] 세부 내역`}
+                              className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-2.5 py-1 text-slate-800 focus:bg-white focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-600 mb-0.5">
+                              표 {idx + 1} 각주 (Footnote)
+                            </label>
+                            <input
+                              type="text"
+                              value={tbl.footnote || ''}
+                              onChange={(e) => handleCompositeTableChange(idx, 'footnote', e.target.value)}
+                              placeholder="예: ※ 기준치 초과 시 재검사"
+                              className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-2.5 py-1 text-slate-800 focus:bg-white focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
           )}
 
@@ -426,11 +520,11 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <label className="text-xs font-bold text-slate-700">
-                  {isTable && activeTab === 'raw_html'
-                    ? '표 원형 HTML 편집'
-                    : isTable && activeTab === 'preview'
-                    ? '표 HTML 렌더링 미리보기'
-                    : '청크 본문 텍스트 (Text) 편집'}
+                  {activeTab === 'raw_html'
+                    ? (isComposite ? '복합 청크 원형 HTML 편집' : '표 원형 HTML 편집')
+                    : activeTab === 'preview'
+                    ? (isComposite ? '통합 렌더링 미리보기' : '표 HTML 렌더링 미리보기')
+                    : (isComposite ? '복합 청크 본문 텍스트 (Markdown) 편집' : isTable ? '표 검색 요약 텍스트 편집' : '청크 본문 텍스트 (Text) 편집')}
                 </label>
 
                 {/* AI Refine Button */}
@@ -471,10 +565,10 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
               <div className="flex items-center gap-3 text-xs text-slate-500 font-mono">
                 <span>글자 수: <strong className="text-slate-700">{charCount}</strong>자</span>
                 <span>추정 토큰/단어: <strong className="text-indigo-600">~{wordCount}</strong> tokens</span>
-                {isTable ? (
+                {isTable || isComposite ? (
                   <span className="text-emerald-700 flex items-center gap-1 font-sans text-[11px] font-semibold">
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                    표 원형 보존 (512 한도 예외)
+                    {isComposite ? '복합 청크 (표 원형 보존)' : '표 원형 보존 (512 한도 예외)'}
                   </span>
                 ) : wordCount > 512 ? (
                   <span className="text-amber-600 flex items-center gap-1 font-sans text-[11px] font-semibold">
@@ -507,7 +601,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
               </div>
             )}
 
-            {isTable && activeTab === 'preview' ? (
+            {(isTable || isComposite) && activeTab === 'preview' ? (
               <div className="p-4 bg-slate-50/80 rounded-xl border border-slate-200 min-h-[240px] max-h-[380px] overflow-y-auto">
                 <div
                   className="prose-custom text-xs"
@@ -516,7 +610,7 @@ export const ChunkEditModal: React.FC<ChunkEditModalProps> = ({
                   }}
                 />
               </div>
-            ) : isTable && activeTab === 'raw_html' ? (
+            ) : (isTable || isComposite) && activeTab === 'raw_html' ? (
               <textarea
                 value={rawHtml}
                 onChange={(e) => setRawHtml(e.target.value)}

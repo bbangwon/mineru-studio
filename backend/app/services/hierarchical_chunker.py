@@ -1413,7 +1413,12 @@ class HierarchicalChunker:
             meta.pop("image_path", None)
             meta.pop("image_url", None)
 
-            if is_table:
+            chunk_tables = chunk.get("tables") or meta.get("tables") or []
+            if chunk_tables:
+                meta["tables"] = chunk_tables
+                meta["has_tables"] = True
+
+            if is_table or chunk_tables:
                 if chunk.get("table_caption"):
                     meta["table_caption"] = chunk.get("table_caption")
                 if chunk.get("table_footnote"):
@@ -1445,10 +1450,15 @@ class HierarchicalChunker:
 
             if end_page > start_page:
                 record["page_end"] = end_page
-            if is_table:
-                record["raw_html"] = chunk.get("raw_html", "")
-                record["table_caption"] = chunk.get("table_caption", "")
-                record["table_footnote"] = chunk.get("table_footnote", "")
+            if chunk_tables:
+                record["tables"] = chunk_tables
+            if is_table or chunk_tables:
+                if chunk.get("raw_html"):
+                    record["raw_html"] = chunk.get("raw_html", "")
+                if chunk.get("table_caption"):
+                    record["table_caption"] = chunk.get("table_caption", "")
+                if chunk.get("table_footnote"):
+                    record["table_footnote"] = chunk.get("table_footnote", "")
 
             lines.append(json.dumps(record, ensure_ascii=False))
 

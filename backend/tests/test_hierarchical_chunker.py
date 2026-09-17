@@ -1085,6 +1085,67 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertIn("composite", jsonl)
         self.assertIn("M50.0", jsonl)
         self.assertIn("정비공", jsonl)
+        rec = json.loads(jsonl.strip().split("\n")[0])
+        self.assertIn("tables", rec)
+        self.assertEqual(len(rec["tables"]), 2)
+        self.assertIn("상병코드표", rec["table_caption"])
+        self.assertIn("해당직종표", rec["table_caption"])
+
+    def test_composite_table_individual_caption_footnote_editing(self):
+        """복합 청크 내 개별 표의 caption, footnote 수정 후 JSONL 내보내기 시 반영 검증"""
+        chunker = HierarchicalChunker(doc_id="comp_edit_test")
+        sample_etl = {
+            "doc_title": "복합표 편집 테스트",
+            "sections": [{"id": "comp_edit_test_s01", "title": "제1장", "level": 1, "page": 1}],
+            "parent_chunks": [{
+                "id": "comp_edit_test_p001",
+                "parent_chunk_id": "comp_edit_test_p001",
+                "section_id": "comp_edit_test_s01",
+                "text": "부모 문맥 텍스트",
+                "token_estimate": 50,
+            }],
+            "child_chunks": [{
+                "chunk_id": "comp_edit_test_c0001",
+                "parent_chunk_id": "comp_edit_test_p001",
+                "section_id": "comp_edit_test_s01",
+                "chunk_type": "composite",
+                "text": "복합 청크 본문 텍스트",
+                "raw_html": "<table><tr><td>표1</td></tr></table><hr/><table><tr><td>표2</td></tr></table>",
+                "page_number": 1,
+                "page_end": 1,
+                "breadcrumbs": ["제1장"],
+                "tables": [
+                    {"table_index": 0, "caption": "수정 전 표1", "footnote": "각주 1", "raw_html": "<table>1</table>"},
+                    {"table_index": 1, "caption": "수정 전 표2", "footnote": "각주 2", "raw_html": "<table>2</table>"},
+                ],
+                "table_caption": "수정 전 표1 / 수정 전 표2",
+                "table_footnote": "각주 1 / 각주 2",
+            }]
+        }
+
+        # 사용자 UI 편집 시뮬레이션: 표 1, 표 2의 캡션과 각주를 개별 수정
+        child = sample_etl["child_chunks"][0]
+        child["tables"][0]["caption"] = "[표 1] 신규 산재 기준표"
+        child["tables"][0]["footnote"] = "※ 2026년 개정 기준"
+        child["tables"][1]["caption"] = "[표 2] 직종별 가중치 목록"
+        child["tables"][1]["footnote"] = "※ 특수직종 제외"
+        child["table_caption"] = " / ".join(t["caption"] for t in child["tables"])
+        child["table_footnote"] = " / ".join(t["footnote"] for t in child["tables"])
+
+        jsonl = chunker.export_to_jsonl(sample_etl)
+        rec = json.loads(jsonl.strip())
+
+        self.assertEqual(rec["chunk_type"], "composite")
+        self.assertIn("tables", rec)
+        self.assertEqual(len(rec["tables"]), 2)
+        self.assertEqual(rec["tables"][0]["caption"], "[표 1] 신규 산재 기준표")
+        self.assertEqual(rec["tables"][0]["footnote"], "※ 2026년 개정 기준")
+        self.assertEqual(rec["tables"][1]["caption"], "[표 2] 직종별 가중치 목록")
+        self.assertEqual(rec["tables"][1]["footnote"], "※ 특수직종 제외")
+        self.assertIn("[표 1] 신규 산재 기준표", rec["table_caption"])
+        self.assertIn("[표 2] 직종별 가중치 목록", rec["table_caption"])
+        self.assertIn("2026년 개정 기준", rec["table_footnote"])
+        self.assertIn("특수직종 제외", rec["table_footnote"])
 
 
 if __name__ == "__main__":

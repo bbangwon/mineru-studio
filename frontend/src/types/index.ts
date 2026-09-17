@@ -106,6 +106,26 @@ export interface EmbeddedTableItem {
   page_end?: number;
 }
 
+export type ChildInsertPosition =
+  | { type: 'end' }
+  | { type: 'start' }
+  | { type: 'after'; chunkId: string };
+
+export interface AddChildData {
+  parentChunkId: string;
+  text: string;
+  chunkType: 'paragraph' | 'table' | 'composite' | 'article_clause' | 'article';
+  pageNumber: number;
+  pageEnd?: number;
+  rawHtml?: string;
+  tableCaption?: string;
+  tableFootnote?: string;
+  tables?: EmbeddedTableItem[];
+  customTags?: string[];
+  insertPosition?: 'end' | 'start' | 'after';
+  insertAfterChunkId?: string;
+}
+
 export interface ChildChunk {
   chunk_id: string;                // 예: "d_xxxx_c001"
   parent_chunk_id: string;         // 소속 Parent 청크 ID ("d_xxxx_p001")

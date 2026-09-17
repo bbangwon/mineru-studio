@@ -43,7 +43,7 @@ import {
   CornerDownRight,
   CornerUpLeft,
 } from 'lucide-react';
-import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams, EmbeddedTableItem } from '../types';
+import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams, EmbeddedTableItem, AddChildData } from '../types';
 import { ChunkSplitModal } from './ChunkSplitModal';
 import { ChunkMergeModal } from './ChunkMergeModal';
 import { AddSectionModal } from './AddSectionModal';
@@ -106,14 +106,7 @@ interface ChunkStudioProps {
     chunkType: 'paragraph' | 'table' | 'article_clause' | 'article';
     inheritMetadata?: boolean;
   }) => void;
-  onAddChild?: (data: {
-    parentChunkId: string;
-    text: string;
-    chunkType: 'paragraph' | 'table' | 'article_clause' | 'article';
-    pageNumber: number;
-    pageEnd?: number;
-    rawHtml?: string;
-  }) => void;
+  onAddChild?: (data: AddChildData) => void;
   onUpdateParent?: (
     parentChunkId: string,
     updates: { title: string; sectionId: string }
@@ -192,6 +185,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
   const [isAddChildModalOpen, setIsAddChildModalOpen] = useState(false);
   const [targetParentForAddChild, setTargetParentForAddChild] = useState<ParentChunk | null>(null);
+  const [targetInsertAfterChunkId, setTargetInsertAfterChunkId] = useState<string | undefined>(undefined);
 
   const [reparentModalSection, setReparentModalSection] = useState<ParentSection | null>(null);
   const [isReparentModalOpen, setIsReparentModalOpen] = useState(false);
@@ -2765,6 +2759,23 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                   </button>
                                 )}
 
+                                {/* Quick Add Child Below Button */}
+                                {onAddChild && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setTargetParentForAddChild(parent);
+                                      setTargetInsertAfterChunkId(chunk.chunk_id);
+                                      setIsAddChildModalOpen(true);
+                                    }}
+                                    className="p-1 rounded transition cursor-pointer text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/60"
+                                    title="이 청크 바로 아래에 새 Child 추가"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+
                                 {/* Quick Single Delete Button */}
                                 {onDeleteChunks && (
                                   <button
@@ -4027,8 +4038,19 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
           onClose={() => {
             setIsAddChildModalOpen(false);
             setTargetParentForAddChild(null);
+            setTargetInsertAfterChunkId(undefined);
           }}
           parentChunk={targetParentForAddChild}
+          parentChildren={
+            targetParentForAddChild
+              ? childChunks.filter(
+                  (c) =>
+                    (c.parent_chunk_id || c.parent_id) ===
+                    (targetParentForAddChild.parent_chunk_id || targetParentForAddChild.id)
+                )
+              : []
+          }
+          initialInsertAfterChunkId={targetInsertAfterChunkId}
           sectionTitle={
             targetParentForAddChild
               ? parentMap.get(targetParentForAddChild.section_id)?.title

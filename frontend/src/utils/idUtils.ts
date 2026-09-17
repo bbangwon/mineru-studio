@@ -670,3 +670,46 @@ export async function copyToClipboard(text?: string | null): Promise<boolean> {
   return false;
 }
 
+/**
+ * PDF 너비 한계(Column Width) 및 OCR 레이아웃으로 인해 발생한
+ * 단순 줄바꿈(Soft-wrap)을 단일 공백으로 치환하여 문장을 복원하고,
+ * 구조적 경계(조항, 항·호, 번호 목록, 문장 종결, 표 등)의 줄바꿈은 보존합니다.
+ */
+export function repairSoftWraps(text: string): string {
+  if (!text) return '';
+
+  // 1. 영문 하이픈 줄바꿈 복원 (e.g., 'multi-\nlingual' -> 'multilingual')
+  const cleaned = text.replace(/(\w+)-\s*[\r\n]+\s*(\w+)/g, '$1$2');
+
+  // 2. 줄 단위 분할
+  const rawLines = cleaned.split(/\r?\n/).map((l) => l.trim());
+  const lines = rawLines.filter((l) => l.length > 0);
+  if (lines.length === 0) return '';
+
+  // 구조적 시작 정규식
+  const reStructStart = /^(?:제\s*\d+\s*조(?:\s*\([^)]+\))?|부\s*칙|별\s*[표지]|[①-⑳]|\d+\.\s*|[가-하]\.\s*|\(\d+\)|\([가-하]\)|[-*•※■▶◆○●]\s*|#{1,6}\s*|<table|\|)/;
+
+  // 문장 종결 정규식
+  const reSentenceEnd = /(?:(?:다|음|함|임|됨|시오|세|요|까|냐)\.|[.!?]|<개정\s*[^>]+>|\[본조신설\s*[^\]]+\]|:)[)\]"'"'”’]*$/;
+
+  const resultLines: string[] = [];
+  let currLine = lines[0];
+
+  for (let i = 1; i < lines.length; i++) {
+    const nextLine = lines[i];
+    const isBStruct = reStructStart.test(nextLine);
+    const isAEnd = reSentenceEnd.test(currLine);
+
+    if (isBStruct || isAEnd) {
+      resultLines.push(currLine);
+      currLine = nextLine;
+    } else {
+      // Soft-wrap: 단일 공백으로 결합
+      currLine = `${currLine} ${nextLine}`.replace(/[ \t]+/g, ' ');
+    }
+  }
+
+  resultLines.push(currLine);
+  return resultLines.join('\n');
+}
+

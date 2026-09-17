@@ -54,6 +54,7 @@ import type {
   JobStatusResponse,
   ParseRequestParams,
   ReparentChildChunkParams,
+  AddChildData,
 } from './types';
 
 /**
@@ -2486,14 +2487,7 @@ export function App() {
   };
 
   // 10-2. Add Child Chunk to Parent Handler
-  const handleAddChild = (data: {
-    parentChunkId: string;
-    text: string;
-    chunkType: 'paragraph' | 'table' | 'article_clause' | 'article';
-    pageNumber: number;
-    pageEnd?: number;
-    rawHtml?: string;
-  }) => {
+  const handleAddChild = (data: AddChildData) => {
     if (!etlData) return;
     const parentChunks = etlData.parent_chunks || [];
     const targetParent = parentChunks.find(
@@ -2517,8 +2511,28 @@ export function App() {
       ? [...secBreadcrumbs, targetParent.title]
       : [...secBreadcrumbs];
 
-    // 1) 신규 Child 객체
+    // 1) 신규 Child 객체 속성 계산
     const cType = data.chunkType === 'article_clause' ? 'article' : data.chunkType;
+    const isTable = cType === 'table' || cType === 'composite';
+    const isAtomicTable = cType === 'table';
+
+    // 표 객체 목록 구성
+    const tableItems = data.tables && data.tables.length > 0
+      ? data.tables
+      : isTable && data.rawHtml
+      ? [
+          {
+            table_index: 0,
+            caption: data.tableCaption,
+            footnote: data.tableFootnote,
+            raw_html: data.rawHtml,
+            page_number: data.pageNumber,
+            page_end: data.pageEnd || data.pageNumber,
+            token_estimate: childEstimate,
+          },
+        ]
+      : undefined;
+
     const newChild: ChildChunk = {
       chunk_id: newChildId,
       parent_chunk_id: data.parentChunkId,
@@ -2530,22 +2544,102 @@ export function App() {
       page_number: data.pageNumber,
       page_end: data.pageEnd,
       raw_html: data.rawHtml,
-      is_table: cType === 'table',
+      table_caption: data.tableCaption,
+      table_footnote: data.tableFootnote,
+      tables: tableItems,
+      is_table: isTable,
+      is_atomic_table: isAtomicTable,
       breadcrumbs: childBreadcrumbs,
       is_edited: true,
       metadata: {
         ...syncChunkPageMetadata({}, data.pageNumber, data.pageEnd),
         type: cType,
+        ...(data.customTags && data.customTags.length > 0 ? { custom_tags: data.customTags } : {}),
+        ...(tableItems && tableItems.length > 0 ? { tables: tableItems } : {}),
       },
     };
 
-    const updatedChildren = [...(etlData.child_chunks || []), newChild];
+    // 2) 삽입 위치(순서) 반영하여 parent.child_chunk_ids 갱신
+    const currentChildIds = [...(targetParent.child_chunk_ids || [])];
+    let nextChildIds: string[];
+    if (data.insertPosition === 'start') {
+      nextChildIds = [newChildId, ...currentChildIds];
+    } else if (data.insertPosition === 'after' && data.insertAfterChunkId) {
+      const idx = currentChildIds.indexOf(data.insertAfterChunkId);
+      if (idx >= 0) {
+        nextChildIds = [
+          ...currentChildIds.slice(0, idx + 1),
+          newChildId,
+          ...currentChildIds.slice(idx + 1),
+        ];
+      } else {
+        nextChildIds = [...currentChildIds, newChildId];
+      }
+    } else {
+      nextChildIds = [...currentChildIds, newChildId];
+    }
 
-    // 2) Parent 텍스트, 토큰 및 page_range 재계산
+    // 3) etlData.child_chunks 리스트 내에서도 적절한 위치에 삽입
+    const existingChildChunks = [...(etlData.child_chunks || [])];
+    let updatedChildren: ChildChunk[];
+    if (data.insertPosition === 'start') {
+      const firstIdx = existingChildChunks.findIndex(
+        (c) => (c.parent_chunk_id || c.parent_id) === data.parentChunkId
+      );
+      if (firstIdx >= 0) {
+        updatedChildren = [
+          ...existingChildChunks.slice(0, firstIdx),
+          newChild,
+          ...existingChildChunks.slice(firstIdx),
+        ];
+      } else {
+        updatedChildren = [...existingChildChunks, newChild];
+      }
+    } else if (data.insertPosition === 'after' && data.insertAfterChunkId) {
+      const afterIdx = existingChildChunks.findIndex(
+        (c) => c.chunk_id === data.insertAfterChunkId
+      );
+      if (afterIdx >= 0) {
+        updatedChildren = [
+          ...existingChildChunks.slice(0, afterIdx + 1),
+          newChild,
+          ...existingChildChunks.slice(afterIdx + 1),
+        ];
+      } else {
+        updatedChildren = [...existingChildChunks, newChild];
+      }
+    } else {
+      // 'end': 대상 부모의 마지막 자식 바로 뒤에 배치
+      let lastIdx = -1;
+      for (let i = existingChildChunks.length - 1; i >= 0; i--) {
+        if ((existingChildChunks[i].parent_chunk_id || existingChildChunks[i].parent_id) === data.parentChunkId) {
+          lastIdx = i;
+          break;
+        }
+      }
+      if (lastIdx >= 0) {
+        updatedChildren = [
+          ...existingChildChunks.slice(0, lastIdx + 1),
+          newChild,
+          ...existingChildChunks.slice(lastIdx + 1),
+        ];
+      } else {
+        updatedChildren = [...existingChildChunks, newChild];
+      }
+    }
+
+    // 4) Parent 텍스트, 토큰 및 page_range 재계산 (순서 보장)
     const parentChildren = updatedChildren.filter(
       (c) => c.parent_chunk_id === data.parentChunkId || c.parent_id === data.parentChunkId
     );
-    const parentCombinedText = parentChildren
+    const orderMap = new Map(nextChildIds.map((id, idx) => [id, idx]));
+    const sortedParentChildren = [...parentChildren].sort((a, b) => {
+      const idxA = orderMap.has(a.chunk_id) ? orderMap.get(a.chunk_id)! : 9999;
+      const idxB = orderMap.has(b.chunk_id) ? orderMap.get(b.chunk_id)! : 9999;
+      return idxA - idxB;
+    });
+
+    const parentCombinedText = sortedParentChildren
       .map((c) => c.text)
       .filter(Boolean)
       .join('\n\n');
@@ -2563,7 +2657,7 @@ export function App() {
       if (p.parent_chunk_id === data.parentChunkId || p.id === data.parentChunkId) {
         return {
           ...p,
-          child_chunk_ids: [...(p.child_chunk_ids || []), newChildId],
+          child_chunk_ids: nextChildIds,
           text: parentCombinedText,
           token_estimate: parentTokens,
           page_range: [minPage, maxPage] as [number, number],
@@ -2573,7 +2667,7 @@ export function App() {
       return p;
     });
 
-    // 3) Section 갱신: child_chunk_ids 추가 및 page_range 확장
+    // 5) Section 갱신: child_chunk_ids 추가 및 page_range 확장
     const updatedSections = sections.map((sec) => {
       if (sec.id === targetParent.section_id) {
         const pRange = sec.page_range || [minPage, maxPage];
@@ -2608,7 +2702,8 @@ export function App() {
       total_words: totalWords,
     };
 
-    setEtlData({
+    // 6) syncHierarchyOrder를 통해 전체 순서 동기화
+    const syncedEtl = syncHierarchyOrder({
       ...etlData,
       parent_chunks: updatedParents,
       child_chunks: updatedChildren,
@@ -2616,6 +2711,8 @@ export function App() {
       parent_sections: updatedSections,
       stats: updatedStats,
     });
+
+    setEtlData(syncedEtl);
     setIsDirty(true);
     setSelectedParentChunkId(data.parentChunkId);
     showToast(`Parent(${data.parentChunkId})에 새 Child 청크(${newChildId})가 추가되었습니다.`);

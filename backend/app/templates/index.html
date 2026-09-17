@@ -687,27 +687,61 @@
       (etlData.parent_sections || []).forEach(p => parentMap[p.id] = p);
       const parent = parentMap[chunk.parent_id] || {};
 
+      const rawTables = (chunk.tables || (chunk.metadata ? chunk.metadata.tables : []) || []);
+      const cType = (chunk.metadata && chunk.metadata.type) ? chunk.metadata.type : (chunk.chunk_type || 'paragraph');
+      const hasTables = rawTables.length > 0 || cType === 'table' || cType === 'composite';
+      const tableCount = rawTables.length > 0 ? rawTables.length : (cType === 'table' ? 1 : 0);
+
+      const cleanTables = rawTables.map((t, idx) => ({
+        table_id: t.table_id || `${chunk.chunk_id}_t${idx + 1}`,
+        caption: t.caption || chunk.table_caption || '',
+        footnote: t.footnote || chunk.table_footnote || '',
+        raw_html: t.raw_html || chunk.raw_html || ''
+      }));
+      if (cType === 'table' && cleanTables.length === 0 && chunk.raw_html) {
+        cleanTables.push({
+          table_id: `${chunk.chunk_id}_t1`,
+          caption: chunk.table_caption || '',
+          footnote: chunk.table_footnote || '',
+          raw_html: chunk.raw_html
+        });
+      }
+
+      const cleanMeta = Object.assign({}, chunk.metadata || {});
+      delete cleanMeta.tables;
+      delete cleanMeta.is_table;
+      delete cleanMeta.is_atomic_table;
+      delete cleanMeta.table_caption;
+      delete cleanMeta.table_footnote;
+      delete cleanMeta.has_image;
+      delete cleanMeta.image_path;
+      delete cleanMeta.image_url;
+
+      cleanMeta.type = cType;
+      cleanMeta.doc_title = (chunk.metadata && chunk.metadata.doc_title) || '';
+      cleanMeta.section = parent.title || '';
+      cleanMeta.page = chunk.page_number || 1;
+      cleanMeta.page_start = chunk.page_number || 1;
+      cleanMeta.page_end = chunk.page_end || chunk.page_number || 1;
+      cleanMeta.pages = [chunk.page_number || 1];
+      cleanMeta.has_tables = hasTables;
+      cleanMeta.table_count = tableCount;
+
       const record = {
         id: chunk.chunk_id,
         parent_id: chunk.parent_id,
-        parent_title: parent.title || '',
-        chunk_type: chunk.chunk_type,
-        text: chunk.text,
-        page: chunk.page_number,
-        breadcrumbs: chunk.breadcrumbs,
+        section_title: parent.title || '',
+        breadcrumbs: chunk.breadcrumbs || [],
         breadcrumbs_str: (chunk.breadcrumbs || []).join(' > '),
-        metadata: {
-          ...chunk.metadata,
-          parent_breadcrumbs: chunk.breadcrumbs,
-          is_atomic_table: (chunk.chunk_type === 'table'),
-          ...(chunk.table_caption ? { table_caption: chunk.table_caption } : {}),
-          ...(chunk.table_footnote ? { table_footnote: chunk.table_footnote } : {})
-        }
+        text: chunk.text,
+        page: chunk.page_number || 1,
+        metadata: cleanMeta
       };
-      if (chunk.chunk_type === 'table') {
-        record.raw_html = chunk.raw_html || '';
-        if (chunk.table_caption) record.table_caption = chunk.table_caption;
-        if (chunk.table_footnote) record.table_footnote = chunk.table_footnote;
+      if (hasTables && cleanTables.length > 0) {
+        record.tables = cleanTables;
+      }
+      if (chunk.raw_html) {
+        record.raw_html = chunk.raw_html;
       }
 
       modalJsonlString = JSON.stringify(record, null, 2);

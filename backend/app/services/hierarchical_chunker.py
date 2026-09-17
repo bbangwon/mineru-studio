@@ -500,9 +500,11 @@ class HierarchicalChunker:
         if not has_tables:
             return "paragraph"
 
-        # 명시적 atomic table 플래그가 있거나 단독 표로 생성된 경우
-        if chunk.get("is_atomic_table") or (chunk.get("chunk_type") == "table" and len(tables) <= 1):
-            return "table"
+        # 단독 표(table) vs 복합 청크(composite) 판별
+        # 1) 표가 2개 이상이거나, 표 외에 일반 본문 텍스트가 함께 존재하는 경우 -> composite
+        # 2) 표가 1개 이하이고 일반 본문 텍스트가 없는 순수 단독 표 청크 -> table
+        if len(tables) > 1:
+            return "composite"
 
         text = (chunk.get("text") or "").strip()
         caption = str(chunk.get("table_caption") or "").strip()
@@ -1149,12 +1151,8 @@ class HierarchicalChunker:
                     tbl_caption = single_t.get("caption") or None
                     tbl_footnote = single_t.get("footnote") or None
                     meta["type"] = "table"
-                    meta["is_table"] = True
-                    meta["is_atomic_table"] = True
-                    if tbl_caption:
-                        meta["table_caption"] = tbl_caption
-                    if tbl_footnote:
-                        meta["table_footnote"] = tbl_footnote
+                    meta["has_tables"] = True
+                    meta["table_count"] = 1
                     full_child_text = self.normalize_text_for_embedding(
                         self.generate_table_search_text(combined_raw_html, tbl_caption or "", tbl_footnote or "")
                     )
@@ -1171,8 +1169,6 @@ class HierarchicalChunker:
                     meta["type"] = "composite"
                     meta["has_tables"] = True
                     meta["table_count"] = len(current_tables)
-                    meta["tables"] = list(current_tables)
-                    meta["is_atomic_table"] = False
                     tbl_caption = None
                     tbl_footnote = None
             else:
@@ -1296,8 +1292,8 @@ class HierarchicalChunker:
                 tbl_meta = {
                     "doc_title": doc_title,
                     "type": "table",
-                    "is_table": True,
-                    "is_atomic_table": True,
+                    "has_tables": True,
+                    "table_count": 1,
                     "page": tbl_start_p,
                     "page_start": tbl_start_p,
                     "page_end": tbl_end_p,
@@ -1540,6 +1536,22 @@ class HierarchicalChunker:
 
             meta = dict(chunk.get("metadata") or {})
             c_type = self.get_chunk_kind(chunk)
+
+            chunk_tables = chunk.get("tables") or meta.get("tables") or []
+            has_tables = bool(chunk_tables or c_type in ("table", "composite"))
+            table_count = len(chunk_tables) if chunk_tables else (1 if c_type == "table" else 0)
+
+            # 불필요하거나 중복되는 레거시 메타데이터 제거 (Vector DB 필터링 안전성 확보)
+            meta.pop("tables", None)
+            meta.pop("is_table", None)
+            meta.pop("is_atomic_table", None)
+            meta.pop("table_caption", None)
+            meta.pop("table_footnote", None)
+            meta.pop("has_image", None)
+            meta.pop("image_path", None)
+            meta.pop("image_url", None)
+
+            # 표준 메타데이터 스칼라 필드 주입
             meta["type"] = c_type
             meta["doc_title"] = etl_result.get("doc_title", "")
             meta["section"] = section.get("title", "")
@@ -1547,26 +1559,28 @@ class HierarchicalChunker:
             meta["page_start"] = start_page
             meta["page_end"] = end_page
             meta["pages"] = pages_list
-            is_table = (c_type == "table")
-            meta["is_atomic_table"] = is_table
+            meta["has_tables"] = has_tables
+            meta["table_count"] = table_count
 
-            meta.pop("has_image", None)
-            meta.pop("image_path", None)
-            meta.pop("image_url", None)
+            # tables 항목 정제: table_type 제거 및 필수 속성(table_id, caption, footnote, raw_html)만 보존
+            clean_tables = []
+            cid = chunk.get("chunk_id", "")
+            for idx, t in enumerate(chunk_tables):
+                clean_tables.append({
+                    "table_id": t.get("table_id") or f"{cid}_t{idx + 1}",
+                    "caption": t.get("caption") or chunk.get("table_caption") or "",
+                    "footnote": t.get("footnote") or chunk.get("table_footnote") or "",
+                    "raw_html": t.get("raw_html") or chunk.get("raw_html") or "",
+                })
 
-            chunk_tables = chunk.get("tables") or meta.get("tables") or []
-            if chunk_tables:
-                meta["tables"] = chunk_tables
-                meta["has_tables"] = True
-
-            if is_table:
-                if chunk.get("table_caption"):
-                    meta["table_caption"] = chunk.get("table_caption")
-                if chunk.get("table_footnote"):
-                    meta["table_footnote"] = chunk.get("table_footnote")
-            else:
-                meta.pop("table_caption", None)
-                meta.pop("table_footnote", None)
+            # 단독 표(table)인데 chunk_tables가 비어있는 레거시 청크의 경우 자체 raw_html 기반 생성
+            if c_type == "table" and not clean_tables and chunk.get("raw_html"):
+                clean_tables.append({
+                    "table_id": f"{cid}_t1",
+                    "caption": chunk.get("table_caption") or "",
+                    "footnote": chunk.get("table_footnote") or "",
+                    "raw_html": chunk.get("raw_html") or "",
+                })
 
             parent_text = parent.get("text", "")
             if breadcrumbs_str and not parent_text.startswith(f"[{breadcrumbs_str}]"):
@@ -1575,7 +1589,7 @@ class HierarchicalChunker:
                 parent_context_text = parent_text.strip()
 
             record = {
-                "id": chunk.get("chunk_id", ""),
+                "id": cid,
                 "parent_chunk_id": pid,
                 "section_id": sec_id,
                 "section_title": section.get("title", ""),
@@ -1583,8 +1597,6 @@ class HierarchicalChunker:
                 "breadcrumbs_str": breadcrumbs_str,
                 "text": chunk.get("text", ""),
                 "parent_context_text": parent_context_text,
-                "chunk_type": c_type,
-                "is_atomic_table": is_table,
                 "page": start_page,
                 "pages": pages_list,
                 "token_estimate": chunk.get("token_estimate", self.estimate_korean_tokens(chunk.get("text", ""))),
@@ -1594,18 +1606,10 @@ class HierarchicalChunker:
 
             if end_page > start_page:
                 record["page_end"] = end_page
-            if chunk_tables:
-                record["tables"] = chunk_tables
+            if has_tables and clean_tables:
+                record["tables"] = clean_tables
             if chunk.get("raw_html"):
                 record["raw_html"] = chunk.get("raw_html", "")
-            if is_table:
-                if chunk.get("table_caption"):
-                    record["table_caption"] = chunk.get("table_caption", "")
-                if chunk.get("table_footnote"):
-                    record["table_footnote"] = chunk.get("table_footnote", "")
-            else:
-                record.pop("table_caption", None)
-                record.pop("table_footnote", None)
 
             lines.append(json.dumps(record, ensure_ascii=False))
 

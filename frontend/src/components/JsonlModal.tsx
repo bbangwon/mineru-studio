@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Code2, X, Copy, Check } from 'lucide-react';
 import type { ChildChunk, ParentSection, ParentChunk } from '../types';
 import { getChunkPageList } from '../utils/pageUtils';
+import { getChunkKind } from '../utils/chunkKindUtils';
 
 interface JsonlModalProps {
   chunk: ChildChunk | null;
@@ -38,7 +39,46 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
         : parentText)
     : '';
 
-  const tables = chunk.tables || chunk.metadata?.tables || [];
+  const chunkKind = getChunkKind(chunk);
+  const rawTables = (chunk.tables || chunk.metadata?.tables || []);
+  const hasTables = rawTables.length > 0 || chunkKind === 'table' || chunkKind === 'composite';
+  const tableCount = rawTables.length > 0 ? rawTables.length : (chunkKind === 'table' ? 1 : 0);
+
+  const cleanTables = rawTables.map((t: any, idx: number) => ({
+    table_id: t.table_id || `${chunk.chunk_id}_t${idx + 1}`,
+    caption: t.caption || chunk.table_caption || '',
+    footnote: t.footnote || chunk.table_footnote || '',
+    raw_html: t.raw_html || chunk.raw_html || '',
+  }));
+
+  if (chunkKind === 'table' && cleanTables.length === 0 && chunk.raw_html) {
+    cleanTables.push({
+      table_id: `${chunk.chunk_id}_t1`,
+      caption: chunk.table_caption || '',
+      footnote: chunk.table_footnote || '',
+      raw_html: chunk.raw_html,
+    });
+  }
+
+  const cleanMeta = { ...(chunk.metadata || {}) };
+  delete cleanMeta.tables;
+  delete cleanMeta.is_table;
+  delete cleanMeta.is_atomic_table;
+  delete cleanMeta.table_caption;
+  delete cleanMeta.table_footnote;
+  delete cleanMeta.has_image;
+  delete cleanMeta.image_path;
+  delete cleanMeta.image_url;
+
+  cleanMeta.type = chunkKind;
+  cleanMeta.doc_title = chunk.metadata?.doc_title || '';
+  cleanMeta.section = section?.title || '';
+  cleanMeta.page = startPage;
+  cleanMeta.page_start = startPage;
+  cleanMeta.page_end = endPage;
+  cleanMeta.pages = pages;
+  cleanMeta.has_tables = hasTables;
+  cleanMeta.table_count = tableCount;
 
   const record: Record<string, any> = {
     id: chunk.chunk_id,
@@ -49,27 +89,16 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
     breadcrumbs_str: breadcrumbs_str,
     text: chunk.text,
     parent_context_text: parentContextText,
-    ...(tables.length > 0 ? { tables } : {}),
-    ...(chunk.raw_html ? { raw_html: chunk.raw_html } : {}),
     page: startPage,
     ...(endPage > startPage ? { page_end: endPage } : {}),
     pages: pages,
     token_estimate: chunk.token_estimate,
     parent_token_estimate: parent?.token_estimate || 0,
-    metadata: {
-      ...(chunk.metadata || {}),
-      doc_title: chunk.metadata?.doc_title || '',
-      section: section?.title || '',
-      page: startPage,
-      page_start: startPage,
-      page_end: endPage,
-      pages: pages,
-      ...(tables.length > 0 ? { tables } : {}),
-    },
+    metadata: cleanMeta,
   };
 
-  if (tables.length > 0) {
-    record.tables = tables;
+  if (hasTables && cleanTables.length > 0) {
+    record.tables = cleanTables;
   }
   if (chunk.raw_html) {
     record.raw_html = chunk.raw_html;

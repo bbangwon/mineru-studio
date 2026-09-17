@@ -213,9 +213,14 @@ class TestHierarchicalChunker(unittest.TestCase):
             self.assertIn("parent_context_text", record)
             self.assertIn("token_estimate", record)
             self.assertIn("parent_token_estimate", record)
-            self.assertIn("is_atomic_table", record)
+            self.assertNotIn("is_atomic_table", record)
+            self.assertNotIn("chunk_type", record)
+            self.assertNotIn("tables", record.get("metadata", {}))
             self.assertIn("metadata", record)
             self.assertEqual(record["metadata"]["doc_title"], "사규")
+            self.assertEqual(record["metadata"]["type"], "article")
+            self.assertFalse(record["metadata"]["has_tables"])
+            self.assertEqual(record["metadata"]["table_count"], 0)
 
     def test_export_to_jsonl_table_footnote(self):
         chunker = HierarchicalChunker(doc_id="tbl_jsonl_test")
@@ -233,11 +238,21 @@ class TestHierarchicalChunker(unittest.TestCase):
         lines = [json.loads(line) for line in jsonl_str.split("\n") if line.strip()]
         self.assertEqual(len(lines), 1)
         record = lines[0]
-        self.assertTrue(record["is_atomic_table"])
-        self.assertEqual(record["table_caption"], "임금표")
-        self.assertEqual(record["table_footnote"], "* 세전 기준, 수당 별도")
-        self.assertEqual(record["metadata"]["table_caption"], "임금표")
-        self.assertEqual(record["metadata"]["table_footnote"], "* 세전 기준, 수당 별도")
+        self.assertEqual(record["metadata"]["type"], "table")
+        self.assertTrue(record["metadata"]["has_tables"])
+        self.assertEqual(record["metadata"]["table_count"], 1)
+        self.assertNotIn("is_atomic_table", record)
+        self.assertNotIn("chunk_type", record)
+        self.assertNotIn("table_caption", record)
+        self.assertNotIn("table_footnote", record)
+        self.assertNotIn("table_caption", record["metadata"])
+        self.assertNotIn("table_footnote", record["metadata"])
+        self.assertNotIn("tables", record["metadata"])
+        self.assertIn("tables", record)
+        self.assertEqual(len(record["tables"]), 1)
+        self.assertEqual(record["tables"][0]["caption"], "임금표")
+        self.assertEqual(record["tables"][0]["footnote"], "* 세전 기준, 수당 별도")
+        self.assertNotIn("table_type", record["tables"][0])
         self.assertIn("(주: * 세전 기준, 수당 별도)", record["text"])
 
     def test_huge_table_promoted_to_parent(self):
@@ -1150,7 +1165,11 @@ class TestHierarchicalChunker(unittest.TestCase):
         jsonl = chunker.export_to_jsonl(sample_etl)
         rec = json.loads(jsonl.strip())
 
-        self.assertEqual(rec["chunk_type"], "composite")
+        self.assertEqual(rec["metadata"]["type"], "composite")
+        self.assertNotIn("chunk_type", rec)
+        self.assertNotIn("is_atomic_table", rec)
+        self.assertTrue(rec["metadata"]["has_tables"])
+        self.assertEqual(rec["metadata"]["table_count"], 2)
         self.assertIn("tables", rec)
         self.assertEqual(len(rec["tables"]), 2)
         self.assertEqual(rec["tables"][0]["caption"], "[표 1] 신규 산재 기준표")
@@ -1260,10 +1279,131 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertEqual(article_chunk["chunk_type"], "article")
         self.assertEqual(article_chunk["metadata"].get("type"), "article")
 
-        # export_to_jsonl 에서도 동일하게 유지되는지 검증
+        # export_to_jsonl 에서도 metadata.type으로 일관되게 유지되는지 검증
         jsonl_lines = [json.loads(line) for line in chunker.export_to_jsonl(etl_res).strip().splitlines()]
         for r in jsonl_lines:
-            self.assertEqual(r["chunk_type"], r["metadata"]["type"])
+            self.assertNotIn("chunk_type", r)
+            self.assertNotIn("is_atomic_table", r)
+            self.assertIn(r["metadata"]["type"], ["paragraph", "table", "article"])
+
+    def test_export_to_jsonl_metadata_and_tables_consistency(self):
+        """JSONL 레코드 및 metadata 정제 규격(레거시 필드 6종 배제, metadata 내 tables 배제) 전수 검증"""
+        chunker = HierarchicalChunker(doc_id="consistency_test")
+        sample_etl = {
+            "doc_title": "표준화 검증 문서",
+            "sections": [{"id": "s01", "title": "제1장", "level": 1, "page": 1}],
+            "parent_chunks": [{
+                "id": "p001",
+                "parent_chunk_id": "p001",
+                "section_id": "s01",
+                "text": "부모 문맥",
+                "token_estimate": 20,
+            }],
+            "child_chunks": [
+                {
+                    "chunk_id": "c0001",
+                    "parent_chunk_id": "p001",
+                    "section_id": "s01",
+                    "chunk_type": "paragraph",
+                    "text": "일반 문단 내용",
+                    "page_number": 1,
+                    "breadcrumbs": ["제1장"],
+                    "metadata": {"doc_title": "표준화 검증 문서", "type": "paragraph"},
+                },
+                {
+                    "chunk_id": "c0002",
+                    "parent_chunk_id": "p001",
+                    "section_id": "s01",
+                    "chunk_type": "table",
+                    "text": "| 제목 | 내용 |\n| --- | --- |\n| A | B |",
+                    "raw_html": "<table><tr><td>A</td><td>B</td></tr></table>",
+                    "page_number": 2,
+                    "breadcrumbs": ["제1장"],
+                    "table_caption": "단독 표",
+                    "table_footnote": "단독 각주",
+                    "tables": [
+                        {
+                            "table_id": "c0002_t1",
+                            "caption": "단독 표",
+                            "footnote": "단독 각주",
+                            "raw_html": "<table><tr><td>A</td><td>B</td></tr></table>",
+                            "table_type": "complex_table",
+                        }
+                    ],
+                    "metadata": {
+                        "doc_title": "표준화 검증 문서",
+                        "tables": [{"raw_html": "<table>...</table>"}],
+                        "is_atomic_table": True,
+                        "table_caption": "단독 표",
+                    },
+                },
+                {
+                    "chunk_id": "c0003",
+                    "parent_chunk_id": "p001",
+                    "section_id": "s01",
+                    "chunk_type": "composite",
+                    "text": "복합 본문\n| 1 | 2 |\n| --- | --- |\n| 3 | 4 |",
+                    "raw_html": "<p>복합 본문</p><table>1</table><hr/><table>2</table>",
+                    "page_number": 3,
+                    "breadcrumbs": ["제1장"],
+                    "tables": [
+                        {"table_id": "c0003_t1", "caption": "표1", "footnote": "", "raw_html": "<table>1</table>", "table_type": "simple_table"},
+                        {"table_id": "c0003_t2", "caption": "표2", "footnote": "", "raw_html": "<table>2</table>", "table_type": "complex_table"},
+                    ],
+                    "metadata": {
+                        "doc_title": "표준화 검증 문서",
+                        "tables": [{"raw_html": "..."}],
+                    },
+                },
+            ],
+        }
+
+        jsonl = chunker.export_to_jsonl(sample_etl)
+        records = [json.loads(line) for line in jsonl.strip().splitlines()]
+        self.assertEqual(len(records), 3)
+
+        # 1. 문단 청크 검증
+        p_rec = records[0]
+        self.assertNotIn("chunk_type", p_rec)
+        self.assertNotIn("is_atomic_table", p_rec)
+        self.assertNotIn("tables", p_rec)
+        self.assertEqual(p_rec["metadata"]["type"], "paragraph")
+        self.assertFalse(p_rec["metadata"]["has_tables"])
+        self.assertEqual(p_rec["metadata"]["table_count"], 0)
+        self.assertNotIn("tables", p_rec["metadata"])
+        self.assertNotIn("is_table", p_rec["metadata"])
+
+        # 2. 단독 표 청크 검증
+        t_rec = records[1]
+        self.assertNotIn("chunk_type", t_rec)
+        self.assertNotIn("is_atomic_table", t_rec)
+        self.assertNotIn("table_caption", t_rec)
+        self.assertNotIn("table_footnote", t_rec)
+        self.assertNotIn("tables", t_rec["metadata"])
+        self.assertNotIn("is_table", t_rec["metadata"])
+        self.assertNotIn("is_atomic_table", t_rec["metadata"])
+        self.assertNotIn("table_caption", t_rec["metadata"])
+        self.assertEqual(t_rec["metadata"]["type"], "table")
+        self.assertTrue(t_rec["metadata"]["has_tables"])
+        self.assertEqual(t_rec["metadata"]["table_count"], 1)
+        self.assertIn("tables", t_rec)
+        self.assertEqual(len(t_rec["tables"]), 1)
+        self.assertEqual(t_rec["tables"][0]["caption"], "단독 표")
+        self.assertEqual(t_rec["tables"][0]["footnote"], "단독 각주")
+        self.assertNotIn("table_type", t_rec["tables"][0])
+
+        # 3. 복합 청크 검증
+        c_rec = records[2]
+        self.assertNotIn("chunk_type", c_rec)
+        self.assertNotIn("is_atomic_table", c_rec)
+        self.assertNotIn("tables", c_rec["metadata"])
+        self.assertEqual(c_rec["metadata"]["type"], "composite")
+        self.assertTrue(c_rec["metadata"]["has_tables"])
+        self.assertEqual(c_rec["metadata"]["table_count"], 2)
+        self.assertIn("tables", c_rec)
+        self.assertEqual(len(c_rec["tables"]), 2)
+        self.assertNotIn("table_type", c_rec["tables"][0])
+        self.assertNotIn("table_type", c_rec["tables"][1])
 
 
 if __name__ == "__main__":

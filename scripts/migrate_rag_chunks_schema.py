@@ -46,7 +46,7 @@ def migrate_file(file_path: str) -> dict:
     tables_created_count = 0
     legacy_keys_removed_count = 0
 
-    legacy_keys = ["chunk_type", "is_table", "is_atomic_table", "table_caption", "table_footnote", "table_type"]
+    legacy_keys = ["chunk_type", "is_table", "is_atomic_table", "table_caption", "table_footnote", "table_type", "has_image", "image_path", "image_url"]
 
     for c in children:
         cid = c.get("chunk_id", "")
@@ -61,17 +61,17 @@ def migrate_file(file_path: str) -> dict:
                     "table_id": f"{cid}_t1",
                     "raw_html": raw_html,
                     "caption": c.get("table_caption") or "",
-                    "footnote": c.get("table_footnote") or "",
-                    "table_type": c.get("table_type") or "table"
+                    "footnote": c.get("table_footnote") or ""
                 }]
                 tables_created_count += 1
             else:
                 c["tables"] = []
         else:
-            # 이미 tables 배열이 있는 경우 내부 table_id 정규화
+            # 이미 tables 배열이 있는 경우 내부 table_id 정규화 및 table_type 제거
             for idx, tbl in enumerate(existing_tables):
                 if not tbl.get("table_id"):
                     tbl["table_id"] = f"{cid}_t{idx + 1}"
+                tbl.pop("table_type", None)
 
         # 2. 최상위 레거시 키 삭제 (Clean Drop)
         removed_any = False
@@ -82,10 +82,28 @@ def migrate_file(file_path: str) -> dict:
         if removed_any:
             legacy_keys_removed_count += 1
 
-        # 3. metadata.type 정규화
+        # 3. metadata 표준화 및 정제 (tables 등 복합 객체 제거, type/has_tables/table_count 정규화)
         kind = HierarchicalChunker.get_chunk_kind(c)
         if isinstance(c.get("metadata"), dict):
-            c["metadata"]["type"] = kind
+            meta = c["metadata"]
+            tbls = c.get("tables") or []
+            has_tables = bool(tbls or kind in ("table", "composite"))
+            table_count = len(tbls) if tbls else (1 if kind == "table" else 0)
+
+            # 불필요/레거시 키 제거
+            meta.pop("tables", None)
+            meta.pop("is_table", None)
+            meta.pop("is_atomic_table", None)
+            meta.pop("table_caption", None)
+            meta.pop("table_footnote", None)
+            meta.pop("has_image", None)
+            meta.pop("image_path", None)
+            meta.pop("image_url", None)
+
+            # 표준 메타데이터 스칼라 필드 주입
+            meta["type"] = kind
+            meta["has_tables"] = has_tables
+            meta["table_count"] = table_count
 
     # 4. 복합 청크 누락 HTML 복원
     healed_count = HierarchicalChunker.heal_composite_chunks(children)

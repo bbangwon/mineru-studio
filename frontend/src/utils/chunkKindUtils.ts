@@ -75,8 +75,10 @@ export function getChunkKind(chunk: Partial<ChildChunk> | null | undefined): Chu
 
   const tableExists = hasTableData(chunk);
   const bodyExists = hasBodyText(chunk);
+  const tables = ((chunk.tables || chunk.metadata?.tables || []) as EmbeddedTableItem[]);
+  const tableCount = tables.length;
 
-  if (tableExists && bodyExists) {
+  if (tableExists && (bodyExists || tableCount > 1)) {
     return 'composite';
   }
   if (tableExists) {

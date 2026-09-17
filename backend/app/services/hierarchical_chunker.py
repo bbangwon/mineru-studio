@@ -375,6 +375,54 @@ class HierarchicalChunker:
         res_text = "\n".join(lines).strip()
         return res_text
 
+    @classmethod
+    def html_table_to_markdown(
+        cls,
+        raw_html: str,
+        caption: Optional[str] = None,
+        footnote: Optional[str] = None
+    ) -> str:
+        """
+        소형 표 및 복합 청크 생성을 위해 HTML 테이블을 LLM 및 마크다운 친화적인 표 문자열로 변환합니다.
+        - 컬럼 헤더 및 데이터 행 파싱
+        - 캡션([표: 제목]) 및 각주(_각주_) 반영
+        """
+        if not raw_html or not raw_html.strip():
+            return ""
+        parser = _HTMLTableExtractor()
+        try:
+            parser.feed(raw_html)
+            rows = parser.rows
+            if not rows:
+                clean = re.sub(r'<[^>]+>', ' ', raw_html).strip()
+                return clean
+
+            max_cols = max(len(r) for r in rows)
+            if max_cols == 0:
+                return ""
+
+            lines: List[str] = []
+            if caption and caption.strip():
+                lines.append(f"**[표: {caption.strip()}]**")
+
+            # 헤더 행
+            header_row = [c.replace("|", "/") for c in rows[0]] + [""] * (max_cols - len(rows[0]))
+            lines.append("| " + " | ".join(header_row) + " |")
+            lines.append("| " + " | ".join(["---"] * max_cols) + " |")
+
+            # 본문 행
+            for r in rows[1:]:
+                clean_row = [c.replace("|", "/") for c in r] + [""] * (max_cols - len(r))
+                lines.append("| " + " | ".join(clean_row) + " |")
+
+            if footnote and footnote.strip():
+                lines.append(f"_{footnote.strip()}_")
+
+            return "\n".join(lines)
+        except Exception:
+            clean = re.sub(r'<[^>]+>', ' ', raw_html).strip()
+            return clean
+
     def __init__(self, doc_id: Optional[str] = None, filter_headers_footers: bool = True, preserve_newlines: bool = False):
         self.doc_id = self.generate_doc_id(doc_id)
         self.filter_headers_footers = filter_headers_footers
@@ -911,7 +959,11 @@ class HierarchicalChunker:
         """
         child_chunks: List[Dict[str, Any]] = []
 
+        MICRO_TABLE_MAX_TOKENS = 180
+        MICRO_TABLE_MAX_ROWS = 6
+
         current_text_units: List[str] = []
+        current_tables: List[Dict[str, Any]] = []
         current_tokens = 0
         current_start_page: Optional[int] = None
         current_end_page: Optional[int] = None
@@ -920,27 +972,27 @@ class HierarchicalChunker:
         current_chunk_type = "paragraph"
 
         def flush_child_chunk():
-            nonlocal child_counter, current_text_units, current_tokens, current_start_page, current_end_page
+            nonlocal child_counter, current_text_units, current_tables, current_tokens, current_start_page, current_end_page
             if not current_text_units:
                 return
 
             cleaned_units = [u.strip() for u in current_text_units if u.strip()]
             if not cleaned_units:
                 current_text_units = []
+                current_tables = []
                 current_tokens = 0
                 current_start_page = None
                 current_end_page = None
                 return
 
-            if self.preserve_newlines:
-                full_child_text = "\n".join(
-                    self.normalize_text_for_embedding(u) for u in cleaned_units if u
-                )
+            if current_tables or self.preserve_newlines:
+                full_child_text = "\n\n".join(u for u in cleaned_units if u)
             else:
                 full_child_text = self.normalize_text_for_embedding(" ".join(cleaned_units))
 
             if not full_child_text:
                 current_text_units = []
+                current_tables = []
                 current_tokens = 0
                 current_start_page = None
                 current_end_page = None
@@ -961,23 +1013,69 @@ class HierarchicalChunker:
             meta["page_end"] = end_p
             meta["pages"] = pages_list
 
+            if current_tables:
+                # 텍스트 유닛이 1개뿐이고 표도 1개뿐이라면 순수 단독 표 청크로 처리
+                if len(current_tables) == 1 and len(cleaned_units) == 1:
+                    chunk_type = "table"
+                    is_table = True
+                    is_atomic_table = True
+                    single_t = current_tables[0]
+                    combined_raw_html = single_t.get("raw_html", "")
+                    tbl_caption = single_t.get("caption") or None
+                    tbl_footnote = single_t.get("footnote") or None
+                    meta["type"] = "table"
+                    meta["is_table"] = True
+                    meta["is_atomic_table"] = True
+                    if tbl_caption:
+                        meta["table_caption"] = tbl_caption
+                    if tbl_footnote:
+                        meta["table_footnote"] = tbl_footnote
+                    full_child_text = self.normalize_text_for_embedding(
+                        self.generate_table_search_text(combined_raw_html, tbl_caption or "", tbl_footnote or "")
+                    )
+                else:
+                    combined_raw_html = "\n<hr class=\"table-sep my-2\"/>\n".join(
+                        t["raw_html"] for t in current_tables if t.get("raw_html")
+                    )
+                    chunk_type = "composite"
+                    is_table = True
+                    is_atomic_table = False
+                    meta["has_tables"] = True
+                    meta["table_count"] = len(current_tables)
+                    meta["tables"] = list(current_tables)
+                    meta["is_atomic_table"] = False
+                    tbl_caption = " / ".join(filter(None, [t.get("caption", "") for t in current_tables])) or None
+                    tbl_footnote = " / ".join(filter(None, [t.get("footnote", "") for t in current_tables])) or None
+            else:
+                combined_raw_html = ""
+                chunk_type = current_chunk_type
+                is_table = False
+                is_atomic_table = False
+                tbl_caption = None
+                tbl_footnote = None
+
             child_chunks.append({
                 "chunk_id": cid,
                 "parent_chunk_id": "",  # Parent 패킹 시 주입
                 "parent_id": "",        # 하위 호환성 별칭
                 "section_id": sec_id,
-                "chunk_type": current_chunk_type,
+                "chunk_type": chunk_type,
                 "text": full_child_text,
+                "raw_html": combined_raw_html,
+                "table_caption": tbl_caption,
+                "table_footnote": tbl_footnote,
+                "tables": list(current_tables) if current_tables else [],
                 "token_estimate": self.estimate_korean_tokens(full_child_text),
                 "page_number": start_p,
                 "page_end": end_p,
                 "breadcrumbs": list(current_breadcrumbs),
-                "is_table": False,
-                "is_atomic_table": False,
+                "is_table": is_table,
+                "is_atomic_table": is_atomic_table,
                 "metadata": meta,
             })
 
             current_text_units = []
+            current_tables = []
             current_tokens = 0
             current_start_page = None
             current_end_page = None
@@ -988,12 +1086,9 @@ class HierarchicalChunker:
             breadcrumbs = item.get("breadcrumbs", [])
 
             if i_type == "table":
-                flush_child_chunk()
-
                 raw_html = item.get("raw_html", "")
                 caption = item.get("caption", "")
                 footnote = item.get("footnote", "")
-                img_path = item.get("image_path", "")
                 table_type = item.get("table_type", "simple_table")
                 tbl_start_p = item.get("page", 1)
                 tbl_end_p = item.get("page_end", tbl_start_p)
@@ -1004,6 +1099,61 @@ class HierarchicalChunker:
                 search_text = self.normalize_text_for_embedding(
                     self.generate_table_search_text(raw_html, caption, footnote)
                 )
+                tbl_tokens = self.estimate_korean_tokens(search_text)
+                raw_html_tokens = self.estimate_korean_tokens(raw_html) if raw_html else tbl_tokens
+
+                # 행 수 계산
+                row_count = 0
+                if raw_html:
+                    try:
+                        parser = _HTMLTableExtractor()
+                        parser.feed(raw_html)
+                        row_count = len(parser.rows)
+                    except Exception:
+                        row_count = 0
+
+                # 1) 이전 누적 텍스트와 합쳤을 때 512 토큰 초과 시 이전 텍스트 먼저 flush
+                if tbl_tokens <= MICRO_TABLE_MAX_TOKENS and (current_tokens + tbl_tokens > 512) and current_text_units:
+                    flush_child_chunk()
+
+                # 2) 소형 표 판별 (법률 문서는 원자성 보존, 일반 문서에서 180 토큰 이하 & 6행 이하인 경우 인라인 병합)
+                is_micro_table = (
+                    not is_legal
+                    and (
+                        (0 < row_count <= MICRO_TABLE_MAX_ROWS and tbl_tokens <= MICRO_TABLE_MAX_TOKENS)
+                        or (row_count == 0 and raw_html_tokens <= MICRO_TABLE_MAX_TOKENS)
+                    )
+                    and (current_tokens + tbl_tokens <= 512)
+                )
+
+                if is_micro_table:
+                    md_table = self.html_table_to_markdown(raw_html, caption=caption, footnote=footnote)
+                    if not md_table:
+                        md_table = search_text
+
+                    if current_start_page is None:
+                        current_start_page = tbl_start_p
+                    current_end_page = max(current_end_page or tbl_start_p, tbl_end_p)
+                    if not current_breadcrumbs:
+                        current_breadcrumbs = list(breadcrumbs)
+
+                    current_text_units.append(md_table)
+                    current_tokens += tbl_tokens
+                    current_tables.append({
+                        "table_index": len(current_tables),
+                        "caption": caption,
+                        "footnote": footnote,
+                        "raw_html": raw_html,
+                        "table_type": table_type,
+                        "page_number": tbl_start_p,
+                        "page_end": tbl_end_p,
+                        "row_count": row_count,
+                        "token_estimate": tbl_tokens,
+                    })
+                    continue
+
+                # 3) 대형 표 또는 법률 문서 표인 경우: 이전 텍스트 flush 후 독립 원자적 표 청크 생성
+                flush_child_chunk()
 
                 child_counter += 1
                 cid = f"{self.doc_id}_c{child_counter:04d}"
@@ -1094,6 +1244,7 @@ class HierarchicalChunker:
 
         flush_child_chunk()
         return child_chunks, child_counter
+
 
     def _pack_to_parent_chunks(
         self,
@@ -1189,8 +1340,16 @@ class HierarchicalChunker:
 
             # 제목 변경 감지 시 독립 Parent 생성 (단, '(계속)' 접미사가 붙은 현재 제목의 베이스 타이틀과 비교)
             base_parent_title = current_parent_title.replace(" (계속)", "") if current_parent_title else None
-            if base_parent_title and target_heading and base_parent_title != target_heading:
-                flush_parent()
+            if art_disp:
+                # [법률 문서] 조문(제N조) 변경 감지 시 토큰 수와 무관하게 즉시 분할 (1조문 = 1부모 원칙 보존)
+                if base_parent_title and target_heading and base_parent_title != target_heading:
+                    flush_parent()
+            else:
+                # [일반 문서] 소제목 변경 감지 시 누적 토큰이 MIN_PARENT_TOKENS(600) 이상일 때만 분할하여 풍부한 문맥 보장
+                MIN_PARENT_TOKENS = 600
+                if base_parent_title and target_heading and base_parent_title != target_heading:
+                    if current_tokens >= MIN_PARENT_TOKENS:
+                        flush_parent()
 
             if not current_parent_title and target_heading:
                 current_parent_title = target_heading
@@ -1684,6 +1843,7 @@ class HierarchicalChunker:
             "total_child_chunks": len(children),
             "paragraph_chunks": sum(1 for c in children if c.get("chunk_type") in ["paragraph", "article_clause"]),
             "table_chunks": sum(1 for c in children if c.get("chunk_type") == "table"),
+            "composite_chunks": sum(1 for c in children if c.get("chunk_type") == "composite"),
             "total_words": sum(c.get("token_estimate", 0) for c in children),
         }
 

@@ -855,8 +855,9 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertEqual(iv_sec["page_range"], [11, 15])
 
     def test_general_chunking_heading_parent_split(self):
-        """일반 문서에서 H3 소제목 변경 시 Parent 청크가 분할되고 metadata에 heading이 없는지 검증"""
+        """일반 문서에서 H3 소제목 변경 시 누적 토큰(600) 충족 시 Parent 청크가 분할되는지 검증"""
         chunker = HierarchicalChunker(doc_id="test_heading_split")
+        long_bg = "본 연구의 배경입니다. 중요한 연구 과제로서 다양한 산업적 배경을 심층적으로 분석합니다. " * 40
         sample_content_list = [
             {
                 "type": "title",
@@ -870,7 +871,7 @@ class TestHierarchicalChunker(unittest.TestCase):
             },
             {
                 "type": "paragraph",
-                "content": {"paragraph_content": [{"type": "text", "content": "본 연구의 배경입니다. 중요한 연구 과제입니다."}]},
+                "content": {"paragraph_content": [{"type": "text", "content": long_bg}]},
                 "page_idx": 0
             },
             {
@@ -890,37 +891,18 @@ class TestHierarchicalChunker(unittest.TestCase):
         parents = etl_res["parent_chunks"]
         children = etl_res["child_chunks"]
 
-        # 1. 서로 다른 H3 제목에 따라 Parent가 분할되었는지 검증 (최소 2개)
+        # 1. 600 토큰 충족 후 서로 다른 H3 제목에 따라 Parent가 분할되었는지 검증 (최소 2개)
         self.assertEqual(len(parents), 2)
         self.assertEqual(parents[0]["title"], "1.1 연구 배경")
         self.assertEqual(parents[1]["title"], "1.2 연구 목적")
 
-        # 2. Child 청크가 각 Parent를 정확히 가리키는지 검증
-        self.assertEqual(children[0]["parent_chunk_id"], parents[0]["parent_chunk_id"])
-        self.assertEqual(children[1]["parent_chunk_id"], parents[1]["parent_chunk_id"])
-
-        # 3. Child 청크의 metadata에 'heading'이 제거되었는지 검증
+        # 2. Child 청크의 metadata에 'heading'이 제거되었는지 검증
         self.assertNotIn("heading", children[0]["metadata"])
-        self.assertNotIn("heading", children[1]["metadata"])
+        self.assertNotIn("heading", children[-1]["metadata"])
 
-        # 4. breadcrumbs에 직속 제목이 포함되어 있는지 검증
-        self.assertEqual(children[0]["breadcrumbs"][-1], "1.1 연구 배경")
-        self.assertEqual(children[1]["breadcrumbs"][-1], "1.2 연구 목적")
-
-    def test_general_chunking_token_overflow_parent_split(self):
-        """일반 문서에서 단일 Heading 하위 내용이 2048 토큰을 초과할 때 '(계속)' 타이틀로 분할되는지 검증"""
-        chunker = HierarchicalChunker(doc_id="test_token_overflow")
-
-        # 1.1 하위에 약 3000 토큰 분량의 긴 단락들 생성
-        long_unit = "가나다라마바사 아자차카타파하 " * 50
-        paragraphs = []
-        for i in range(25):
-            paragraphs.append({
-                "type": "paragraph",
-                "content": {"paragraph_content": [{"type": "text", "content": f"단락 {i}: {long_unit}"}]},
-                "page_idx": i // 5
-            })
-
+    def test_general_chunking_heading_parent_smart_aggregation(self):
+        """일반 문서에서 H3 소제목이 짧을 때(600 토큰 미만) 분할되지 않고 하나의 풍부한 Parent로 묶이는지 검증"""
+        chunker = HierarchicalChunker(doc_id="test_heading_agg")
         sample_content_list = [
             {
                 "type": "title",
@@ -929,23 +911,34 @@ class TestHierarchicalChunker(unittest.TestCase):
             },
             {
                 "type": "title",
-                "content": {"title_content": [{"type": "text", "content": "1.1 방대한 배경"}], "level": 3},
+                "content": {"title_content": [{"type": "text", "content": "1.1 짧은 배경"}], "level": 3},
                 "page_idx": 0
             },
-            *paragraphs
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "짧은 배경입니다."}]},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1.2 짧은 목적"}], "level": 3},
+                "page_idx": 1
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "짧은 목적입니다."}]},
+                "page_idx": 1
+            },
         ]
 
-        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="방대보고서", strategy="general")
-
+        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="연구보고서", strategy="general")
         parents = etl_res["parent_chunks"]
-        # 2048 토큰 한도로 인해 최소 2개 이상의 Parent로 분할되어야 함
-        self.assertGreaterEqual(len(parents), 2)
-        self.assertEqual(parents[0]["title"], "1.1 방대한 배경")
-        self.assertTrue(parents[1]["title"].endswith("(계속)"))
-        self.assertIn("1.1 방대한 배경 (계속)", parents[1]["title"])
+        # 누적 토큰이 600 미만이므로 1개의 부모 청크로 통합 보존되어야 함
+        self.assertEqual(len(parents), 1)
+        self.assertEqual(parents[0]["title"], "1.1 짧은 배경")
 
     def test_general_chunking_table_inside_heading_not_split(self):
-        """동일 Heading 하위에 표가 포함되어 있어도 2048 토큰 미만이면 Parent가 분할되지 않고 하나로 묶이는지 검증"""
+        """동일 Heading 하위에 본문+소형표+본문이 있을 때 하나의 composite Child 청크로 결합되는지 검증"""
         chunker = HierarchicalChunker(doc_id="test_table_no_split")
         sample_content_list = [
             {
@@ -984,21 +977,115 @@ class TestHierarchicalChunker(unittest.TestCase):
         parents = etl_res["parent_chunks"]
         children = etl_res["child_chunks"]
 
-        # 1. Heading 하위의 [본문1, 표, 본문2]가 불필요하게 쪼개지지 않고 단 1개의 Parent로 묶여야 함!
-        self.assertEqual(len(parents), 1, f"Expected 1 parent chunk, but got {len(parents)}: {[p['title'] for p in parents]}")
+        # 1. Heading 하위의 [본문1, 표, 본문2]가 단 1개의 Parent로 묶임
+        self.assertEqual(len(parents), 1)
         self.assertEqual(parents[0]["title"], "1.1 연구 데이터")
 
-        # 2. Child는 총 3개 (본문1, 표, 본문2)
-        self.assertEqual(len(children), 3)
+        # 2. Child는 본문+소형표+본문이 결합된 1개의 composite 청크로 생성됨
+        self.assertEqual(len(children), 1)
+        c0 = children[0]
+        self.assertEqual(c0["chunk_type"], "composite")
+        self.assertTrue(c0["is_table"])
+        self.assertFalse(c0["is_atomic_table"])
+        self.assertEqual(len(c0["tables"]), 1)
+        self.assertIn("측정 데이터표", c0["text"])
+        self.assertIn("사전 설명", c0["text"])
+        self.assertIn("사후 분석", c0["text"])
+        self.assertIn("<table>", c0["raw_html"])
 
-        # 3. 3개 Child 모두 동일한 Parent ID를 바라봐야 함
-        parent_id = parents[0]["parent_chunk_id"]
-        for c in children:
-            self.assertEqual(c["parent_chunk_id"], parent_id)
-            self.assertEqual(c["breadcrumbs"][-1], "1.1 연구 데이터")
+        # 3. Child가 해당 Parent ID를 바라봄
+        self.assertEqual(c0["parent_chunk_id"], parents[0]["parent_chunk_id"])
+
+    def test_dependent_micro_tables_packaged_into_single_composite_chunk(self):
+        """사용자 스크린샷 케이스: 짧은문단 + 소형표 + 짧은문단 + 소형표 + 조건문단이 단 1개의 완결된 composite Child 청크로 묶이는지 검증"""
+        chunker = HierarchicalChunker(doc_id="screenshot_case_doc")
+        tbl1_html = (
+            "<table>"
+            "<tr><th>질병분류기호</th><th>질병명</th></tr>"
+            "<tr><td>M50.0</td><td>척수병증을 동반한 경추간판장애</td></tr>"
+            "<tr><td>M50.1</td><td>신경뿌리병증을 동반한 경추간판장애</td></tr>"
+            "</table>"
+        )
+        tbl2_html = (
+            "<table>"
+            "<tr><th>분야</th><th>직종(직무내용)</th></tr>"
+            "<tr><td>건설</td><td>용접공, 배관공, 형틀목공, 전기공</td></tr>"
+            "<tr><td>조선</td><td>용접공, 배관공, 취부공, 사상공</td></tr>"
+            "<tr><td>자동차</td><td>정비공</td></tr>"
+            "<tr><td>기타</td><td>제조업 용접공</td></tr>"
+            "</table>"
+        )
+        sample_content_list = [
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "2. 상병별 적용기준"}], "level": 2},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "가. 경추간판탈출증"}], "level": 3},
+                "page_idx": 0
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "1) MRI상 이상 소견(추간판 탈출)이 있고, 해당과 전문의에 의해 아래의 상병명 확진"}]},
+                "page_idx": 0
+            },
+            {
+                "type": "table",
+                "content": {
+                    "html": tbl1_html,
+                    "table_caption": [{"type": "text", "content": "상병코드표"}],
+                    "table_footnote": []
+                },
+                "page_idx": 0
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "2) 아래 직종 중 하나 이상에 해당"}]},
+                "page_idx": 0
+            },
+            {
+                "type": "table",
+                "content": {
+                    "html": tbl2_html,
+                    "table_caption": [{"type": "text", "content": "해당직종표"}],
+                    "table_footnote": []
+                },
+                "page_idx": 0
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "3) 해당 직종에서 근무기간 10년 이상, 유효기간 12개월 이내"}]},
+                "page_idx": 0
+            }
+        ]
+
+        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="산재적용지침", strategy="general")
+        children = etl_res["child_chunks"]
+
+        # 전체가 단 1개의 composite Child 청크로 결합되어야 함!
+        self.assertEqual(len(children), 1)
+        comp_chunk = children[0]
+        self.assertEqual(comp_chunk["chunk_type"], "composite")
+        self.assertTrue(comp_chunk["is_table"])
+        self.assertFalse(comp_chunk["is_atomic_table"])
+
+        # 2개 표가 모두 text(마크다운), raw_html, metadata.tables에 보존되어야 함
+        self.assertEqual(len(comp_chunk["tables"]), 2)
+        self.assertEqual(comp_chunk["metadata"]["table_count"], 2)
+        self.assertIn("M50.0", comp_chunk["text"])
+        self.assertIn("자동차", comp_chunk["text"])
+        self.assertIn("정비공", comp_chunk["text"])
+        self.assertIn("10년 이상", comp_chunk["text"])
+        self.assertIn("table-sep", comp_chunk["raw_html"])
+
+        # JSONL 내보내기 검증
+        jsonl = chunker.export_to_jsonl(etl_res)
+        self.assertIn("composite", jsonl)
+        self.assertIn("M50.0", jsonl)
+        self.assertIn("정비공", jsonl)
 
 
 if __name__ == "__main__":
     unittest.main()
-
-

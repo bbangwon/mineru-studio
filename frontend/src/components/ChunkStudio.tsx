@@ -43,7 +43,7 @@ import {
   CornerDownRight,
   CornerUpLeft,
 } from 'lucide-react';
-import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams } from '../types';
+import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams, EmbeddedTableItem } from '../types';
 import { ChunkSplitModal } from './ChunkSplitModal';
 import { ChunkMergeModal } from './ChunkMergeModal';
 import { AddSectionModal } from './AddSectionModal';
@@ -472,14 +472,18 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
   const renderChildChunkItem = (secId: string, chunk: ChildChunk) => {
     const isChildSelected = activeChunkId === chunk.chunk_id;
-    const isTable = chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table);
+    const tableList = chunk.tables || chunk.metadata?.tables || [];
+    const isComposite = chunk.chunk_type === 'composite' || (tableList.length > 0 && chunk.chunk_type !== 'table');
+    const isTable = (chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table)) && !isComposite;
     const isArticle = chunk.chunk_type === 'article' || chunk.chunk_type === 'article_clause';
     const isIgnored = Boolean(chunk.is_ignored);
     const isEdited = Boolean(chunk.is_edited);
     const pageNum = chunk.page_number || 1;
 
     let preview = '';
-    if (chunk.table_caption) {
+    if (isComposite) {
+      preview = `[복합: 표${tableList.length || 1}] ${chunk.text?.slice(0, 24) || ''}`;
+    } else if (chunk.table_caption) {
       preview = `[표] ${chunk.table_caption}`;
     } else if (chunk.text) {
       const firstLine = chunk.text.trim().split('\n')[0] || '';
@@ -509,7 +513,13 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
         title={`${chunk.chunk_id} (p.${pageNum})\n${chunk.text?.slice(0, 200) || ''}`}
       >
         <div className="flex items-center gap-1.5 truncate min-w-0 pr-1">
-          {isTable ? (
+          {isComposite ? (
+            <Layers
+              className={`w-3.5 h-3.5 shrink-0 ${
+                isChildSelected ? 'text-teal-200' : 'text-teal-600 dark:text-teal-400'
+              }`}
+            />
+          ) : isTable ? (
             <Table2
               className={`w-3.5 h-3.5 shrink-0 ${
                 isChildSelected ? 'text-amber-200' : 'text-amber-500 dark:text-amber-400'
@@ -2430,15 +2440,17 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         group.children.map((chunk) => {
                         const isSelected = activeChunkId === chunk.chunk_id;
                         const isChecked = selectedChunkIds.has(chunk.chunk_id);
-                        const isTable = chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table);
+                        const tableList = chunk.tables || chunk.metadata?.tables || [];
+                        const isComposite = chunk.chunk_type === 'composite' || (tableList.length > 0 && chunk.chunk_type !== 'table');
+                        const isTable = (chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table)) && !isComposite;
                         const isArticle = chunk.chunk_type === 'article' || chunk.chunk_type === 'article_clause';
                         const isIgnored = Boolean(chunk.is_ignored);
                         const isEdited = Boolean(chunk.is_edited);
 
                         const cWords = chunk.token_estimate || (chunk.text ? estimateKoreanTokens(chunk.text) : 0);
                         const isCEmpty = (!chunk.text || !chunk.text.trim()) && (!chunk.raw_html || !chunk.raw_html.trim());
-                        const isCOver = !isTable && cWords > 512;
-                        const isCUnder = !isTable && !isCEmpty && cWords > 0 && cWords < 20;
+                        const isCOver = !isTable && !isComposite && cWords > 512;
+                        const isCUnder = !isTable && !isComposite && !isCEmpty && cWords > 0 && cWords < 20;
 
                         return (
                           <div
@@ -2475,7 +2487,12 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                   )}
                                 </button>
 
-                                {isTable ? (
+                                {isComposite ? (
+                                  <span className="bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
+                                    <Layers className="w-3 h-3 text-teal-600 dark:text-teal-400" />
+                                    복합 (표 {tableList.length > 0 ? tableList.length : '포함'})
+                                  </span>
+                                ) : isTable ? (
                                   <span className="bg-indigo-100 dark:bg-indigo-950/80 text-indigo-800 dark:text-indigo-300 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
                                     <Table2 className="w-3 h-3" />
                                     표
@@ -2522,6 +2539,11 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                   <span className="bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-[9px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5">
                                     <AlertTriangle className="w-2.5 h-2.5 text-rose-600 dark:text-rose-400" />
                                     빈 청크
+                                  </span>
+                                ) : isComposite ? (
+                                  <span className="bg-teal-50 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 border border-teal-300 dark:border-teal-800 text-[9px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5">
+                                    <ShieldCheck className="w-2.5 h-2.5 text-teal-600 dark:text-teal-400" />
+                                    문단+표 결합
                                   </span>
                                 ) : isTable ? (
                                   <span className="bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-[9px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5">
@@ -2665,8 +2687,14 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     <span className="hidden sm:inline">목록</span>
                   </button>
 
-                  <div className="p-1.5 bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 rounded-lg shrink-0">
-                    {activeChunk.chunk_type === 'table' ? (
+                  <div className={`p-1.5 rounded-lg shrink-0 ${
+                    activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
+                      ? 'bg-teal-50 dark:bg-teal-950/80 text-teal-600 dark:text-teal-400'
+                      : 'bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400'
+                  }`}>
+                    {activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table') ? (
+                      <Layers className="w-4 h-4" />
+                    ) : activeChunk.chunk_type === 'table' ? (
                       <Table2 className="w-4 h-4" />
                     ) : activeChunk.chunk_type === 'article' ? (
                       <Scale className="w-4 h-4 text-purple-600 dark:text-purple-400" />
@@ -3063,87 +3091,132 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                   </div>
                 </div>
 
-                {/* Table Specific Fields & Tabs */}
-                {activeChunk.chunk_type === 'table' && (
-                  <div className="space-y-3 p-3.5 bg-indigo-50/40 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/50">
-                    <div className="flex items-center justify-between border-b border-indigo-200/60 dark:border-indigo-800/60 pb-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setEditorTab('text')}
-                          className={`text-xs font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                            editorTab === 'text'
-                              ? 'bg-indigo-600 text-white shadow-2xs'
-                              : 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
-                          }`}
-                        >
-                          표 텍스트
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditorTab('raw_html')}
-                          className={`text-xs font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                            editorTab === 'raw_html'
-                              ? 'bg-indigo-600 text-white shadow-2xs'
-                              : 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
-                          }`}
-                        >
-                          표 HTML 원형
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditorTab('preview')}
-                          className={`text-xs font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                            editorTab === 'preview'
-                              ? 'bg-indigo-600 text-white shadow-2xs'
-                              : 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
-                          }`}
-                        >
-                          HTML 미리보기
-                        </button>
-                      </div>
+                {/* Table & Composite Specific Fields & Tabs */}
+                {(() => {
+                  const activeTableList = activeChunk.tables || activeChunk.metadata?.tables || [];
+                  const isActiveComposite = activeChunk.chunk_type === 'composite' || (activeTableList.length > 0 && activeChunk.chunk_type !== 'table');
+                  const hasTablesInActiveChunk = activeChunk.chunk_type === 'table' || isActiveComposite || Boolean(activeChunk.raw_html);
 
-                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1">
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                        원형 보존 표
-                      </span>
-                    </div>
+                  if (!hasTablesInActiveChunk) return null;
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 제목 (Caption)</label>
-                        <input
-                          type="text"
-                          value={activeChunk.table_caption || ''}
-                          onChange={(e) => handleFieldChange('table_caption', e.target.value)}
-                          placeholder="예: [표 1] 세부기준"
-                          className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 각주 (Footnote)</label>
-                        <input
-                          type="text"
-                          value={activeChunk.table_footnote || ''}
-                          onChange={(e) => handleFieldChange('table_footnote', e.target.value)}
-                          placeholder="예: ※ 기준치 초과 시 재검사"
-                          className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                        />
+                  return (
+                    <div className="space-y-3">
+                      <div className="space-y-3 p-3.5 bg-indigo-50/40 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/50">
+                        <div className="flex items-center justify-between border-b border-indigo-200/60 dark:border-indigo-800/60 pb-2">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditorTab('text')}
+                              className={`text-xs font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                                editorTab === 'text'
+                                  ? 'bg-indigo-600 text-white shadow-2xs'
+                                  : 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
+                              }`}
+                            >
+                              {isActiveComposite ? '본문/마크다운 텍스트' : '표 텍스트'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditorTab('raw_html')}
+                              className={`text-xs font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                                editorTab === 'raw_html'
+                                  ? 'bg-indigo-600 text-white shadow-2xs'
+                                  : 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
+                              }`}
+                            >
+                              표 HTML 원형
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditorTab('preview')}
+                              className={`text-xs font-bold px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                                editorTab === 'preview'
+                                  ? 'bg-indigo-600 text-white shadow-2xs'
+                                  : 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
+                              }`}
+                            >
+                              {isActiveComposite ? '통합 문서 미리보기' : 'HTML 미리보기'}
+                            </button>
+                          </div>
+
+                          <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                            {isActiveComposite ? `복합 청크 (표 ${activeTableList.length || 1}개 결합)` : '원형 보존 표'}
+                          </span>
+                        </div>
+
+                        {activeChunk.chunk_type === 'table' ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 제목 (Caption)</label>
+                              <input
+                                type="text"
+                                value={activeChunk.table_caption || ''}
+                                onChange={(e) => handleFieldChange('table_caption', e.target.value)}
+                                placeholder="예: [표 1] 세부기준"
+                                className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 각주 (Footnote)</label>
+                              <input
+                                type="text"
+                                value={activeChunk.table_footnote || ''}
+                                onChange={(e) => handleFieldChange('table_footnote', e.target.value)}
+                                placeholder="예: ※ 기준치 초과 시 재검사"
+                                className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                              />
+                            </div>
+                          </div>
+                        ) : isActiveComposite && activeTableList.length > 0 ? (
+                          <div className="space-y-1.5">
+                            <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                              포함된 개별 표 목록 ({activeTableList.length}개)
+                            </label>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              {activeTableList.map((tbl: EmbeddedTableItem, idx: number) => (
+                                <div key={idx} className="p-2 bg-white dark:bg-slate-900 rounded-lg border border-indigo-100 dark:border-indigo-900/60 flex items-center justify-between text-xs">
+                                  <div className="min-w-0 pr-1">
+                                    <span className="font-semibold text-[11px] text-slate-800 dark:text-slate-200 block truncate">
+                                      {tbl.caption ? `[표 ${idx + 1}] ${tbl.caption}` : `[표 ${idx + 1}] 데이터 표`}
+                                    </span>
+                                    {tbl.footnote && (
+                                      <span className="text-[10px] text-slate-400 block truncate">
+                                        {tbl.footnote}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {tbl.row_count ? (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono shrink-0">
+                                      {tbl.row_count}행
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Main Textarea / Code / Preview */}
                 <div className="space-y-1.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 flex-wrap">
                       <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        {activeChunk.chunk_type === 'table' && editorTab === 'raw_html'
+                        {editorTab === 'raw_html'
                           ? '표 HTML 원형 코드 (raw_html)'
-                          : activeChunk.chunk_type === 'table' && editorTab === 'preview'
-                          ? '표 렌더링 미리보기 (HTML Preview)'
-                          : '청크 본문 텍스트 (Text) 편집'}
+                          : editorTab === 'preview'
+                          ? (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
+                              ? '통합 문서 미리보기 (HTML Preview)'
+                              : '표 렌더링 미리보기 (HTML Preview)')
+                          : (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
+                              ? '복합 청크 본문 텍스트 (Markdown) 편집'
+                              : activeChunk.chunk_type === 'table'
+                              ? '표 검색 요약 텍스트 (Text) 편집'
+                              : '청크 본문 텍스트 (Text) 편집')}
                       </label>
 
                       {editorTab !== 'preview' && (
@@ -3195,8 +3268,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     </div>
                   )}
 
-                  {activeChunk.chunk_type === 'table' && editorTab === 'preview' ? (
-                    <div className="p-4 bg-slate-50/80 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 min-h-[220px] max-h-[360px] overflow-y-auto">
+                  {(activeChunk.chunk_type === 'table' || activeChunk.chunk_type === 'composite' || Boolean(activeChunk.raw_html)) && editorTab === 'preview' ? (
+                    <div className="p-4 bg-slate-50/80 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 min-h-[220px] max-h-[420px] overflow-y-auto">
                       <div
                         className="prose-custom text-xs"
                         dangerouslySetInnerHTML={{
@@ -3204,7 +3277,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         }}
                       />
                     </div>
-                  ) : activeChunk.chunk_type === 'table' && editorTab === 'raw_html' ? (
+                  ) : (activeChunk.chunk_type === 'table' || activeChunk.chunk_type === 'composite' || Boolean(activeChunk.raw_html)) && editorTab === 'raw_html' ? (
                     <textarea
                       value={activeChunk.raw_html || ''}
                       onChange={(e) => handleFieldChange('raw_html', e.target.value)}

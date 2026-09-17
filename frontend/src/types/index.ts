@@ -93,21 +93,34 @@ export type ParentInsertPosition =
   | { type: 'start' }
   | { type: 'after'; parentId: string };
 
-// 3. Child Chunk (검색 / 미시 계층, ~512 tokens or Atomic Table)
+// 3. Child Chunk (검색 / 미시 계층, ~512 tokens or Atomic Table or Composite)
+export interface EmbeddedTableItem {
+  table_index: number;
+  caption?: string;
+  footnote?: string;
+  raw_html?: string;
+  table_type?: string;
+  row_count?: number;
+  token_estimate?: number;
+  page_number?: number;
+  page_end?: number;
+}
+
 export interface ChildChunk {
   chunk_id: string;                // 예: "d_xxxx_c001"
   parent_chunk_id: string;         // 소속 Parent 청크 ID ("d_xxxx_p001")
   parent_id?: string;              // 하위 호환성 별칭 (일부 컴포넌트 호환)
   section_id: string;              // 소속 Section ID ("d_xxxx_s01")
-  chunk_type: 'paragraph' | 'table' | 'article_clause' | 'article';
+  chunk_type: 'paragraph' | 'table' | 'composite' | 'article_clause' | 'article';
   text: string;                    // 검색/임베딩 대상 텍스트 (~512 토큰 or 표 요약)
   token_estimate: number;
   page_number: number;
   page_end?: number;
   breadcrumbs: string[];           // ["제1장 총칙", "제1조(목적)"]
-  raw_html?: string;               // 표 원형 보존
+  raw_html?: string;               // 표 원형 보존 (복수 표 결합 지원)
   table_caption?: string;
   table_footnote?: string;
+  tables?: EmbeddedTableItem[];    // 복합 청크에 포함된 개별 표 목록
   image_path?: string;
   image_url?: string;
   table_type?: string;
@@ -133,6 +146,7 @@ export interface EtlStats {
   total_child_chunks: number;
   paragraph_chunks: number;
   table_chunks: number;
+  composite_chunks?: number;
   article_chunks?: number;
   total_words: number;
 }

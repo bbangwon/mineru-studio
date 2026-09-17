@@ -97,7 +97,7 @@ export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
       return;
     }
     if (RESERVED_METADATA_KEYS.has(trimmedKey)) {
-      setKeyError(`'${trimmedKey}'는 시스템 예약어이므로 사용할 수 없습니다.`);
+      setKeyError(`'${trimmedKey}'는 시스템 예약어(출처/표/페이지/식별자 등)이므로 커스텀 태그로 사용할 수 없습니다.`);
       return;
     }
     setKeyError(null);

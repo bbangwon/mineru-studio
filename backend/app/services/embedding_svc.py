@@ -243,21 +243,49 @@ class EmbeddingService:
             token_count = chunk.get("token_estimate") or chunk.get("token_count") or 0
 
             chunk_meta = dict(chunk.get("metadata") or {})
-            chunk_meta.pop("has_image", None)
-            chunk_meta.pop("image_path", None)
-            chunk_meta.pop("image_url", None)
-
-            # doc_id 보정 (비어있을 경우 breadcrumbs[0] 또는 chunk_id prefix 활용)
-            doc_id_val = chunk.get("doc_id") or ""
+            
+            # doc_id 및 doc_title 보정
+            doc_id_val = chunk.get("doc_id") or chunk_meta.get("doc_id") or ""
             if not doc_id_val:
                 if breadcrumbs and isinstance(breadcrumbs, list) and len(breadcrumbs) > 0:
                     doc_id_val = str(breadcrumbs[0]).strip()
                 elif "_c" in cid:
                     doc_id_val = cid.rsplit("_c", 1)[0].strip()
 
+            doc_title_val = (
+                chunk.get("doc_title")
+                or chunk_meta.get("doc_title")
+                or (str(breadcrumbs[0]).strip() if breadcrumbs else doc_id_val)
+            )
+
+            # 표 구조 및 개수 자동 추적
+            chunk_tables = chunk.get("tables") or chunk_meta.get("tables") or []
+            raw_html_str = str(chunk.get("raw_html") or "")
+            has_html_table = "<table" in raw_html_str.lower()
+            is_table_type = chunk.get("chunk_type") == "table"
+            has_tables = bool(chunk_tables or is_table_type or chunk.get("is_table") or has_html_table)
+            table_count = len(chunk_tables) if chunk_tables else (1 if (has_html_table or is_table_type) else 0)
+            is_table = bool(is_table_type or has_tables or chunk.get("is_table"))
+            is_atomic_table = bool(
+                chunk.get("is_atomic_table")
+                or (is_table_type and table_count <= 1)
+            )
+
+            # 시스템 예약어 분리 -> 순수 커스텀 비즈니스 태그만 metadata 필드에 보존
+            reserved_keys = {
+                "doc_id", "doc_title", "chunk_id", "parent_chunk_id", "section_id", "id",
+                "page", "page_start", "page_end", "pages", "page_idx", "page_number",
+                "is_table", "is_atomic_table", "has_tables", "table_count", "tables",
+                "table_type", "table_caption", "table_footnote", "raw_html",
+                "has_image", "image_path", "image_url", "token_count", "token_estimate", "char_length",
+                "text", "parent_text", "title", "chunk_type", "breadcrumbs", "heading_hierarchy", "type"
+            }
+            pure_custom_meta = {k: v for k, v in chunk_meta.items() if k not in reserved_keys}
+
             payload = {
                 "chunk_id": cid,
                 "doc_id": doc_id_val,
+                "doc_title": doc_title_val,
                 "parent_chunk_id": pid,
                 "parent_text": p_text,
                 "section_id": chunk.get("section_id", ""),
@@ -276,10 +304,12 @@ class EmbeddingService:
                 "table_caption": chunk.get("table_caption"),
                 "table_footnote": chunk.get("table_footnote"),
                 "table_type": chunk.get("table_type"),
-                "is_table": bool(chunk.get("is_table") or chunk.get("chunk_type") == "table"),
-                "is_atomic_table": bool(chunk.get("is_atomic_table")),
-                "tables": chunk.get("tables") or chunk_meta.get("tables"),
-                "metadata": chunk_meta,
+                "has_tables": has_tables,
+                "table_count": table_count,
+                "is_table": is_table,
+                "is_atomic_table": is_atomic_table,
+                "tables": chunk_tables,
+                "metadata": pure_custom_meta,
             }
 
             points.append({

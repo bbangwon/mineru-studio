@@ -59,6 +59,8 @@ import {
   extractCustomMetadata,
   mergeMetadataWithPage,
   getAllCustomMetadataKeys,
+  RESERVED_METADATA_KEYS,
+  computeTableMetadata,
 } from '../utils/pageUtils';
 import {
   estimateKoreanTokens,
@@ -977,10 +979,16 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   // Add custom metadata tag
   const handleAddMetaTag = () => {
     if (!activeChunk || !newMetaKey.trim()) return;
+    const trimmedKey = newMetaKey.trim();
+    if (RESERVED_METADATA_KEYS.has(trimmedKey)) {
+      setMetaNotice(`'${trimmedKey}'는 시스템 예약어(출처/표/페이지/식별자 등)이므로 커스텀 태그로 사용할 수 없습니다.`);
+      setTimeout(() => setMetaNotice(null), 3000);
+      return;
+    }
     const currentMeta = activeChunk.metadata || {};
     const updatedMeta = {
       ...currentMeta,
-      [newMetaKey.trim()]: newMetaVal.trim(),
+      [trimmedKey]: newMetaVal.trim(),
     };
     handleFieldChange('metadata', updatedMeta);
     setNewMetaKey('');
@@ -3481,10 +3489,58 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     </div>
                   )}
 
-                  {/* Existing Tags */}
+                  {/* 시스템 자동 추적 메타데이터 (읽기 전용 표시) */}
+                  {(() => {
+                    const tableSummary = computeTableMetadata(activeChunk);
+                    const docTitle = activeChunk.metadata?.doc_title;
+                    return (
+                      <div className="p-2 bg-slate-100/80 dark:bg-slate-900/80 rounded-lg border border-slate-200/80 dark:border-slate-800 text-[11px] space-y-1">
+                        <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                          <span>시스템 자동 추적 속성 (읽기 전용)</span>
+                          <span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-normal">본문/문서 상태 기반 자동 계산</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                          {docTitle && (
+                            <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-700 dark:text-slate-300 font-medium">
+                              <span className="text-slate-400">문서:</span>
+                              <span className="font-semibold text-slate-900 dark:text-slate-100">{docTitle}</span>
+                            </span>
+                          )}
+                          <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-700 dark:text-slate-300 font-mono">
+                            <span className="text-slate-400 font-sans">위치:</span>
+                            <span>{formatChunkPageFull(activeChunk)}</span>
+                          </span>
+                          <span className={`inline-flex items-center gap-1 border px-2 py-0.5 rounded font-medium ${
+                            tableSummary.has_tables
+                              ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
+                              : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400'
+                          }`}>
+                            <span className="text-slate-400">표 상태:</span>
+                            <span>
+                              {tableSummary.has_tables
+                                ? (tableSummary.is_atomic_table ? '원자적 단독 표' : `표 ${tableSummary.table_count}개 포함`)
+                                : '표 없음'}
+                            </span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-500 dark:text-slate-400 font-mono">
+                            <span className="font-sans">토큰:</span>
+                            <span>~{activeChunk.token_estimate || 0}</span>
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Existing Custom Tags (순수 커스텀 태그만 표시) */}
                   <div className="flex flex-wrap gap-1.5 min-h-[30px] items-center">
-                    {activeChunk.metadata && Object.keys(activeChunk.metadata).length > 0 ? (
-                      Object.entries(activeChunk.metadata).map(([key, val]) => {
+                    {(() => {
+                      const customEntries = Object.entries(extractCustomMetadata(activeChunk.metadata));
+                      if (customEntries.length === 0) {
+                        return (
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">등록된 커스텀 태그가 없습니다.</span>
+                        );
+                      }
+                      return customEntries.map(([key, val]) => {
                         const isEditingThis = editingMetaKey === key;
                         if (isEditingThis) {
                           return (
@@ -3570,10 +3626,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                             </button>
                           </span>
                         );
-                      })
-                    ) : (
-                      <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">등록된 커스텀 태그가 없습니다.</span>
-                    )}
+                      });
+                    })()}
                   </div>
 
                   {/* Add / Update Tag Inputs */}
@@ -3585,51 +3639,56 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     );
 
                     return (
-                      <div className="flex items-center gap-2 pt-1">
-                        <input
-                          type="text"
-                          value={newMetaKey}
-                          onChange={(e) => setNewMetaKey(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleAddMetaTag();
-                          }}
-                          placeholder="Key (예: category)"
-                          className="w-1/3 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                        />
-                        <input
-                          type="text"
-                          value={newMetaVal}
-                          onChange={(e) => setNewMetaVal(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleAddMetaTag();
-                          }}
-                          placeholder="Value (예: safety_rules)"
-                          className="flex-1 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleAddMetaTag}
-                          disabled={!newMetaKey.trim()}
-                          className={`px-3 py-1.5 disabled:opacity-40 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shrink-0 ${
-                            isExistingKey
-                              ? 'bg-amber-600 hover:bg-amber-700'
-                              : 'bg-indigo-600 hover:bg-indigo-700'
-                          }`}
-                          title={isExistingKey ? '기존 키의 값을 업데이트합니다' : '새 메타데이터 태그 추가'}
-                        >
-                          {isExistingKey ? (
-                            <>
-                              <Check className="w-3.5 h-3.5" />
-                              <span>값 수정</span>
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>태그 추가</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
+                      <>
+                        <div className="flex items-center gap-2 pt-1">
+                          <input
+                            type="text"
+                            value={newMetaKey}
+                            onChange={(e) => setNewMetaKey(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleAddMetaTag();
+                            }}
+                            placeholder="Key (예: category)"
+                            className="w-1/3 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                          />
+                          <input
+                            type="text"
+                            value={newMetaVal}
+                            onChange={(e) => setNewMetaVal(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleAddMetaTag();
+                            }}
+                            placeholder="Value (예: safety_rules)"
+                            className="flex-1 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddMetaTag}
+                            disabled={!newMetaKey.trim()}
+                            className={`px-3 py-1.5 disabled:opacity-40 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                              isExistingKey
+                                ? 'bg-amber-600 hover:bg-amber-700'
+                                : 'bg-indigo-600 hover:bg-indigo-700'
+                            }`}
+                            title={isExistingKey ? '기존 키의 값을 업데이트합니다' : '새 메타데이터 태그 추가'}
+                          >
+                            {isExistingKey ? (
+                              <>
+                                <Check className="w-3.5 h-3.5" />
+                                <span>값 수정</span>
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>태그 추가</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500 pt-0.5">
+                          ※ doc_title, page, table(표) 관련 속성은 시스템이 본문과 동기화하여 자동 관리하므로 커스텀 태그로 등록할 수 없습니다.
+                        </div>
+                      </>
                     );
                   })()}
                 </div>

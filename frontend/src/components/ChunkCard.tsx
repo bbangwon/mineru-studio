@@ -1,7 +1,7 @@
 import React from 'react';
 import { Table2, AlignLeft, FileCode2, ChevronRight, MapPin, ShieldCheck, Image as ImageIcon, ExternalLink, Scale, Edit3, EyeOff, CheckCircle2, AlertTriangle, Info, Trash2, Sparkles, FolderTree } from 'lucide-react';
 import type { ChildChunk, ParentSection } from '../types';
-import { formatChunkPageFull } from '../utils/pageUtils';
+import { formatChunkPageFull, computeTableMetadata } from '../utils/pageUtils';
 import { estimateKoreanTokens } from '../utils/idUtils';
 import { CopyableBadge } from './CopyableBadge';
 
@@ -24,7 +24,8 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
   onRefineChunk,
   onReparentChunk,
 }) => {
-  const isTable = chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table);
+  const tableSummary = computeTableMetadata(chunk);
+  const isTable = tableSummary.is_table;
   const isArticle = chunk.chunk_type === 'article' || chunk.chunk_type === 'article_clause';
   const isIgnored = Boolean(chunk.is_ignored);
   const isEdited = Boolean(chunk.is_edited);
@@ -50,11 +51,18 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-1.5 flex-wrap">
-          {isTable ? (
-            <span className="bg-indigo-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
-              <Table2 className="w-3.5 h-3.5" />
-              ATOMIC TABLE (원형 보존)
-            </span>
+          {tableSummary.has_tables ? (
+            tableSummary.is_atomic_table ? (
+              <span className="bg-indigo-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
+                <Table2 className="w-3.5 h-3.5" />
+                ATOMIC TABLE (원형 보존)
+              </span>
+            ) : (
+              <span className="bg-indigo-500 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
+                <Table2 className="w-3.5 h-3.5" />
+                COMPOSITE (표 {tableSummary.table_count}개)
+              </span>
+            )
           ) : isArticle ? (
             <span className="bg-purple-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
               <Scale className="w-3.5 h-3.5" />

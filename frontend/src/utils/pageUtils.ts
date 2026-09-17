@@ -63,24 +63,104 @@ export function syncChunkPageMetadata(
 }
 
 /**
- * 페이지 및 청크 식별용 시스템 예약 메타데이터 키 목록입니다.
- * 커스텀 메타데이터 복사/상속 시 이 키들은 제외됩니다.
+ * 청크의 물리 페이지 및 표 구조/문서 식별 정보를 metadata 객체와 일관되게 동기화합니다.
+ */
+export function syncChunkSystemMetadata(
+  chunk: Pick<ChildChunk, 'metadata' | 'page_number' | 'page_end' | 'chunk_type' | 'tables' | 'raw_html' | 'is_table' | 'is_atomic_table'>,
+  docTitle?: string
+): Record<string, any> {
+  const pageMeta = syncChunkPageMetadata(chunk.metadata, chunk.page_number, chunk.page_end);
+  const tableSummary = computeTableMetadata(chunk);
+
+  const updated: Record<string, any> = {
+    ...pageMeta,
+    ...tableSummary,
+  };
+
+  if (docTitle) {
+    updated.doc_title = docTitle;
+  }
+
+  return updated;
+}
+
+/**
+ * 시스템 예약 메타데이터 키 목록입니다.
+ * - 문서/청크 식별자: doc_id, doc_title, chunk_id, parent_chunk_id, section_id 등
+ * - 페이지/출처 좌표: page, page_start, page_end, pages, page_idx, page_number 등
+ * - 표(Table) 구조/파생 속성: is_table, is_atomic_table, has_tables, table_count, tables 등
+ * - 통계/이미지: token_count, token_estimate, char_length, has_image 등
+ * 커스텀 메타데이터 입력, 복사/상속, 일괄 적용 시 이 키들은 원천 보호 및 제외됩니다.
  */
 export const RESERVED_METADATA_KEYS = new Set([
-  'page',
-  'page_start',
-  'page_end',
-  'pages',
+  // 1. 문서 및 청크 식별자
+  'doc_id',
+  'doc_title',
   'chunk_id',
   'parent_chunk_id',
   'section_id',
   'id',
+
+  // 2. 페이지 및 물리 좌표
+  'page',
+  'page_start',
+  'page_end',
+  'pages',
+  'page_idx',
+  'page_number',
+
+  // 3. 표(Table) 구조 및 파생 속성 (시스템 자동 추적/계산 대상)
+  'is_table',
+  'is_atomic_table',
+  'has_tables',
+  'table_count',
+  'tables',
+  'table_type',
+  'table_caption',
+  'table_footnote',
+  'raw_html',
+
+  // 4. 이미지 및 텍스트/토큰 통계
   'has_image',
   'image_path',
   'image_url',
-  'is_table',
-  'is_atomic_table',
+  'token_count',
+  'token_estimate',
+  'char_length',
 ]);
+
+/**
+ * 청크의 실제 데이터(tables, raw_html, chunk_type)로부터 표 관련 상태를 자동 계산합니다.
+ */
+export interface TableMetadataSummary {
+  has_tables: boolean;
+  table_count: number;
+  is_table: boolean;
+  is_atomic_table: boolean;
+}
+
+export function computeTableMetadata(
+  chunk: Pick<ChildChunk, 'chunk_type' | 'tables' | 'raw_html' | 'is_table' | 'is_atomic_table'>
+): TableMetadataSummary {
+  const rawTables = chunk.tables;
+  const tableListCount = Array.isArray(rawTables) ? rawTables.length : 0;
+  const hasHtmlTable = Boolean(chunk.raw_html && /<table[\s>]/i.test(chunk.raw_html));
+  const isTableType = chunk.chunk_type === 'table';
+
+  const has_tables = tableListCount > 0 || hasHtmlTable || isTableType || Boolean(chunk.is_table);
+  const table_count = tableListCount > 0 ? tableListCount : (has_tables ? 1 : 0);
+  const is_table = isTableType || has_tables;
+  const is_atomic_table = Boolean(
+    chunk.is_atomic_table || (isTableType && table_count <= 1)
+  );
+
+  return {
+    has_tables,
+    table_count,
+    is_table,
+    is_atomic_table,
+  };
+}
 
 /**
  * 메타데이터 객체에서 시스템/페이지 관련 키를 제외하고 순수 커스텀 메타데이터만 추출합니다.

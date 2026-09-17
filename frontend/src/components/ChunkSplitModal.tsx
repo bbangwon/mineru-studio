@@ -12,6 +12,7 @@ import {
   AlignLeft,
   Layers,
   ShieldCheck,
+  Scale,
 } from 'lucide-react';
 import type { ChildChunk } from '../types';
 import { estimateKoreanTokens } from '../utils/idUtils';
@@ -23,6 +24,7 @@ import {
   findBlockSeparationIndex,
   deriveChunkTypeAndTables,
 } from '../utils/tableChunkUtils';
+import { getChunkKind, getChunkKindLabel, hasTableData } from '../utils/chunkKindUtils';
 
 interface ChunkSplitModalProps {
   chunk: ChildChunk | null;
@@ -54,13 +56,7 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
   const fullOriginalText = chunk?.text || '';
   const hasTable = useMemo(() => {
     if (!chunk) return false;
-    return (
-      chunk.chunk_type === 'composite' ||
-      chunk.chunk_type === 'table' ||
-      Boolean(chunk.is_table) ||
-      (chunk.tables && chunk.tables.length > 0) ||
-      hasMarkdownTable(fullOriginalText)
-    );
+    return hasTableData(chunk) || hasMarkdownTable(fullOriginalText);
   }, [chunk, fullOriginalText]);
 
   // Preset: Split at delimiter closest to text midpoint (with Table Guard)
@@ -221,17 +217,34 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
                   titlePrefix="전체 청크 ID"
                   className="text-xs font-bold px-2 py-0.5 bg-slate-200 text-slate-700 rounded-md border border-slate-300 shrink-0"
                 />
-                {chunk.chunk_type === 'composite' ? (
-                  <span className="text-[11px] font-bold px-2 py-0.5 bg-purple-100 text-purple-800 rounded-md flex items-center gap-1">
-                    <Layers className="w-3 h-3 text-purple-600" />
-                    복합 청크 (문단+표)
-                  </span>
-                ) : chunk.chunk_type === 'table' ? (
-                  <span className="text-[11px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md flex items-center gap-1">
-                    <Table2 className="w-3 h-3 text-emerald-600" />
-                    표 청크
-                  </span>
-                ) : null}
+                {(() => {
+                  const kind = getChunkKind(chunk);
+                  if (kind === 'composite') {
+                    return (
+                      <span className="text-[11px] font-bold px-2 py-0.5 bg-purple-100 text-purple-800 rounded-md flex items-center gap-1">
+                        <Layers className="w-3 h-3 text-purple-600" />
+                        복합 청크 (문단+표)
+                      </span>
+                    );
+                  }
+                  if (kind === 'table') {
+                    return (
+                      <span className="text-[11px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md flex items-center gap-1">
+                        <Table2 className="w-3 h-3 text-emerald-600" />
+                        표 청크
+                      </span>
+                    );
+                  }
+                  if (kind === 'article') {
+                    return (
+                      <span className="text-[11px] font-bold px-2 py-0.5 bg-purple-100 text-purple-800 rounded-md flex items-center gap-1">
+                        <Scale className="w-3 h-3 text-purple-600" />
+                        조문 청크
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
                 <span className="text-xs text-slate-400 font-mono">
                   {chunk.page_end && chunk.page_end > chunk.page_number
                     ? `p.${chunk.page_number}~p.${chunk.page_end}`
@@ -375,26 +388,31 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
                   </span>
 
                   {/* 실시간 타입 뱃지 */}
-                  <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5 ${
-                    p1Asset.chunk_type === 'table'
-                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                      : p1Asset.chunk_type === 'composite'
-                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                      : 'bg-slate-200 text-slate-700 border border-slate-300'
-                  }`}>
-                    {p1Asset.chunk_type === 'table' ? (
-                      <Table2 className="w-2.5 h-2.5" />
-                    ) : p1Asset.chunk_type === 'composite' ? (
-                      <Layers className="w-2.5 h-2.5" />
-                    ) : (
-                      <AlignLeft className="w-2.5 h-2.5" />
-                    )}
-                    {p1Asset.chunk_type === 'table'
-                      ? '표 (table)'
-                      : p1Asset.chunk_type === 'composite'
-                      ? '복합 (composite)'
-                      : '문단 (paragraph)'}
-                  </span>
+                  {(() => {
+                    const kind1 = getChunkKind({ text: part1, tables: p1Asset.tables, raw_html: p1Asset.raw_html, metadata: chunk?.metadata });
+                    return (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5 ${
+                        kind1 === 'table'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : kind1 === 'composite'
+                          ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                          : kind1 === 'article'
+                          ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                          : 'bg-slate-200 text-slate-700 border border-slate-300'
+                      }`}>
+                        {kind1 === 'table' ? (
+                          <Table2 className="w-2.5 h-2.5" />
+                        ) : kind1 === 'composite' ? (
+                          <Layers className="w-2.5 h-2.5" />
+                        ) : kind1 === 'article' ? (
+                          <Scale className="w-2.5 h-2.5" />
+                        ) : (
+                          <AlignLeft className="w-2.5 h-2.5" />
+                        )}
+                        {getChunkKindLabel(kind1)}
+                      </span>
+                    );
+                  })()}
 
                   <div className="flex items-center gap-1 ml-1">
                     <span className="text-[11px] text-slate-500 font-semibold">Page</span>
@@ -452,26 +470,31 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
                   </span>
 
                   {/* 실시간 타입 뱃지 */}
-                  <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5 ${
-                    p2Asset.chunk_type === 'table'
-                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                      : p2Asset.chunk_type === 'composite'
-                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                      : 'bg-slate-200 text-slate-700 border border-slate-300'
-                  }`}>
-                    {p2Asset.chunk_type === 'table' ? (
-                      <Table2 className="w-2.5 h-2.5" />
-                    ) : p2Asset.chunk_type === 'composite' ? (
-                      <Layers className="w-2.5 h-2.5" />
-                    ) : (
-                      <AlignLeft className="w-2.5 h-2.5" />
-                    )}
-                    {p2Asset.chunk_type === 'table'
-                      ? '표 (table)'
-                      : p2Asset.chunk_type === 'composite'
-                      ? '복합 (composite)'
-                      : '문단 (paragraph)'}
-                  </span>
+                  {(() => {
+                    const kind2 = getChunkKind({ text: part2, tables: p2Asset.tables, raw_html: p2Asset.raw_html, metadata: chunk?.metadata });
+                    return (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5 ${
+                        kind2 === 'table'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : kind2 === 'composite'
+                          ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                          : kind2 === 'article'
+                          ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                          : 'bg-slate-200 text-slate-700 border border-slate-300'
+                      }`}>
+                        {kind2 === 'table' ? (
+                          <Table2 className="w-2.5 h-2.5" />
+                        ) : kind2 === 'composite' ? (
+                          <Layers className="w-2.5 h-2.5" />
+                        ) : kind2 === 'article' ? (
+                          <Scale className="w-2.5 h-2.5" />
+                        ) : (
+                          <AlignLeft className="w-2.5 h-2.5" />
+                        )}
+                        {getChunkKindLabel(kind2)}
+                      </span>
+                    );
+                  })()}
 
                   <div className="flex items-center gap-1 ml-1">
                     <span className="text-[11px] text-slate-500 font-semibold">Page</span>

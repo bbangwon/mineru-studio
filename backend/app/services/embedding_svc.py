@@ -259,17 +259,13 @@ class EmbeddingService:
             )
 
             # 표 구조 및 개수 자동 추적
+            from backend.app.services.hierarchical_chunker import HierarchicalChunker
+            chunk_kind = HierarchicalChunker.get_chunk_kind(chunk)
             chunk_tables = chunk.get("tables") or chunk_meta.get("tables") or []
-            raw_html_str = str(chunk.get("raw_html") or "")
-            has_html_table = "<table" in raw_html_str.lower()
-            is_table_type = chunk.get("chunk_type") == "table"
-            has_tables = bool(chunk_tables or is_table_type or chunk.get("is_table") or has_html_table)
-            table_count = len(chunk_tables) if chunk_tables else (1 if (has_html_table or is_table_type) else 0)
-            is_table = bool(is_table_type or has_tables or chunk.get("is_table"))
-            is_atomic_table = bool(
-                chunk.get("is_atomic_table")
-                or (is_table_type and table_count <= 1)
-            )
+            table_count = len(chunk_tables)
+            has_tables = table_count > 0 or chunk_kind in ("table", "composite")
+            is_table = has_tables
+            is_atomic_table = (chunk_kind == "table")
 
             # 시스템 예약어 분리 -> 순수 커스텀 비즈니스 태그만 metadata 필드에 보존
             reserved_keys = {
@@ -289,7 +285,7 @@ class EmbeddingService:
                 "parent_chunk_id": pid,
                 "parent_text": p_text,
                 "section_id": chunk.get("section_id", ""),
-                "chunk_type": chunk.get("chunk_type", "text"),
+                "chunk_type": chunk_kind,
                 "title": chunk.get("title") or chunk.get("table_caption") or "",
                 "page_number": page_start,
                 "page_end": page_end,

@@ -4,6 +4,7 @@ import type { ChildChunk, ParentSection } from '../types';
 import { formatChunkPageFull, computeTableMetadata, reconstructCompositeHtml } from '../utils/pageUtils';
 import { estimateKoreanTokens } from '../utils/idUtils';
 import { CopyableBadge } from './CopyableBadge';
+import { getChunkKind } from '../utils/chunkKindUtils';
 
 interface ChunkCardProps {
   chunk: ChildChunk;
@@ -25,8 +26,9 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
   onReparentChunk,
 }) => {
   const tableSummary = computeTableMetadata(chunk);
-  const isTable = tableSummary.is_table;
-  const isArticle = chunk.chunk_type === 'article' || chunk.chunk_type === 'article_clause';
+  const chunkKind = getChunkKind(chunk);
+  const isTable = chunkKind === 'table' || chunkKind === 'composite';
+  const isArticle = chunkKind === 'article';
   const isIgnored = Boolean(chunk.is_ignored);
   const isEdited = Boolean(chunk.is_edited);
   const breadcrumbs = chunk.breadcrumbs || [];
@@ -51,22 +53,20 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-1.5 flex-wrap">
-          {tableSummary.has_tables ? (
-            tableSummary.is_atomic_table ? (
-              <span className="bg-indigo-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
-                <Table2 className="w-3.5 h-3.5" />
-                ATOMIC TABLE (원형 보존)
-              </span>
-            ) : (
-              <span className="bg-indigo-500 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
-                <Table2 className="w-3.5 h-3.5" />
-                COMPOSITE (표 {tableSummary.table_count}개)
-              </span>
-            )
-          ) : isArticle ? (
+          {chunkKind === 'table' ? (
+            <span className="bg-indigo-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
+              <Table2 className="w-3.5 h-3.5" />
+              ATOMIC TABLE (원형 보존)
+            </span>
+          ) : chunkKind === 'composite' ? (
+            <span className="bg-indigo-500 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
+              <Table2 className="w-3.5 h-3.5" />
+              COMPOSITE (표 {tableSummary.table_count || 1}개)
+            </span>
+          ) : chunkKind === 'article' ? (
             <span className="bg-purple-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded shadow-xs flex items-center gap-1">
               <Scale className="w-3.5 h-3.5" />
-              {chunk.metadata?.article_no ? `${chunk.metadata.article_no} 조문 완결 청크` : '조문 완결 청크'}
+              {chunk.metadata?.article_no ? `${chunk.metadata.article_no} 조문 청크` : '조문 청크'}
             </span>
           ) : (
             <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-medium px-2 py-0.5 rounded flex items-center gap-1">
@@ -223,7 +223,7 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
           <div
             className="prose-custom overflow-x-auto bg-slate-50/70 dark:bg-slate-950/70 p-3 rounded-lg border border-slate-200 dark:border-slate-800"
             dangerouslySetInnerHTML={{
-              __html: chunk.chunk_type === 'composite' || Boolean((chunk.tables || chunk.metadata?.tables || []).length && chunk.chunk_type !== 'table')
+              __html: chunkKind === 'composite' || Boolean((chunk.tables || chunk.metadata?.tables || []).length > 0 && chunkKind !== 'table')
                 ? reconstructCompositeHtml(chunk)
                 : (chunk.raw_html || chunk.text)
             }}

@@ -14,6 +14,7 @@ import {
 import type { ChildChunk, ParentSection } from '../types';
 import { estimateKoreanTokens } from '../utils/idUtils';
 import { mergeChunkAssets } from '../utils/tableChunkUtils';
+import { getChunkKind } from '../utils/chunkKindUtils';
 import { CopyableBadge } from './CopyableBadge';
 
 interface ChunkMergeModalProps {
@@ -124,22 +125,22 @@ export const ChunkMergeModal: React.FC<ChunkMergeModalProps> = ({
                 <span className="font-mono text-xs font-bold px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md">
                   {selectedChunks.length}개 청크 선택됨
                 </span>
-                {expectedAssets.chunk_type === 'composite' ? (
+                {expectedAssets.tables.length > 0 ? (
                   <span className="text-xs font-bold px-2 py-0.5 bg-purple-100 text-purple-800 rounded-md flex items-center gap-1 border border-purple-200">
                     <Layers className="w-3 h-3 text-purple-600" />
-                    병합 후: 복합 청크 (문단+표 결합)
+                    표 {expectedAssets.tables.length}개 결합 보존
                   </span>
                 ) : (
                   <span className="text-xs font-bold px-2 py-0.5 bg-slate-200 text-slate-700 rounded-md flex items-center gap-1">
                     <AlignLeft className="w-3 h-3 text-slate-500" />
-                    병합 후: 일반 문단
+                    일반 본문 결합
                   </span>
                 )}
                 <span className="text-xs text-slate-400 font-mono">{pageDisplay}</span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                {expectedAssets.chunk_type === 'composite'
-                  ? '문단과 표가 결합되어 복합 청크로 승격되며, 표 원형 HTML과 메타데이터가 보존됩니다.'
+                {expectedAssets.tables.length > 0
+                  ? '선택한 청크들의 본문과 표 원형 HTML 및 메타데이터가 단일 청크로 안전하게 결합 보존됩니다.'
                   : '선택한 인접 청크들을 하나의 청크로 결합하고 텍스트 및 토큰 수를 합산합니다.'}
               </p>
             </div>
@@ -162,12 +163,14 @@ export const ChunkMergeModal: React.FC<ChunkMergeModalProps> = ({
             <span>병합 대상 청크 순서 (원문 등장 순):</span>
           </label>
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-            {selectedChunks.map((c, idx) => (
+            {selectedChunks.map((c, idx) => {
+              const kind = getChunkKind(c);
+              return (
               <React.Fragment key={c.chunk_id}>
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1 shrink-0 shadow-2xs font-mono">
-                  {c.chunk_type === 'table' ? (
+                  {kind === 'table' || kind === 'composite' ? (
                     <Table2 className="w-3 h-3 text-indigo-600" />
-                  ) : c.chunk_type === 'article' ? (
+                  ) : kind === 'article' ? (
                     <Scale className="w-3 h-3 text-purple-600" />
                   ) : (
                     <AlignLeft className="w-3 h-3 text-slate-400" />
@@ -184,7 +187,8 @@ export const ChunkMergeModal: React.FC<ChunkMergeModalProps> = ({
                   <ArrowDown className="w-3 h-3 text-slate-400 -rotate-90 shrink-0" />
                 )}
               </React.Fragment>
-            ))}
+            );
+          })}
           </div>
         </div>
 

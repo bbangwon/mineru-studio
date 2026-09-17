@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { SearchResultItem, SearchTestResponse } from '../types';
 import { searchTest, getQdrantCollections } from '../api/client';
 import { CopyableBadge } from './CopyableBadge';
+import { getChunkKind, getChunkKindLabel, getChunkKindBadgeClass } from '../utils/chunkKindUtils';
 
 interface RetrievalPlaygroundProps {
   collectionName?: string;
@@ -243,17 +244,14 @@ export const RetrievalPlayground: React.FC<RetrievalPlaygroundProps> = ({
                     titlePrefix="전체 청크 ID"
                     className="font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700"
                   />
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                      item.chunk_type === 'table'
-                        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30'
-                        : item.chunk_type === 'article_clause'
-                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
-                        : 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30'
-                    }`}
-                  >
-                    {item.chunk_type}
-                  </span>
+                  {(() => {
+                    const kind = getChunkKind(item as any);
+                    return (
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase border ${getChunkKindBadgeClass(kind)}`}>
+                        {getChunkKindLabel(kind)}
+                      </span>
+                    );
+                  })()}
                   <span className="text-slate-500 dark:text-slate-400 text-[11px]">
                     {item.page_number
                       ? (item.page_end && item.page_end > item.page_number
@@ -381,7 +379,9 @@ export const RetrievalPlayground: React.FC<RetrievalPlaygroundProps> = ({
                 </div>
                 <div>
                   <span className="text-slate-500 dark:text-slate-400 font-semibold">타입:</span>
-                  <span className="ml-2 text-slate-800 dark:text-slate-200 font-medium">{selectedResult.chunk_type}</span>
+                  <span className="ml-2 text-slate-800 dark:text-slate-200 font-medium">
+                    {getChunkKindLabel(getChunkKind(selectedResult as any))}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-500 dark:text-slate-400 font-semibold">추정 토큰 수:</span>

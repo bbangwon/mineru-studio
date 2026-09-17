@@ -75,6 +75,11 @@ import {
   formatDisplayChunkId,
   formatDisplayParentId,
 } from '../utils/idUtils';
+import {
+  getChunkKind,
+  getChunkKindLabel,
+  hasTableData,
+} from '../utils/chunkKindUtils';
 import { refineChunkText } from '../api/client';
 import { RefineDiffModal } from './RefineDiffModal';
 import { CopyableBadge } from './CopyableBadge';
@@ -494,9 +499,10 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   const renderChildChunkItem = (secId: string, chunk: ChildChunk) => {
     const isChildSelected = activeChunkId === chunk.chunk_id;
     const tableList = chunk.tables || chunk.metadata?.tables || [];
-    const isComposite = chunk.chunk_type === 'composite' || (tableList.length > 0 && chunk.chunk_type !== 'table');
-    const isTable = (chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table)) && !isComposite;
-    const isArticle = chunk.chunk_type === 'article' || chunk.chunk_type === 'article_clause';
+    const chunkKind = getChunkKind(chunk);
+    const isComposite = chunkKind === 'composite';
+    const isTable = chunkKind === 'table';
+    const isArticle = chunkKind === 'article';
     const isIgnored = Boolean(chunk.is_ignored);
     const isEdited = Boolean(chunk.is_edited);
     const pageNum = chunk.page_number || 1;
@@ -504,8 +510,12 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     let preview = '';
     if (isComposite) {
       preview = `[복합: 표${tableList.length || 1}] ${chunk.text?.slice(0, 24) || ''}`;
-    } else if (chunk.table_caption) {
-      preview = `[표] ${chunk.table_caption}`;
+    } else if (isTable) {
+      preview = chunk.table_caption ? `[표] ${chunk.table_caption}` : '[원형 표]';
+    } else if (isArticle) {
+      const artNo = chunk.metadata?.article_no || '조문';
+      const firstLine = chunk.text?.trim().split('\n')[0] || '';
+      preview = `[${artNo}] ${firstLine.length > 24 ? firstLine.slice(0, 24) + '…' : firstLine}`;
     } else if (chunk.text) {
       const firstLine = chunk.text.trim().split('\n')[0] || '';
       preview = firstLine.length > 28 ? firstLine.slice(0, 28) + '…' : firstLine;
@@ -646,7 +656,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     }
 
     if (typeFilter !== 'all') {
-      result = result.filter((c) => c.chunk_type === typeFilter);
+      result = result.filter((c) => getChunkKind(c) === typeFilter);
     }
 
     if (statusFilter === 'edited') {
@@ -655,7 +665,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       result = result.filter((c) => Boolean(c.is_ignored));
     } else if (statusFilter === 'linter') {
       result = result.filter((c) => {
-        const isTable = c.chunk_type === 'table' || Boolean(c.is_atomic_table);
+        const isTable = hasTableData(c);
         const words = c.token_estimate || (c.text ? estimateKoreanTokens(c.text) : 0);
         const isEmpty = (!c.text || !c.text.trim()) && (!c.raw_html || !c.raw_html.trim());
         return (!isTable && words > 512) || (!isTable && !isEmpty && words > 0 && words < 20) || isEmpty;
@@ -2598,9 +2608,10 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         const isSelected = activeChunkId === chunk.chunk_id;
                         const isChecked = selectedChunkIds.has(chunk.chunk_id);
                         const tableList = chunk.tables || chunk.metadata?.tables || [];
-                        const isComposite = chunk.chunk_type === 'composite' || (tableList.length > 0 && chunk.chunk_type !== 'table');
-                        const isTable = (chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table)) && !isComposite;
-                        const isArticle = chunk.chunk_type === 'article' || chunk.chunk_type === 'article_clause';
+                        const chunkKind = getChunkKind(chunk);
+                        const isComposite = chunkKind === 'composite';
+                        const isTable = chunkKind === 'table';
+                        const isArticle = chunkKind === 'article';
                         const isIgnored = Boolean(chunk.is_ignored);
                         const isEdited = Boolean(chunk.is_edited);
 
@@ -2861,21 +2872,30 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     <span className="hidden sm:inline">목록</span>
                   </button>
 
-                  <div className={`p-1.5 rounded-lg shrink-0 ${
-                    activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
-                      ? 'bg-teal-50 dark:bg-teal-950/80 text-teal-600 dark:text-teal-400'
-                      : 'bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400'
-                  }`}>
-                    {activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table') ? (
-                      <Layers className="w-4 h-4" />
-                    ) : activeChunk.chunk_type === 'table' ? (
-                      <Table2 className="w-4 h-4" />
-                    ) : activeChunk.chunk_type === 'article' ? (
-                      <Scale className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                    ) : (
-                      <AlignLeft className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                    )}
-                  </div>
+                  {(() => {
+                    const activeKind = getChunkKind(activeChunk);
+                    return (
+                      <div className={`p-1.5 rounded-lg shrink-0 ${
+                        activeKind === 'composite'
+                          ? 'bg-teal-50 dark:bg-teal-950/80 text-teal-600 dark:text-teal-400'
+                          : activeKind === 'table'
+                          ? 'bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400'
+                          : activeKind === 'article'
+                          ? 'bg-purple-50 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400'
+                          : 'bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400'
+                      }`}>
+                        {activeKind === 'composite' ? (
+                          <Layers className="w-4 h-4" />
+                        ) : activeKind === 'table' ? (
+                          <Table2 className="w-4 h-4" />
+                        ) : activeKind === 'article' ? (
+                          <Scale className="w-4 h-4" />
+                        ) : (
+                          <AlignLeft className="w-4 h-4" />
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <h2 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">3열: 에디터</h2>
@@ -2898,7 +2918,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                  {onSplitChunk && activeChunk.chunk_type !== 'table' && (
+                  {onSplitChunk && getChunkKind(activeChunk) !== 'table' && (
                     <button
                       type="button"
                       onClick={() => setIsSplitModalOpen(true)}
@@ -3268,8 +3288,9 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                 {/* Table & Composite Specific Fields & Tabs */}
                 {(() => {
                   const activeTableList = activeChunk.tables || activeChunk.metadata?.tables || [];
-                  const isActiveComposite = activeChunk.chunk_type === 'composite' || (activeTableList.length > 0 && activeChunk.chunk_type !== 'table');
-                  const hasTablesInActiveChunk = activeChunk.chunk_type === 'table' || isActiveComposite || Boolean(activeChunk.raw_html);
+                  const activeKind = getChunkKind(activeChunk);
+                  const hasTablesInActiveChunk = hasTableData(activeChunk);
+                  const isActiveComposite = activeKind === 'composite';
 
                   if (!hasTablesInActiveChunk) return null;
 
@@ -3319,7 +3340,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                           </span>
                         </div>
 
-                        {activeChunk.chunk_type === 'table' ? (
+                        {activeKind === 'table' ? (
                           <div className="space-y-2.5">
                             {/* 단일 표 제어 툴바 */}
                             <div className="flex items-center justify-between pb-1 border-b border-indigo-100 dark:border-indigo-900/50">
@@ -3525,19 +3546,23 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 flex-wrap">
                       <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        {editorTab === 'raw_html'
-                          ? (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
+                        {(() => {
+                          const kind = getChunkKind(activeChunk);
+                          if (editorTab === 'raw_html') {
+                            return kind === 'composite'
                               ? '통합 HTML 원형 코드 (raw_html: 문단+표)'
-                              : '표 HTML 원형 코드 (raw_html)')
-                          : editorTab === 'preview'
-                          ? (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
+                              : '표 HTML 원형 코드 (raw_html)';
+                          }
+                          if (editorTab === 'preview') {
+                            return kind === 'composite'
                               ? '통합 문서 미리보기 (문단+표)'
-                              : '표 렌더링 미리보기 (HTML Preview)')
-                          : (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
-                              ? '복합 청크 본문 텍스트 (Markdown) 편집'
-                              : activeChunk.chunk_type === 'table'
-                              ? '표 검색 요약 텍스트 (Text) 편집'
-                              : '청크 본문 텍스트 (Text) 편집')}
+                              : '표 렌더링 미리보기 (HTML Preview)';
+                          }
+                          if (kind === 'composite') return '복합 청크 본문 텍스트 (Markdown) 편집';
+                          if (kind === 'table') return '표 검색 요약 텍스트 (Text) 편집';
+                          if (kind === 'article') return '조문 본문 텍스트 (Text) 편집';
+                          return '청크 본문 텍스트 (Text) 편집';
+                        })()}
                       </label>
 
                       {editorTab !== 'preview' && (
@@ -3562,12 +3587,12 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         </button>
                       )}
 
-                      {editorTab !== 'preview' && activeChunk.chunk_type === 'paragraph' && (
+                      {editorTab !== 'preview' && !hasTableData(activeChunk) && (
                         <button
                           type="button"
                           onClick={() => handleAddTable(activeChunk)}
                           className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                          title="이 문단에 표를 추가하여 복합 청크(Composite)로 승격합니다"
+                          title="이 청크에 표를 추가합니다"
                         >
                           <Table2 className="w-3 h-3 text-indigo-500" />
                           <span>+ 표 삽입</span>
@@ -3601,13 +3626,13 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     </div>
                   )}
 
-                  {(activeChunk.chunk_type === 'table' || activeChunk.chunk_type === 'composite' || Boolean(activeChunk.raw_html)) && editorTab === 'preview' ? (
+                  {hasTableData(activeChunk) && editorTab === 'preview' ? (
                     <div className="p-4 bg-slate-50/80 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 min-h-[220px] max-h-[420px] overflow-y-auto">
                       <div
                         className="prose-custom text-xs"
                         dangerouslySetInnerHTML={{
                           __html: (() => {
-                            const isComposite = activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table');
+                            const isComposite = getChunkKind(activeChunk) === 'composite';
                             if (isComposite) {
                               return reconstructCompositeHtml(activeChunk);
                             }
@@ -3765,15 +3790,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                           <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-700 dark:text-slate-300 font-mono">
                             <span className="text-slate-400 font-sans">유형:</span>
                             <span className="font-semibold text-indigo-600 dark:text-indigo-400 font-sans">
-                              {activeChunk.chunk_type === 'table'
-                                ? '단독 표 (table)'
-                                : activeChunk.chunk_type === 'composite'
-                                ? '복합 (composite)'
-                                : activeChunk.chunk_type === 'article'
-                                ? '조문 (article)'
-                                : activeChunk.chunk_type === 'article_clause'
-                                ? '항/호 (clause)'
-                                : '문단 (paragraph)'}
+                              {getChunkKindLabel(getChunkKind(activeChunk), tableSummary.table_count)}
                             </span>
                           </span>
                           <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-700 dark:text-slate-300 font-mono">
@@ -3796,6 +3813,69 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                             <span className="font-sans">토큰:</span>
                             <span>~{activeChunk.token_estimate || 0}</span>
                           </span>
+                        </div>
+
+                        {/* 조문 메타데이터 빠른 편집 필드 */}
+                        <div className="pt-2 mt-1 border-t border-slate-200/60 dark:border-slate-800/80">
+                          <div className="flex items-center justify-between pb-1">
+                            <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                              <Scale className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                              <span>법률/규정 조문 메타데이터</span>
+                            </span>
+                            {activeChunk.metadata?.article_no && (
+                              <span className="text-[10px] text-purple-600 dark:text-purple-400 font-mono font-semibold">
+                                {activeChunk.metadata.article_no}
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-slate-400 dark:text-slate-500 block mb-0.5">조문 번호</label>
+                              <input
+                                type="text"
+                                value={activeChunk.metadata?.article_no || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const newMeta = { ...(activeChunk.metadata || {}) };
+                                  if (val) {
+                                    newMeta.article_no = val;
+                                    newMeta.article_display = newMeta.article_title ? `${val}(${newMeta.article_title})` : val;
+                                  } else {
+                                    delete newMeta.article_no;
+                                    delete newMeta.article_display;
+                                  }
+                                  handleFieldChange('metadata', newMeta);
+                                }}
+                                placeholder="예: 제1조, 제24조의2"
+                                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-purple-500 focus:border-purple-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-400 dark:text-slate-500 block mb-0.5">조문 제목</label>
+                              <input
+                                type="text"
+                                value={activeChunk.metadata?.article_title || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const newMeta = { ...(activeChunk.metadata || {}) };
+                                  if (val) {
+                                    newMeta.article_title = val;
+                                    if (newMeta.article_no) {
+                                      newMeta.article_display = `${newMeta.article_no}(${val})`;
+                                    }
+                                  } else {
+                                    delete newMeta.article_title;
+                                    if (newMeta.article_no) {
+                                      newMeta.article_display = newMeta.article_no;
+                                    }
+                                  }
+                                  handleFieldChange('metadata', newMeta);
+                                }}
+                                placeholder="예: 목적, 정의"
+                                className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-purple-500 focus:border-purple-500"
+                              />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );

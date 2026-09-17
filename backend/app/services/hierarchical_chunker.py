@@ -480,15 +480,63 @@ class HierarchicalChunker:
 
         return "\n\n".join(reconstructed_parts) or raw_html
 
+    @staticmethod
+    def get_chunk_kind(chunk: Dict[str, Any]) -> str:
+        """
+        청크의 실제 데이터(tables, text, metadata)를 기반으로 UI 및 통계용 종류를 동적 계산합니다.
+        """
+        meta = chunk.get("metadata") or {}
+        if meta.get("article_no") or meta.get("article_number") or chunk.get("chunk_type") in ("article", "article_clause"):
+            return "article"
+        breadcrumbs = chunk.get("breadcrumbs") or []
+        if any(re.match(r"^제\s*\d+\s*조", str(b).strip()) for b in breadcrumbs):
+            return "article"
+
+        tables = chunk.get("tables") or meta.get("tables") or []
+        raw_html = str(chunk.get("raw_html") or "")
+        has_html_table = "<table" in raw_html.lower()
+        has_tables = bool(tables or has_html_table or chunk.get("chunk_type") == "table" or chunk.get("is_table"))
+
+        if not has_tables:
+            return "paragraph"
+
+        # 명시적 atomic table 플래그가 있거나 단독 표로 생성된 경우
+        if chunk.get("is_atomic_table") or (chunk.get("chunk_type") == "table" and len(tables) <= 1):
+            return "table"
+
+        text = (chunk.get("text") or "").strip()
+        caption = str(chunk.get("table_caption") or "").strip()
+        footnote = str(chunk.get("table_footnote") or "").strip()
+
+        non_table_lines = []
+        for line in text.split("\n"):
+            line_str = line.strip()
+            if not line_str:
+                continue
+            if line_str.startswith("|"):
+                continue
+            if line_str.startswith("[표") or (caption and caption in line_str):
+                continue
+            if line_str.startswith(("*", "※", "출처:")) or (footnote and footnote in line_str):
+                continue
+            non_table_lines.append(line_str)
+
+        has_body_text = len(non_table_lines) > 0
+        if has_body_text:
+            return "composite"
+        return "table"
+
     @classmethod
     def heal_composite_chunks(cls, child_chunks: List[Dict[str, Any]]) -> bool:
         """
-        child_chunks 목록 중 composite 청크의 raw_html에 문단 태그가 누락된 항목을 자동 복원합니다.
+        child_chunks 목록 중 표와 본문이 함께 있는 복합 청크의 raw_html에 문단 태그가 누락된 항목을 자동 복원합니다.
         하나 이상 복원되었으면 True를 반환합니다.
         """
         changed = False
         for c in child_chunks:
-            if c.get("chunk_type") == "composite" or (c.get("is_table") and not c.get("is_atomic_table") and c.get("tables")):
+            tables = c.get("tables") or (c.get("metadata") or {}).get("tables") or []
+            is_comp = cls.get_chunk_kind(c) == "composite" or bool(tables and c.get("text", "").strip())
+            if is_comp:
                 current_raw = c.get("raw_html") or ""
                 if not re.search(r"<(?:p|div|span)\b", current_raw, re.I):
                     reconstructed = cls.reconstruct_composite_raw_html(c)
@@ -1491,17 +1539,15 @@ class HierarchicalChunker:
             pages_list = list(range(start_page, end_page + 1))
 
             meta = dict(chunk.get("metadata") or {})
-            raw_c_type = chunk.get("chunk_type", "paragraph")
-            c_type = "article" if raw_c_type == "article_clause" else raw_c_type
-            if "type" not in meta or not meta["type"] or meta.get("type") == "article_clause":
-                meta["type"] = c_type
+            c_type = self.get_chunk_kind(chunk)
+            meta["type"] = c_type
             meta["doc_title"] = etl_result.get("doc_title", "")
             meta["section"] = section.get("title", "")
             meta["page"] = start_page
             meta["page_start"] = start_page
             meta["page_end"] = end_page
             meta["pages"] = pages_list
-            is_table = (c_type == "table" or bool(chunk.get("is_atomic_table")))
+            is_table = (c_type == "table")
             meta["is_atomic_table"] = is_table
 
             meta.pop("has_image", None)
@@ -1550,9 +1596,8 @@ class HierarchicalChunker:
                 record["page_end"] = end_page
             if chunk_tables:
                 record["tables"] = chunk_tables
-            if is_table or chunk_tables:
-                if chunk.get("raw_html"):
-                    record["raw_html"] = chunk.get("raw_html", "")
+            if chunk.get("raw_html"):
+                record["raw_html"] = chunk.get("raw_html", "")
             if is_table:
                 if chunk.get("table_caption"):
                     record["table_caption"] = chunk.get("table_caption", "")
@@ -1945,20 +1990,23 @@ class HierarchicalChunker:
 
         return res
 
-    @staticmethod
+    @classmethod
     def _calculate_stats(
+        cls,
         sections: List[Dict[str, Any]],
         parents: List[Dict[str, Any]],
         children: List[Dict[str, Any]]
     ) -> Dict[str, int]:
+        kinds = [cls.get_chunk_kind(c) for c in children]
         return {
             "total_sections": len(sections),
             "total_parent_sections": len(sections),
             "total_parent_chunks": len(parents),
             "total_child_chunks": len(children),
-            "paragraph_chunks": sum(1 for c in children if c.get("chunk_type") in ["paragraph", "article_clause", "article"]),
-            "table_chunks": sum(1 for c in children if c.get("chunk_type") == "table"),
-            "composite_chunks": sum(1 for c in children if c.get("chunk_type") == "composite"),
+            "paragraph_chunks": sum(1 for k in kinds if k in ("paragraph", "article")),
+            "table_chunks": sum(1 for k in kinds if k == "table"),
+            "composite_chunks": sum(1 for k in kinds if k == "composite"),
+            "article_chunks": sum(1 for k in kinds if k == "article"),
             "total_words": sum(c.get("token_estimate", 0) for c in children),
         }
 

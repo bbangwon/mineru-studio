@@ -114,13 +114,15 @@ export type ChildInsertPosition =
 export interface AddChildData {
   parentChunkId: string;
   text: string;
-  chunkType: 'paragraph' | 'table' | 'composite' | 'article_clause' | 'article';
+  chunkType?: string;              // 레거시 호환용 (단일 복합 모델 전환 후 내부 자동 결정)
   pageNumber: number;
   pageEnd?: number;
   rawHtml?: string;
   tableCaption?: string;
   tableFootnote?: string;
   tables?: EmbeddedTableItem[];
+  articleNo?: string;              // 조문 번호 (예: "제1조")
+  articleTitle?: string;           // 조문 제목 (예: "목적")
   customTags?: string[];
   insertPosition?: 'end' | 'start' | 'after';
   insertAfterChunkId?: string;
@@ -131,21 +133,21 @@ export interface ChildChunk {
   parent_chunk_id: string;         // 소속 Parent 청크 ID ("d_xxxx_p001")
   parent_id?: string;              // 하위 호환성 별칭 (일부 컴포넌트 호환)
   section_id: string;              // 소속 Section ID ("d_xxxx_s01")
-  chunk_type: 'paragraph' | 'table' | 'composite' | 'article_clause' | 'article';
+  chunk_type?: string;             // [DEPRECATED] 단일 복합 모델 수렴: getChunkKind()로 파생 계산
   text: string;                    // 검색/임베딩 대상 텍스트 (~512 토큰 or 표 요약)
   token_estimate: number;
   page_number: number;
   page_end?: number;
   breadcrumbs: string[];           // ["제1장 총칙", "제1조(목적)"]
-  raw_html?: string;               // 표 원형 보존 (복수 표 결합 지원)
-  table_caption?: string;
-  table_footnote?: string;
-  tables?: EmbeddedTableItem[];    // 복합 청크에 포함된 개별 표 목록
+  raw_html?: string;               // 표 원형 보존 (복수 표 결합 지원 완성형 HTML)
+  table_caption?: string;          // 단독 표 하위 호환용 캡션
+  table_footnote?: string;         // 단독 표 하위 호환용 각주
+  tables?: EmbeddedTableItem[];    // 청크에 포함된 개별 표 목록 (0개 이상)
   image_path?: string;
   image_url?: string;
   table_type?: string;
-  is_table?: boolean;
-  is_atomic_table?: boolean;
+  is_table?: boolean;              // [DEPRECATED] tables 배열 기준으로 판단
+  is_atomic_table?: boolean;       // [DEPRECATED]
   is_edited?: boolean;
   is_ignored?: boolean;            // Vector DB 임베딩 제외 플래그
   parent_text?: string;            // 부모 청크 전체 문맥 텍스트

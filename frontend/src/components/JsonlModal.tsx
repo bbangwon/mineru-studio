@@ -38,7 +38,7 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
         : parentText)
     : '';
 
-  const isAtomicTable = chunk.chunk_type === 'table' || Boolean(chunk.is_atomic_table);
+  const tables = chunk.tables || chunk.metadata?.tables || [];
 
   const record: Record<string, any> = {
     id: chunk.chunk_id,
@@ -49,8 +49,8 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
     breadcrumbs_str: breadcrumbs_str,
     text: chunk.text,
     parent_context_text: parentContextText,
-    chunk_type: chunk.chunk_type,
-    is_atomic_table: isAtomicTable,
+    ...(tables.length > 0 ? { tables } : {}),
+    ...(chunk.raw_html ? { raw_html: chunk.raw_html } : {}),
     page: startPage,
     ...(endPage > startPage ? { page_end: endPage } : {}),
     pages: pages,
@@ -64,32 +64,15 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
       page_start: startPage,
       page_end: endPage,
       pages: pages,
-      is_atomic_table: isAtomicTable,
-      ...(isAtomicTable && chunk.table_caption ? { table_caption: chunk.table_caption } : {}),
-      ...(isAtomicTable && chunk.table_footnote ? { table_footnote: chunk.table_footnote } : {}),
+      ...(tables.length > 0 ? { tables } : {}),
     },
   };
 
-  if (!isAtomicTable && record.metadata) {
-    delete record.metadata.table_caption;
-    delete record.metadata.table_footnote;
+  if (tables.length > 0) {
+    record.tables = tables;
   }
-
-  const chunkTables = chunk.tables || chunk.metadata?.tables || [];
-  const hasTables = isAtomicTable || chunkTables.length > 0;
-
-  if (chunkTables.length > 0) {
-    record.tables = chunkTables;
-    record.metadata.tables = chunkTables;
-  }
-
-  if (hasTables && chunk.raw_html) {
+  if (chunk.raw_html) {
     record.raw_html = chunk.raw_html;
-  }
-
-  if (isAtomicTable) {
-    if (chunk.table_caption) record.table_caption = chunk.table_caption;
-    if (chunk.table_footnote) record.table_footnote = chunk.table_footnote;
   }
 
   const jsonString = JSON.stringify(record, null, 2);

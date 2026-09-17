@@ -200,15 +200,15 @@ export function findBlockSeparationIndex(text: string): number | null {
 
 /**
  * 청크 분할 후 텍스트와 원본 메타데이터를 기반으로
- * 각 파트의 청크 타입(`paragraph`, `table`, `composite`) 및 표 메타데이터를 파생합니다.
+ * 각 파트의 표(`tables`) 및 HTML 메타데이터를 파생합니다.
  */
 export function deriveChunkTypeAndTables(
   partText: string,
   originalChunk?: ChildChunk
 ): {
-  chunk_type: 'paragraph' | 'table' | 'composite' | 'article_clause' | 'article';
-  is_table: boolean;
-  is_atomic_table: boolean;
+  chunk_type?: string;
+  is_table?: boolean;
+  is_atomic_table?: boolean;
   tables?: EmbeddedTableItem[];
   raw_html?: string;
   table_caption?: string;
@@ -216,63 +216,39 @@ export function deriveChunkTypeAndTables(
 } {
   const trimmed = partText.trim();
   const hasTable = hasMarkdownTable(trimmed);
-  const pureTable = isPureTable(trimmed);
 
   const origTables = originalChunk?.tables || [];
   const origRawHtml = originalChunk?.raw_html || '';
 
-  // 1. 순수 문단인 경우 (표 없음)
+  // 1. 표가 없는 경우 (순수 본문 문단)
   if (!hasTable) {
-    const isLegalArticle =
-      originalChunk?.chunk_type === 'article' || originalChunk?.chunk_type === 'article_clause';
     return {
-      chunk_type: isLegalArticle ? originalChunk.chunk_type : 'paragraph',
-      is_table: false,
-      is_atomic_table: false,
-      tables: undefined,
+      tables: [],
       raw_html: undefined,
       table_caption: undefined,
       table_footnote: undefined,
     };
   }
 
-  // 2. 단독 표인 경우 (본문 텍스트 없이 표만 존재)
-  if (pureTable) {
-    // 표 HTML 추출 (원본에 HTML 표가 있다면 매칭)
-    const tableHtmlMatches = origRawHtml.match(/<table\b[\s\S]*?<\/table>/gi) || [];
-    const matchedHtml = tableHtmlMatches.length > 0 ? tableHtmlMatches[0] : origRawHtml;
+  // 2. 표가 포함된 경우 (표 원형 HTML 및 테이블 객체 보존)
+  const tableHtmlMatches = origRawHtml.match(/<table\b[\s\S]*?<\/table>/gi) || [];
+  const matchedHtml = tableHtmlMatches.length > 0 ? tableHtmlMatches.join('\n\n') : origRawHtml;
 
-    return {
-      chunk_type: 'table',
-      is_table: true,
-      is_atomic_table: true,
-      tables: origTables.length > 0 ? [origTables[0]] : undefined,
-      raw_html: matchedHtml || undefined,
-      table_caption: originalChunk?.table_caption,
-      table_footnote: originalChunk?.table_footnote,
-    };
-  }
-
-  // 3. 복합 청크인 경우 (문단과 표가 혼합됨)
   return {
-    chunk_type: 'composite',
-    is_table: true,
-    is_atomic_table: false,
     tables: origTables.length > 0 ? origTables : undefined,
-    raw_html: origRawHtml || undefined,
+    raw_html: matchedHtml || undefined,
     table_caption: originalChunk?.table_caption,
     table_footnote: originalChunk?.table_footnote,
   };
 }
 
 /**
- * 청크 병합 시 선택된 청크들의 속성(`chunk_type`, `tables`, `raw_html`, `caption`, `footnote`)을
- * 규칙에 따라 통합 결합합니다.
+ * 청크 병합 시 선택된 청크들의 표(`tables`) 및 본문 HTML을 순서대로 통합 결합합니다.
  */
 export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
-  chunk_type: 'paragraph' | 'table' | 'composite' | 'article_clause' | 'article';
-  is_table: boolean;
-  is_atomic_table: boolean;
+  chunk_type?: string;
+  is_table?: boolean;
+  is_atomic_table?: boolean;
   tables: EmbeddedTableItem[];
   raw_html?: string;
   table_caption?: string;
@@ -280,34 +256,10 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
 } {
   if (selectedChunks.length === 0) {
     return {
-      chunk_type: 'paragraph',
-      is_table: false,
-      is_atomic_table: false,
       tables: [],
     };
   }
 
-  const hasAnyTableChunk = selectedChunks.some(
-    (c) => c.chunk_type === 'table' || c.chunk_type === 'composite' || c.is_table || (c.tables && c.tables.length > 0)
-  );
-
-  // 1. 모든 청크가 일반 문단인 경우
-  if (!hasAnyTableChunk) {
-    const isAllLegal = selectedChunks.every(
-      (c) => c.chunk_type === 'article' || c.chunk_type === 'article_clause'
-    );
-    return {
-      chunk_type: isAllLegal ? 'article' : 'paragraph',
-      is_table: false,
-      is_atomic_table: false,
-      tables: [],
-      raw_html: undefined,
-      table_caption: undefined,
-      table_footnote: undefined,
-    };
-  }
-
-  // 2. 표가 포함된 경우 -> 무조건 복합 청크(composite)로 승격 (복수 표 또는 문단+표 결합)
   const allTables: EmbeddedTableItem[] = [];
   const htmlParts: string[] = [];
 
@@ -322,7 +274,7 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
           table_index: allTables.length,
         });
       }
-    } else if (chunk.chunk_type === 'table' && chunk.raw_html) {
+    } else if (chunk.raw_html && /<table/i.test(chunk.raw_html)) {
       allTables.push({
         table_index: allTables.length,
         caption: chunk.table_caption,
@@ -334,7 +286,7 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
       });
     }
 
-    // HTML 부분 조립: 표 HTML이 있으면 그대로 사용, 없으면 <p> 태그 래핑
+    // HTML 부분 조립: 원형 HTML이 있으면 사용, 없으면 <p> 태그 래핑
     if (chunk.raw_html && chunk.raw_html.trim()) {
       htmlParts.push(chunk.raw_html.trim());
     } else if (chunk.text && chunk.text.trim()) {
@@ -351,13 +303,8 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
   const combinedRawHtml = htmlParts.length > 0 ? htmlParts.join('\n\n') : undefined;
 
   return {
-    chunk_type: 'composite',
-    is_table: true,
-    is_atomic_table: false,
     tables: allTables,
     raw_html: combinedRawHtml,
-    table_caption: undefined,
-    table_footnote: undefined,
   };
 }
 
@@ -614,36 +561,29 @@ export function parseTsvToGrid(tsvText: string): TableGrid {
 }
 
 /**
- * 청크에서 특정 인덱스의 표를 삭제하고, 남은 데이터 정합성을 유지합니다.
- * 남은 표가 0개인 경우 자동으로 'paragraph' 청크로 상태 전이됩니다.
+ * 청크에서 특정 인덱스의 표를 삭제하고, 남은 본문 및 HTML 정합성을 유지합니다.
  */
 export function deleteTableFromChunk(chunk: ChildChunk, tableIndex: number): ChildChunk {
-  // 1. 단일 표 청크인 경우 -> 바로 일반 문단(paragraph)으로 강등
-  if (chunk.chunk_type === 'table') {
-    return {
-      ...chunk,
-      chunk_type: 'paragraph',
-      is_table: false,
-      is_atomic_table: false,
-      tables: undefined,
-      raw_html: undefined,
-      table_caption: undefined,
-      table_footnote: undefined,
-      is_edited: true,
-      metadata: {
-        ...(chunk.metadata || {}),
-        type: 'paragraph',
-        tables: undefined,
-        table_caption: undefined,
-        table_footnote: undefined,
-      },
-    };
-  }
-
-  // 2. 복합 청크(composite)인 경우
   const currentTables: EmbeddedTableItem[] = [
     ...(chunk.tables || chunk.metadata?.tables || []),
   ];
+
+  // 단독 표이고 tables 배열이 비어있던 구버전 데이터 대응
+  if (currentTables.length === 0 && chunk.raw_html && /<table/i.test(chunk.raw_html)) {
+    return {
+      ...chunk,
+      tables: [],
+      raw_html: undefined,
+      table_caption: undefined,
+      table_footnote: undefined,
+      text: '',
+      is_edited: true,
+      metadata: {
+        ...(chunk.metadata || {}),
+        tables: [],
+      },
+    };
+  }
 
   if (tableIndex < 0 || tableIndex >= currentTables.length) {
     return chunk;
@@ -656,38 +596,7 @@ export function deleteTableFromChunk(chunk: ChildChunk, tableIndex: number): Chi
     table_index: idx,
   }));
 
-  // 남은 표가 0개면 문단(paragraph) 청크로 자동 전환
-  if (reindexedTables.length === 0) {
-    // 텍스트에서 마크다운 표 블록 모두 제거
-    const textBlocks = parseTextBlocks(chunk.text || '');
-    const remainingText = textBlocks
-      .filter((b) => b.type === 'paragraph')
-      .map((b) => b.text)
-      .join('\n\n')
-      .trim();
-
-    return {
-      ...chunk,
-      chunk_type: 'paragraph',
-      is_table: false,
-      is_atomic_table: false,
-      tables: undefined,
-      raw_html: undefined,
-      table_caption: undefined,
-      table_footnote: undefined,
-      text: remainingText || chunk.text,
-      is_edited: true,
-      metadata: {
-        ...(chunk.metadata || {}),
-        type: 'paragraph',
-        tables: undefined,
-        table_caption: undefined,
-        table_footnote: undefined,
-      },
-    };
-  }
-
-  // 남은 표가 1개 이상인 경우: 복합 청크 유지 및 본문/HTML 재조립
+  // 텍스트 블록에서 해당 표 블록 제거
   const textBlocks = parseTextBlocks(chunk.text || '');
   let tblCount = 0;
   const newTextBlocks: string[] = [];
@@ -695,7 +604,6 @@ export function deleteTableFromChunk(chunk: ChildChunk, tableIndex: number): Chi
   for (const block of textBlocks) {
     if (block.type === 'table') {
       if (tblCount === tableIndex) {
-        // 삭제 대상 표 건너뜀
         tblCount++;
         continue;
       }
@@ -704,38 +612,35 @@ export function deleteTableFromChunk(chunk: ChildChunk, tableIndex: number): Chi
     newTextBlocks.push(block.text);
   }
 
-  const newText = newTextBlocks.join('\n\n').trim();
+  const remainingText = newTextBlocks.join('\n\n').trim();
 
   // raw_html 조립
-  const htmlParts: string[] = [];
-  for (const t of reindexedTables) {
-    if (t.raw_html) htmlParts.push(t.raw_html);
+  let newRawHtml: string | undefined;
+  if (reindexedTables.length > 0) {
+    const htmlParts: string[] = [];
+    for (const t of reindexedTables) {
+      if (t.raw_html) htmlParts.push(t.raw_html);
+    }
+    newRawHtml = htmlParts.join('\n\n');
   }
-  const newRawHtml = htmlParts.join('\n\n');
 
   return {
     ...chunk,
-    chunk_type: 'composite',
-    is_table: true,
-    is_atomic_table: false,
     tables: reindexedTables,
     raw_html: newRawHtml,
     table_caption: undefined,
     table_footnote: undefined,
-    text: newText,
+    text: remainingText,
     is_edited: true,
     metadata: {
       ...(chunk.metadata || {}),
-      type: 'composite',
       tables: reindexedTables,
-      table_caption: undefined,
-      table_footnote: undefined,
     },
   };
 }
 
 /**
- * 청크에 새 표를 추가합니다. 단일 표나 문단 청크였던 경우 자동으로 복합 청크('composite')로 승격됩니다.
+ * 청크에 새 표를 추가합니다.
  */
 export function addTableToChunk(
   chunk: ChildChunk,
@@ -750,19 +655,6 @@ export function addTableToChunk(
   const currentTables: EmbeddedTableItem[] = [
     ...(chunk.tables || chunk.metadata?.tables || []),
   ];
-
-  // 만약 단일 표 청크(tables 배열 없음)였다면 기존 표도 tables[0]으로 승격 보존
-  if (chunk.chunk_type === 'table' && currentTables.length === 0 && chunk.raw_html) {
-    currentTables.push({
-      table_index: 0,
-      caption: chunk.table_caption,
-      footnote: chunk.table_footnote,
-      raw_html: chunk.raw_html,
-      token_estimate: chunk.token_estimate || estimateKoreanTokens(chunk.text),
-      page_number: chunk.page_number,
-      page_end: chunk.page_end,
-    });
-  }
 
   const newTableItem: EmbeddedTableItem = {
     table_index: currentTables.length,
@@ -786,9 +678,6 @@ export function addTableToChunk(
 
   return {
     ...chunk,
-    chunk_type: 'composite',
-    is_table: true,
-    is_atomic_table: false,
     tables: updatedTables,
     raw_html: updatedRawHtml,
     table_caption: undefined,
@@ -797,10 +686,7 @@ export function addTableToChunk(
     is_edited: true,
     metadata: {
       ...(chunk.metadata || {}),
-      type: 'composite',
       tables: updatedTables,
-      table_caption: undefined,
-      table_footnote: undefined,
     },
   };
 }
@@ -819,50 +705,28 @@ export function updateTableInChunk(
   const newHtml = gridToHtmlTable(grid, caption, footnote);
   const newMd = gridToMarkdownTable(grid);
 
-  // 1. 단일 표 청크인 경우
-  if (chunk.chunk_type === 'table') {
-    return {
-      ...chunk,
-      raw_html: newHtml,
-      text: newMd,
-      table_caption: caption,
-      table_footnote: footnote,
-      token_estimate: estimateKoreanTokens(newMd),
-      is_edited: true,
-      tables: [
-        {
-          table_index: 0,
-          caption,
-          footnote,
-          raw_html: newHtml,
-          token_estimate: estimateKoreanTokens(newMd),
-          page_number: chunk.page_number,
-        },
-      ],
-      metadata: {
-        ...(chunk.metadata || {}),
-        table_caption: caption,
-        table_footnote: footnote,
-      },
-    };
-  }
-
-  // 2. 복합 청크인 경우
   const currentTables: EmbeddedTableItem[] = [
     ...(chunk.tables || chunk.metadata?.tables || []),
   ];
 
-  if (tableIndex < 0 || tableIndex >= currentTables.length) {
-    return chunk;
+  if (currentTables.length === 0 && chunk.raw_html) {
+    currentTables.push({
+      table_index: 0,
+      caption,
+      footnote,
+      raw_html: newHtml,
+      token_estimate: estimateKoreanTokens(newMd),
+      page_number: chunk.page_number,
+    });
+  } else if (tableIndex >= 0 && tableIndex < currentTables.length) {
+    currentTables[tableIndex] = {
+      ...currentTables[tableIndex],
+      caption,
+      footnote,
+      raw_html: newHtml,
+      token_estimate: estimateKoreanTokens(newMd),
+    };
   }
-
-  currentTables[tableIndex] = {
-    ...currentTables[tableIndex],
-    caption,
-    footnote,
-    raw_html: newHtml,
-    token_estimate: estimateKoreanTokens(newMd),
-  };
 
   // 본문 text 내의 해당 표 마크다운 블록 교체
   const textBlocks = parseTextBlocks(chunk.text || '');
@@ -883,7 +747,6 @@ export function updateTableInChunk(
 
   let updatedText = newBlocks.join('\n\n');
   if (!replaced) {
-    // 텍스트 블록에서 표가 안 잡혔다면 끝에 추가
     updatedText = `${chunk.text || ''}\n\n${newMd}`.trim();
   }
 
@@ -896,9 +759,6 @@ export function updateTableInChunk(
 
   return {
     ...chunk,
-    chunk_type: 'composite',
-    is_table: true,
-    is_atomic_table: false,
     tables: currentTables,
     raw_html: updatedRawHtml,
     table_caption: undefined,
@@ -907,10 +767,7 @@ export function updateTableInChunk(
     is_edited: true,
     metadata: {
       ...(chunk.metadata || {}),
-      type: 'composite',
       tables: currentTables,
-      table_caption: undefined,
-      table_footnote: undefined,
     },
   };
 }

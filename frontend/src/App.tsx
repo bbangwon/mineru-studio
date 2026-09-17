@@ -2512,14 +2512,9 @@ export function App() {
       : [...secBreadcrumbs];
 
     // 1) 신규 Child 객체 속성 계산
-    const cType = data.chunkType === 'article_clause' ? 'article' : data.chunkType;
-    const isTable = cType === 'table' || cType === 'composite';
-    const isAtomicTable = cType === 'table';
-
-    // 표 객체 목록 구성
     const tableItems = data.tables && data.tables.length > 0
       ? data.tables
-      : isTable && data.rawHtml
+      : data.rawHtml && /<table/i.test(data.rawHtml)
       ? [
           {
             table_index: 0,
@@ -2533,12 +2528,27 @@ export function App() {
         ]
       : undefined;
 
+    const childMeta: Record<string, any> = {
+      ...syncChunkPageMetadata({}, data.pageNumber, data.pageEnd),
+      ...(data.customTags && data.customTags.length > 0 ? { custom_tags: data.customTags } : {}),
+      ...(tableItems && tableItems.length > 0 ? { tables: tableItems } : {}),
+    };
+
+    if (data.articleNo) {
+      childMeta.article_no = data.articleNo;
+      if (data.articleTitle) {
+        childMeta.article_title = data.articleTitle;
+        childMeta.article_display = `${data.articleNo}(${data.articleTitle})`;
+      } else {
+        childMeta.article_display = data.articleNo;
+      }
+    }
+
     const newChild: ChildChunk = {
       chunk_id: newChildId,
       parent_chunk_id: data.parentChunkId,
       parent_id: data.parentChunkId,
       section_id: targetParent.section_id,
-      chunk_type: cType,
       text: data.text,
       token_estimate: childEstimate,
       page_number: data.pageNumber,
@@ -2547,16 +2557,9 @@ export function App() {
       table_caption: data.tableCaption,
       table_footnote: data.tableFootnote,
       tables: tableItems,
-      is_table: isTable,
-      is_atomic_table: isAtomicTable,
       breadcrumbs: childBreadcrumbs,
       is_edited: true,
-      metadata: {
-        ...syncChunkPageMetadata({}, data.pageNumber, data.pageEnd),
-        type: cType,
-        ...(data.customTags && data.customTags.length > 0 ? { custom_tags: data.customTags } : {}),
-        ...(tableItems && tableItems.length > 0 ? { tables: tableItems } : {}),
-      },
+      metadata: childMeta,
     };
 
     // 2) 삽입 위치(순서) 반영하여 parent.child_chunk_ids 갱신

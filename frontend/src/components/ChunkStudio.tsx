@@ -53,6 +53,13 @@ import { EditParentModal } from './EditParentModal';
 import { BulkMetadataModal } from './BulkMetadataModal';
 import { ReparentSectionModal } from './ReparentSectionModal';
 import { ReparentChildModal } from './ReparentChildModal';
+import { TableEditorModal } from './TableEditorModal';
+import {
+  deleteTableFromChunk,
+  addTableToChunk,
+  updateTableInChunk,
+  type TableGrid,
+} from '../utils/tableChunkUtils';
 import {
   formatChunkPage,
   formatChunkPageFull,
@@ -236,6 +243,23 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   const [newMetaVal, setNewMetaVal] = useState('');
   const [pageStartInput, setPageStartInput] = useState<string>('');
   const [pageEndInput, setPageEndInput] = useState<string>('');
+
+  // Table Editor & Delete Confirmation States
+  const [tableEditorTarget, setTableEditorTarget] = useState<{
+    chunk: ChildChunk;
+    tableIndex: number;
+    initialHtml?: string;
+    initialMarkdown?: string;
+    caption?: string;
+    footnote?: string;
+  } | null>(null);
+
+  const [tableDeleteConfirm, setTableDeleteConfirm] = useState<{
+    chunk: ChildChunk;
+    tableIndex: number;
+    tableName: string;
+    isLastTable: boolean;
+  } | null>(null);
 
   // Custom Metadata Clipboard & Notice States
   const [metadataClipboard, setMetadataClipboard] = useState<Record<string, any> | null>(() => {
@@ -993,6 +1017,82 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     };
 
     onUpdateChunk(updated, true);
+  };
+
+  // Open table editor modal
+  const handleOpenTableEditor = (
+    chunk: ChildChunk,
+    tableIndex: number,
+    html?: string,
+    caption?: string,
+    footnote?: string
+  ) => {
+    setTableEditorTarget({
+      chunk,
+      tableIndex,
+      initialHtml: html || (chunk.chunk_type === 'table' ? chunk.raw_html : undefined),
+      initialMarkdown: chunk.text,
+      caption: caption || chunk.table_caption,
+      footnote: footnote || chunk.table_footnote,
+    });
+  };
+
+  // Save table editor changes with 3-way synchronization
+  const handleSaveTableEditor = (data: {
+    grid: TableGrid;
+    html: string;
+    markdown: string;
+    caption?: string;
+    footnote?: string;
+  }) => {
+    if (!tableEditorTarget) return;
+    const { chunk, tableIndex } = tableEditorTarget;
+    const updated = updateTableInChunk(
+      chunk,
+      tableIndex,
+      data.grid,
+      data.caption,
+      data.footnote
+    );
+    onUpdateChunk(updated, true);
+    setMetaNotice('표 데이터 및 셀 병합 상태가 성공적으로 저장·동기화되었습니다.');
+    setTimeout(() => setMetaNotice(null), 3000);
+    setTableEditorTarget(null);
+  };
+
+  // Add new table to chunk (auto-promotes to composite chunk)
+  const handleAddTable = (chunk: ChildChunk) => {
+    const updated = addTableToChunk(chunk);
+    onUpdateChunk(updated, true);
+    setMetaNotice('새 표가 추가되었습니다. [내용/병합 편집]을 통해 셀 데이터 및 병합을 수정하세요.');
+    setTimeout(() => setMetaNotice(null), 4000);
+  };
+
+  // Trigger table delete confirmation
+  const handleDeleteTableClick = (chunk: ChildChunk, tableIndex: number, tableName: string) => {
+    const currentTables = chunk.tables || chunk.metadata?.tables || [];
+    const isLastTable = chunk.chunk_type === 'table' || currentTables.length <= 1;
+    setTableDeleteConfirm({
+      chunk,
+      tableIndex,
+      tableName,
+      isLastTable,
+    });
+  };
+
+  // Confirm and execute table deletion
+  const handleConfirmDeleteTable = () => {
+    if (!tableDeleteConfirm) return;
+    const { chunk, tableIndex, isLastTable } = tableDeleteConfirm;
+    const updated = deleteTableFromChunk(chunk, tableIndex);
+    onUpdateChunk(updated, true);
+    setTableDeleteConfirm(null);
+    if (isLastTable) {
+      setMetaNotice('모든 표가 삭제되어 해당 청크가 일반 문단(paragraph)으로 자동 전환되었습니다.');
+    } else {
+      setMetaNotice('해당 표가 삭제되고 남은 표 목록이 재정렬되었습니다.');
+    }
+    setTimeout(() => setMetaNotice(null), 3500);
   };
 
   // Add custom metadata tag
@@ -3219,6 +3319,43 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
                         {activeChunk.chunk_type === 'table' ? (
                           <div className="space-y-2.5">
+                            {/* 단일 표 제어 툴바 */}
+                            <div className="flex items-center justify-between pb-1 border-b border-indigo-100 dark:border-indigo-900/50">
+                              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                <Table2 className="w-3.5 h-3.5 text-indigo-500" />
+                                <span>단일 표 속성 및 내용</span>
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenTableEditor(activeChunk, 0, activeChunk.raw_html, activeChunk.table_caption, activeChunk.table_footnote)}
+                                  className="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                                  title="표 셀 편집 및 가로/세로 셀 병합 창 열기"
+                                >
+                                  <Edit2 className="w-2.5 h-2.5" />
+                                  <span>내용/병합 편집</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddTable(activeChunk)}
+                                  className="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                                  title="새 표를 추가하여 복합 청크(Composite)로 승격합니다"
+                                >
+                                  <Plus className="w-2.5 h-2.5 text-indigo-500" />
+                                  <span>+ 표 추가</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTableClick(activeChunk, 0, '원형 보존 표')}
+                                  className="text-[10px] font-bold px-2 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/70 hover:bg-rose-100 dark:hover:bg-rose-900 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                                  title="표를 삭제하고 일반 문단 청크로 전환합니다"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" />
+                                  <span>표 삭제</span>
+                                </button>
+                              </div>
+                            </div>
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                               <div>
                                 <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 제목 (Caption)</label>
@@ -3266,11 +3403,22 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                           <div className="space-y-2">
                             <div className="flex items-center justify-between">
                               <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                                포함된 개별 표 목록 ({activeTableList.length}개) — 표별 제목/각주 편집
+                                포함된 개별 표 목록 ({activeTableList.length}개)
                               </label>
-                              <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
-                                수정 시 청크 상위 메타데이터에 자동 반영
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddTable(activeChunk)}
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                                  title="이 복합 청크에 새 표를 추가합니다"
+                                >
+                                  <Plus className="w-3 h-3 text-indigo-500" />
+                                  <span>표 추가</span>
+                                </button>
+                                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
+                                  수정 시 상위 메타 자동 반영
+                                </span>
+                              </div>
                             </div>
                             <div className="space-y-2">
                               {activeTableList.map((tbl: EmbeddedTableItem, idx: number) => (
@@ -3287,12 +3435,32 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                           (p.{tbl.page_number})
                                         </span>
                                       )}
+                                      {tbl.row_count ? (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono font-normal">
+                                          {tbl.row_count}행
+                                        </span>
+                                      ) : null}
                                     </span>
-                                    {tbl.row_count ? (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono">
-                                        {tbl.row_count}행
-                                      </span>
-                                    ) : null}
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenTableEditor(activeChunk, idx, tbl.raw_html, tbl.caption, tbl.footnote)}
+                                        className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition"
+                                        title="표 셀 편집 및 가로/세로 셀 병합 창 열기"
+                                      >
+                                        <Edit2 className="w-2.5 h-2.5" />
+                                        <span>내용/병합 편집</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTableClick(activeChunk, idx, `표 ${idx + 1}`)}
+                                        className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950 hover:bg-rose-100 dark:hover:bg-rose-900 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 flex items-center gap-0.5 cursor-pointer transition"
+                                        title="이 표 삭제"
+                                      >
+                                        <Trash2 className="w-2.5 h-2.5" />
+                                        <span>삭제</span>
+                                      </button>
+                                    </div>
                                   </div>
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     <div>
@@ -3389,6 +3557,18 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               <span>🪄 AI 교정</span>
                             </>
                           )}
+                        </button>
+                      )}
+
+                      {editorTab !== 'preview' && activeChunk.chunk_type === 'paragraph' && (
+                        <button
+                          type="button"
+                          onClick={() => handleAddTable(activeChunk)}
+                          className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                          title="이 문단에 표를 추가하여 복합 청크(Composite)로 승격합니다"
+                        >
+                          <Table2 className="w-3 h-3 text-indigo-500" />
+                          <span>+ 표 삽입</span>
                         </button>
                       )}
 
@@ -3947,6 +4127,73 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
             }
           }}
         />
+      )}
+
+      {/* Table Editor Modal */}
+      {tableEditorTarget && (
+        <TableEditorModal
+          isOpen={Boolean(tableEditorTarget)}
+          onClose={() => setTableEditorTarget(null)}
+          initialHtml={tableEditorTarget.initialHtml}
+          initialMarkdown={tableEditorTarget.initialMarkdown}
+          caption={tableEditorTarget.caption}
+          footnote={tableEditorTarget.footnote}
+          tableIndex={tableEditorTarget.tableIndex}
+          onSave={handleSaveTableEditor}
+        />
+      )}
+
+      {/* Table Delete Confirmation Dialog */}
+      {tableDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 max-w-md w-full space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/70 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {tableDeleteConfirm.tableName} 삭제 확인
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  {tableDeleteConfirm.isLastTable
+                    ? '이 청크의 마지막 표입니다. 삭제 시 청크가 일반 문단(paragraph)으로 자동 전환됩니다.'
+                    : '이 표를 청크에서 제거하고 남은 표들의 순서를 재정렬합니다.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-1">
+              <div className="font-semibold text-slate-700 dark:text-slate-300">삭제 시 수행되는 작업:</div>
+              <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                <li>청크 내 표 메타데이터 및 원형 HTML에서 해당 표 제거</li>
+                <li>RAG 임베딩 본문 텍스트에서 해당 표 마크다운 블록 제거</li>
+                {tableDeleteConfirm.isLastTable && (
+                  <li className="text-rose-600 dark:text-rose-400 font-semibold">
+                    청크 타입을 일반 문단(paragraph)으로 안전하게 강등
+                  </li>
+                )}
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setTableDeleteConfirm(null)}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer transition"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteTable}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg cursor-pointer shadow-xs transition"
+              >
+                삭제 실행
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

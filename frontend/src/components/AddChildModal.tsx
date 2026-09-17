@@ -26,7 +26,7 @@ export const AddChildModal: React.FC<AddChildModalProps> = ({
   onAddChild,
 }) => {
   const [text, setText] = useState<string>('');
-  const [chunkType, setChunkType] = useState<'paragraph' | 'article_clause' | 'table'>('paragraph');
+  const [chunkType, setChunkType] = useState<'paragraph' | 'article' | 'article_clause' | 'table'>('paragraph');
   const [pageNumber, setPageNumber] = useState<number>(1);
   const [pageEnd, setPageEnd] = useState<string>('');
   const [rawHtml, setRawHtml] = useState<string>('');
@@ -152,7 +152,7 @@ export const AddChildModal: React.FC<AddChildModalProps> = ({
             <div className="flex items-center gap-2">
               {[
                 { id: 'paragraph', label: '일반 문단' },
-                { id: 'article_clause', label: '조항/규정' },
+                { id: 'article', label: '조항/규정' },
                 { id: 'table', label: '표/테이블' },
               ].map((t) => (
                 <button

@@ -35,7 +35,7 @@ export const AddParentModal: React.FC<AddParentModalProps> = ({
   const [afterParentId, setAfterParentId] = useState<string>('');
   const [title, setTitle] = useState<string>('');
   const [pageNumber, setPageNumber] = useState<number>(1);
-  const [chunkType, setChunkType] = useState<'paragraph' | 'article_clause' | 'table'>('paragraph');
+  const [chunkType, setChunkType] = useState<'paragraph' | 'article' | 'article_clause' | 'table'>('paragraph');
   const [childText, setChildText] = useState<string>('');
   const [inheritMetadata, setInheritMetadata] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
@@ -349,7 +349,7 @@ export const AddParentModal: React.FC<AddParentModalProps> = ({
             <div className="flex items-center gap-2">
               {[
                 { id: 'paragraph', label: '일반 문단 (Paragraph)' },
-                { id: 'article_clause', label: '법률/조항 (Article)' },
+                { id: 'article', label: '법률/조항 (Article)' },
                 { id: 'table', label: '표/테이블 (Table)' },
               ].map((t) => (
                 <button

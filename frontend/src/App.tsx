@@ -1951,18 +1951,22 @@ export function App() {
     }
 
     // 1) 신규 Child 생성 (페이지 정보는 사용자가 입력한 pageNumber로 유지)
+    const cType = data.chunkType === 'article_clause' ? 'article' : data.chunkType;
     const newChild: ChildChunk = {
       chunk_id: newChildId,
       parent_chunk_id: newParentId,
       parent_id: newParentId,
       section_id: data.sectionId,
-      chunk_type: data.chunkType,
+      chunk_type: cType,
       text: data.initialChildText,
       token_estimate: childEstimate,
       page_number: data.pageNumber,
       breadcrumbs: childBreadcrumbs,
       is_edited: true,
-      metadata: syncChunkPageMetadata(inheritedCustomMeta, data.pageNumber),
+      metadata: {
+        ...syncChunkPageMetadata(inheritedCustomMeta, data.pageNumber),
+        type: cType,
+      },
     };
 
     // 2) 신규 Parent 생성
@@ -2514,21 +2518,25 @@ export function App() {
       : [...secBreadcrumbs];
 
     // 1) 신규 Child 객체
+    const cType = data.chunkType === 'article_clause' ? 'article' : data.chunkType;
     const newChild: ChildChunk = {
       chunk_id: newChildId,
       parent_chunk_id: data.parentChunkId,
       parent_id: data.parentChunkId,
       section_id: targetParent.section_id,
-      chunk_type: data.chunkType,
+      chunk_type: cType,
       text: data.text,
       token_estimate: childEstimate,
       page_number: data.pageNumber,
       page_end: data.pageEnd,
       raw_html: data.rawHtml,
-      is_table: data.chunkType === 'table',
+      is_table: cType === 'table',
       breadcrumbs: childBreadcrumbs,
       is_edited: true,
-      metadata: syncChunkPageMetadata({}, data.pageNumber, data.pageEnd),
+      metadata: {
+        ...syncChunkPageMetadata({}, data.pageNumber, data.pageEnd),
+        type: cType,
+      },
     };
 
     const updatedChildren = [...(etlData.child_chunks || []), newChild];

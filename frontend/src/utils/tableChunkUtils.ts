@@ -297,7 +297,7 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
       (c) => c.chunk_type === 'article' || c.chunk_type === 'article_clause'
     );
     return {
-      chunk_type: isAllLegal ? 'article_clause' : 'paragraph',
+      chunk_type: isAllLegal ? 'article' : 'paragraph',
       is_table: false,
       is_atomic_table: false,
       tables: [],

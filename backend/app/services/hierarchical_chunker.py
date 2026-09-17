@@ -1120,6 +1120,7 @@ class HierarchicalChunker:
                     chunk_type = "composite"
                     is_table = True
                     is_atomic_table = False
+                    meta["type"] = "composite"
                     meta["has_tables"] = True
                     meta["table_count"] = len(current_tables)
                     meta["tables"] = list(current_tables)
@@ -1133,6 +1134,8 @@ class HierarchicalChunker:
                 is_atomic_table = False
                 tbl_caption = None
                 tbl_footnote = None
+                if "type" not in meta:
+                    meta["type"] = chunk_type
 
             child_chunks.append({
                 "chunk_id": cid,
@@ -1281,7 +1284,7 @@ class HierarchicalChunker:
             if i_type == "article_start":
                 flush_child_chunk()
                 current_breadcrumbs = breadcrumbs
-                current_chunk_type = "article_clause"
+                current_chunk_type = "article"
                 current_meta = {
                     "type": "article",
                     "article_no": item.get("article_no", ""),
@@ -1488,13 +1491,17 @@ class HierarchicalChunker:
             pages_list = list(range(start_page, end_page + 1))
 
             meta = dict(chunk.get("metadata") or {})
+            raw_c_type = chunk.get("chunk_type", "paragraph")
+            c_type = "article" if raw_c_type == "article_clause" else raw_c_type
+            if "type" not in meta or not meta["type"] or meta.get("type") == "article_clause":
+                meta["type"] = c_type
             meta["doc_title"] = etl_result.get("doc_title", "")
             meta["section"] = section.get("title", "")
             meta["page"] = start_page
             meta["page_start"] = start_page
             meta["page_end"] = end_page
             meta["pages"] = pages_list
-            is_table = (chunk.get("chunk_type") == "table" or bool(chunk.get("is_atomic_table")))
+            is_table = (c_type == "table" or bool(chunk.get("is_atomic_table")))
             meta["is_atomic_table"] = is_table
 
             meta.pop("has_image", None)
@@ -1527,7 +1534,7 @@ class HierarchicalChunker:
                 "breadcrumbs_str": breadcrumbs_str,
                 "text": chunk.get("text", ""),
                 "parent_context_text": parent_context_text,
-                "chunk_type": chunk.get("chunk_type", "paragraph"),
+                "chunk_type": c_type,
                 "is_atomic_table": is_table,
                 "page": start_page,
                 "pages": pages_list,
@@ -1942,7 +1949,7 @@ class HierarchicalChunker:
             "total_parent_sections": len(sections),
             "total_parent_chunks": len(parents),
             "total_child_chunks": len(children),
-            "paragraph_chunks": sum(1 for c in children if c.get("chunk_type") in ["paragraph", "article_clause"]),
+            "paragraph_chunks": sum(1 for c in children if c.get("chunk_type") in ["paragraph", "article_clause", "article"]),
             "table_chunks": sum(1 for c in children if c.get("chunk_type") == "table"),
             "composite_chunks": sum(1 for c in children if c.get("chunk_type") == "composite"),
             "total_words": sum(c.get("token_estimate", 0) for c in children),

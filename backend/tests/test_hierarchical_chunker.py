@@ -1218,6 +1218,50 @@ class TestHierarchicalChunker(unittest.TestCase):
         changed2 = HierarchicalChunker.heal_composite_chunks(chunks)
         self.assertFalse(changed2)
 
+    def test_chunk_type_and_metadata_type_consistency(self):
+        """paragraph, table, composite, article 청크의 최상위 chunk_type과 metadata.type이 모두 일치하는지 검증"""
+        chunker = HierarchicalChunker()
+
+        # 1. 일반 문단 및 단독 표
+        content_list = [
+            {"type": "text", "text": "제1장 총칙"},
+            {"type": "text", "text": "이 문서는 일반 문단 테스트입니다."},
+            {
+                "type": "table",
+                "table_body": "<table><tr><th>항목</th><th>비고</th></tr><tr><td>A</td><td>100</td></tr></table>",
+                "table_caption": "단독 표",
+            },
+            {"type": "text", "text": "제1조(목적) 이 조례는 복지 증진을 목적으로 한다. ① 모든 국민은 권리를 가진다."},
+        ]
+
+        etl_res = chunker.chunk_content_list(content_list, doc_title="규정집", strategy="legal")
+        children = etl_res["child_chunks"]
+
+        child_by_type = {c["chunk_type"]: c for c in children}
+        self.assertIn("paragraph", child_by_type)
+        self.assertIn("table", child_by_type)
+        self.assertIn("article", child_by_type)
+
+        # 문단형 검증
+        para_chunk = child_by_type["paragraph"]
+        self.assertEqual(para_chunk["chunk_type"], "paragraph")
+        self.assertEqual(para_chunk["metadata"].get("type"), "paragraph")
+
+        # 단독 표형 검증
+        table_chunk = child_by_type["table"]
+        self.assertEqual(table_chunk["chunk_type"], "table")
+        self.assertEqual(table_chunk["metadata"].get("type"), "table")
+
+        # 법령 조문형 검증
+        article_chunk = child_by_type["article"]
+        self.assertEqual(article_chunk["chunk_type"], "article")
+        self.assertEqual(article_chunk["metadata"].get("type"), "article")
+
+        # export_to_jsonl 에서도 동일하게 유지되는지 검증
+        jsonl_lines = [json.loads(line) for line in chunker.export_to_jsonl(etl_res).strip().splitlines()]
+        for r in jsonl_lines:
+            self.assertEqual(r["chunk_type"], r["metadata"]["type"])
+
 
 if __name__ == "__main__":
     unittest.main()

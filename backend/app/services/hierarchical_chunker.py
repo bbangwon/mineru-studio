@@ -2,6 +2,7 @@ import re
 import uuid
 import json
 import hashlib
+import html
 from html.parser import HTMLParser
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -422,6 +423,79 @@ class HierarchicalChunker:
         except Exception:
             clean = re.sub(r'<[^>]+>', ' ', raw_html).strip()
             return clean
+
+    @staticmethod
+    def _format_text_unit_as_html(text: str) -> str:
+        """문단 텍스트를 HTML 단락 태그로 래핑하고 특수문자를 이스케이프합니다."""
+        if not text or not text.strip():
+            return ""
+        escaped = html.escape(text.strip())
+        escaped = escaped.replace("\n", "<br/>")
+        return f"<p>{escaped}</p>"
+
+    @classmethod
+    def reconstruct_composite_raw_html(cls, chunk: Dict[str, Any]) -> str:
+        """
+        복합(composite) 청크의 raw_html에 문단 태그(<p>)가 누락된 구버전 데이터인 경우,
+        chunk['text'](마크다운 본문)와 표 정보(tables 또는 raw_html)를 결합하여
+        원본 문서 순서(문단 + 표 + 문단 + 표 ...) 그대로 복원된 완성형 HTML을 반환합니다.
+        """
+        raw_html = chunk.get("raw_html") or ""
+        if raw_html and re.search(r"<(?:p|div|span)\b", raw_html, re.I):
+            return raw_html
+
+        tables = chunk.get("tables") or (chunk.get("metadata", {}).get("tables") if isinstance(chunk.get("metadata"), dict) else []) or []
+        table_htmls = [t.get("raw_html", "") for t in tables if t.get("raw_html")]
+        if not table_htmls and raw_html:
+            table_htmls = re.findall(r"(<table\b[\s\S]*?</table>)", raw_html, re.I)
+
+        text = chunk.get("text") or ""
+        if not text:
+            return raw_html
+
+        blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
+        reconstructed_parts: List[str] = []
+        tbl_idx = 0
+
+        for b in blocks:
+            lines = b.split("\n")
+            is_md_table = any(line.strip().startswith("|") for line in lines) and any("---" in line for line in lines)
+            is_table_placeholder = b.startswith("[표") or b == "[표]"
+
+            if is_md_table or is_table_placeholder:
+                if tbl_idx < len(table_htmls) and table_htmls[tbl_idx]:
+                    reconstructed_parts.append(table_htmls[tbl_idx])
+                    tbl_idx += 1
+                else:
+                    reconstructed_parts.append(f"<pre>{html.escape(b)}</pre>")
+            else:
+                html_u = cls._format_text_unit_as_html(b)
+                if html_u:
+                    reconstructed_parts.append(html_u)
+
+        while tbl_idx < len(table_htmls):
+            if table_htmls[tbl_idx]:
+                reconstructed_parts.append(table_htmls[tbl_idx])
+            tbl_idx += 1
+
+        return "\n\n".join(reconstructed_parts) or raw_html
+
+    @classmethod
+    def heal_composite_chunks(cls, child_chunks: List[Dict[str, Any]]) -> bool:
+        """
+        child_chunks 목록 중 composite 청크의 raw_html에 문단 태그가 누락된 항목을 자동 복원합니다.
+        하나 이상 복원되었으면 True를 반환합니다.
+        """
+        changed = False
+        for c in child_chunks:
+            if c.get("chunk_type") == "composite" or (c.get("is_table") and not c.get("is_atomic_table") and c.get("tables")):
+                current_raw = c.get("raw_html") or ""
+                if not re.search(r"<(?:p|div|span)\b", current_raw, re.I):
+                    reconstructed = cls.reconstruct_composite_raw_html(c)
+                    if reconstructed and reconstructed != current_raw:
+                        c["raw_html"] = reconstructed
+                        changed = True
+        return changed
 
     def __init__(self, doc_id: Optional[str] = None, filter_headers_footers: bool = True, preserve_newlines: bool = False):
         self.doc_id = self.generate_doc_id(doc_id)
@@ -963,6 +1037,7 @@ class HierarchicalChunker:
         MICRO_TABLE_MAX_ROWS = 6
 
         current_text_units: List[str] = []
+        current_html_units: List[str] = []
         current_tables: List[Dict[str, Any]] = []
         current_tokens = 0
         current_start_page: Optional[int] = None
@@ -972,13 +1047,14 @@ class HierarchicalChunker:
         current_chunk_type = "paragraph"
 
         def flush_child_chunk():
-            nonlocal child_counter, current_text_units, current_tables, current_tokens, current_start_page, current_end_page
+            nonlocal child_counter, current_text_units, current_html_units, current_tables, current_tokens, current_start_page, current_end_page
             if not current_text_units:
                 return
 
             cleaned_units = [u.strip() for u in current_text_units if u.strip()]
             if not cleaned_units:
                 current_text_units = []
+                current_html_units = []
                 current_tables = []
                 current_tokens = 0
                 current_start_page = None
@@ -992,6 +1068,7 @@ class HierarchicalChunker:
 
             if not full_child_text:
                 current_text_units = []
+                current_html_units = []
                 current_tables = []
                 current_tokens = 0
                 current_start_page = None
@@ -1034,9 +1111,12 @@ class HierarchicalChunker:
                         self.generate_table_search_text(combined_raw_html, tbl_caption or "", tbl_footnote or "")
                     )
                 else:
-                    combined_raw_html = "\n<hr class=\"table-sep my-2\"/>\n".join(
-                        t["raw_html"] for t in current_tables if t.get("raw_html")
-                    )
+                    # 복합 청크: 문단(<p>)과 표(<table>)가 문서 순서대로 결합된 완성형 HTML
+                    combined_raw_html = "\n\n".join(u for u in current_html_units if u.strip())
+                    if not combined_raw_html:
+                        combined_raw_html = "\n<hr class=\"table-sep my-2\"/>\n".join(
+                            t["raw_html"] for t in current_tables if t.get("raw_html")
+                        )
                     chunk_type = "composite"
                     is_table = True
                     is_atomic_table = False
@@ -1075,6 +1155,7 @@ class HierarchicalChunker:
             })
 
             current_text_units = []
+            current_html_units = []
             current_tables = []
             current_tokens = 0
             current_start_page = None
@@ -1138,6 +1219,7 @@ class HierarchicalChunker:
                         current_breadcrumbs = list(breadcrumbs)
 
                     current_text_units.append(md_table)
+                    current_html_units.append(raw_html)
                     current_tokens += tbl_tokens
                     current_tables.append({
                         "table_index": len(current_tables),
@@ -1217,6 +1299,9 @@ class HierarchicalChunker:
                         current_start_page = page_num
                     current_end_page = page_num
                     current_text_units.append(u)
+                    html_u = self._format_text_unit_as_html(u)
+                    if html_u:
+                        current_html_units.append(html_u)
                     current_tokens += u_tokens
                 continue
 
@@ -1240,6 +1325,9 @@ class HierarchicalChunker:
                     current_start_page = page_num
                 current_end_page = page_num
                 current_text_units.append(u)
+                html_u = self._format_text_unit_as_html(u)
+                if html_u:
+                    current_html_units.append(html_u)
                 current_tokens += u_tokens
 
         flush_child_chunk()
@@ -1669,6 +1757,9 @@ class HierarchicalChunker:
 
         raw_parents = synced_parents
         raw_children = synced_children
+
+        # 0-1. 복합(composite) 청크의 누락된 문단 HTML 자동 복원
+        cls.heal_composite_chunks(raw_children)
 
         # 1. 소속 청크 및 하위 섹션 범위를 반영한 page_range 동기화
         raw_sections = cls.sync_section_page_ranges(raw_sections, raw_children)

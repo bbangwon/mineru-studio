@@ -1,4 +1,4 @@
-import type { ChildChunk } from '../types';
+import type { ChildChunk, EmbeddedTableItem } from '../types';
 
 /**
  * 청크의 페이지 번호/범위를 읽기 쉬운 문자열로 포맷팅합니다. (예: "p.3", "p.3~p.5")
@@ -285,5 +285,97 @@ export function getAllCustomMetadataKeys(chunks: ChildChunk[]): string[] {
     }
   }
   return Array.from(keysSet).sort();
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
+ * 복합(composite) 청크의 raw_html에 문단 태그(<p>)가 누락되어 있거나 표만 존재하는 경우,
+ * chunk.text(마크다운 본문)와 chunk.tables(표 HTML)를 매칭하여
+ * 원본 문서 순서(문단 + 표 + 문단 + 표 ...) 그대로 복원된 통합 HTML 문자열을 생성합니다.
+ */
+export function reconstructCompositeHtml(
+  chunk: Pick<ChildChunk, 'raw_html' | 'text' | 'tables' | 'metadata' | 'chunk_type'>
+): string {
+  const raw = chunk.raw_html || '';
+  // 이미 문단 태그(<p>, <div>, <span>)가 포함되어 있다면 원형 그대로 유지
+  if (raw && /<p\b|<div\b|<span\b/i.test(raw)) {
+    return raw;
+  }
+
+  const tables: EmbeddedTableItem[] = chunk.tables || chunk.metadata?.tables || [];
+  let tableHtmls = tables.map((t) => t.raw_html).filter(Boolean) as string[];
+  if (tableHtmls.length === 0 && raw) {
+    const matched = raw.match(/<table\b[\s\S]*?<\/table>/gi);
+    if (matched) {
+      tableHtmls = matched;
+    }
+  }
+
+  if (!chunk.text) {
+    return raw || '<p>내용 없음</p>';
+  }
+
+  const blocks = chunk.text.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  let tblIdx = 0;
+  const parts: string[] = [];
+
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    const isMdTable = lines.some((l) => l.trim().startsWith('|')) && lines.some((l) => l.includes('---'));
+    const isTablePlaceholder = block.startsWith('[표') || block === '[표]';
+
+    if (isMdTable || isTablePlaceholder) {
+      if (tblIdx < tableHtmls.length && tableHtmls[tblIdx]) {
+        parts.push(tableHtmls[tblIdx]);
+        tblIdx++;
+      } else {
+        const escaped = escapeHtml(block).replace(/\n/g, '<br/>');
+        parts.push(`<div class="markdown-table-fallback p-2 rounded bg-slate-100 dark:bg-slate-900">${escaped}</div>`);
+      }
+    } else {
+      const escaped = escapeHtml(block).replace(/\n/g, '<br/>');
+      parts.push(`<p>${escaped}</p>`);
+    }
+  }
+
+  while (tblIdx < tableHtmls.length) {
+    if (tableHtmls[tblIdx]) {
+      parts.push(tableHtmls[tblIdx]);
+    }
+    tblIdx++;
+  }
+
+  return parts.join('\n\n') || raw || chunk.text || '<p>내용 없음</p>';
+}
+
+/**
+ * composite 청크의 raw_html에 문단 태그가 누락된 경우,
+ * reconstructCompositeHtml을 이용해 raw_html을 완성형으로 복원합니다.
+ */
+export function healCompositeChunk(chunk: ChildChunk): ChildChunk {
+  const isComposite =
+    chunk.chunk_type === 'composite' ||
+    Boolean((chunk.tables || chunk.metadata?.tables || []).length && chunk.chunk_type !== 'table');
+  if (!isComposite) return chunk;
+
+  const currentRaw = chunk.raw_html || '';
+  if (!currentRaw || !/<p\b|<div\b|<span\b/i.test(currentRaw)) {
+    const healedRaw = reconstructCompositeHtml(chunk);
+    if (healedRaw && healedRaw !== currentRaw) {
+      return {
+        ...chunk,
+        raw_html: healedRaw,
+      };
+    }
+  }
+  return chunk;
 }
 

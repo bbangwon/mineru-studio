@@ -1,7 +1,7 @@
 import React from 'react';
 import { Table2, AlignLeft, FileCode2, ChevronRight, MapPin, ShieldCheck, Image as ImageIcon, ExternalLink, Scale, Edit3, EyeOff, CheckCircle2, AlertTriangle, Info, Trash2, Sparkles, FolderTree } from 'lucide-react';
 import type { ChildChunk, ParentSection } from '../types';
-import { formatChunkPageFull, computeTableMetadata } from '../utils/pageUtils';
+import { formatChunkPageFull, computeTableMetadata, reconstructCompositeHtml } from '../utils/pageUtils';
 import { estimateKoreanTokens } from '../utils/idUtils';
 import { CopyableBadge } from './CopyableBadge';
 
@@ -222,7 +222,11 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
         <div className="space-y-2 mt-2.5">
           <div
             className="prose-custom overflow-x-auto bg-slate-50/70 dark:bg-slate-950/70 p-3 rounded-lg border border-slate-200 dark:border-slate-800"
-            dangerouslySetInnerHTML={{ __html: chunk.raw_html || chunk.text }}
+            dangerouslySetInnerHTML={{
+              __html: chunk.chunk_type === 'composite' || Boolean((chunk.tables || chunk.metadata?.tables || []).length && chunk.chunk_type !== 'table')
+                ? reconstructCompositeHtml(chunk)
+                : (chunk.raw_html || chunk.text)
+            }}
           />
           <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 pt-1">
             <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">

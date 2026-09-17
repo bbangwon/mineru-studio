@@ -61,6 +61,7 @@ import {
   getAllCustomMetadataKeys,
   RESERVED_METADATA_KEYS,
   computeTableMetadata,
+  reconstructCompositeHtml,
 } from '../utils/pageUtils';
 import {
   estimateKoreanTokens,
@@ -712,6 +713,24 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       setPageEndInput(activeChunk.page_end ? String(activeChunk.page_end) : '');
     }
   }, [activeChunk?.chunk_id, activeChunk?.page_number, activeChunk?.page_end]);
+
+  // 복합(composite) 청크의 raw_html에 문단 태그가 누락된 구버전 데이터 자동 복원
+  useEffect(() => {
+    if (activeChunk) {
+      const isComposite =
+        activeChunk.chunk_type === 'composite' ||
+        Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table');
+      if (isComposite) {
+        const raw = activeChunk.raw_html || '';
+        if (!raw || !/<p\b|<div\b|<span\b/i.test(raw)) {
+          const healedRaw = reconstructCompositeHtml(activeChunk);
+          if (healedRaw && healedRaw !== raw) {
+            onUpdateChunk({ ...activeChunk, raw_html: healedRaw, is_edited: true }, true);
+          }
+        }
+      }
+    }
+  }, [activeChunk?.chunk_id]);
 
   // Column 2 Parent Groups (Parent Chunk 단위 그룹화)
   const parentGroups = useMemo(() => {
@@ -3177,7 +3196,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                   : 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
                               }`}
                             >
-                              표 HTML 원형
+                              {isActiveComposite ? '통합 HTML 원형 (문단+표)' : '표 HTML 원형'}
                             </button>
                             <button
                               type="button"
@@ -3199,26 +3218,48 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         </div>
 
                         {activeChunk.chunk_type === 'table' ? (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            <div>
-                              <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 제목 (Caption)</label>
-                              <input
-                                type="text"
-                                value={activeChunk.table_caption || ''}
-                                onChange={(e) => handleFieldChange('table_caption', e.target.value)}
-                                placeholder="예: [표 1] 세부기준"
-                                className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                              />
+                          <div className="space-y-2.5">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 제목 (Caption)</label>
+                                <input
+                                  type="text"
+                                  value={activeChunk.table_caption || ''}
+                                  onChange={(e) => handleFieldChange('table_caption', e.target.value)}
+                                  placeholder="예: [표 1] 세부기준"
+                                  className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 각주 (Footnote)</label>
+                                <input
+                                  type="text"
+                                  value={activeChunk.table_footnote || ''}
+                                  onChange={(e) => handleFieldChange('table_footnote', e.target.value)}
+                                  placeholder="예: ※ 기준치 초과 시 재검사"
+                                  className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                                />
+                              </div>
                             </div>
-                            <div>
-                              <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 각주 (Footnote)</label>
-                              <input
-                                type="text"
-                                value={activeChunk.table_footnote || ''}
-                                onChange={(e) => handleFieldChange('table_footnote', e.target.value)}
-                                placeholder="예: ※ 기준치 초과 시 재검사"
-                                className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                              />
+
+                            {/* 단일 표 실시간 렌더링 컨테이너 */}
+                            <div className="pt-2 border-t border-indigo-200/50 dark:border-indigo-900/50">
+                              <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 mb-1 font-medium">
+                                <span className="flex items-center gap-1 font-semibold text-indigo-700 dark:text-indigo-300">
+                                  <Table2 className="w-3 h-3 text-indigo-500" />
+                                  <span>표 실시간 미리보기</span>
+                                </span>
+                                <span className="text-[9px] text-slate-400 font-mono">
+                                  {activeChunk.raw_html ? '원형 보존 HTML' : '내용 없음'}
+                                </span>
+                              </div>
+                              <div className="p-2.5 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 max-h-48 overflow-auto prose-custom text-[11px] leading-relaxed shadow-2xs">
+                                {activeChunk.raw_html ? (
+                                  <div dangerouslySetInnerHTML={{ __html: activeChunk.raw_html }} />
+                                ) : (
+                                  <p className="text-slate-400 dark:text-slate-600 italic text-xs">표 원형 데이터가 없습니다.</p>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ) : isActiveComposite && activeTableList.length > 0 ? (
@@ -3279,6 +3320,26 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                       />
                                     </div>
                                   </div>
+
+                                  {/* 개별 표 실시간 렌더링 컨테이너 */}
+                                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                                    <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 mb-1 font-medium">
+                                      <span className="flex items-center gap-1 font-semibold text-indigo-700 dark:text-indigo-300">
+                                        <Table2 className="w-3 h-3 text-indigo-500" />
+                                        <span>표 {idx + 1} 실제 내용 미리보기</span>
+                                      </span>
+                                      <span className="text-[9px] text-slate-400 font-mono">
+                                        {tbl.row_count ? `${tbl.row_count}행 데이터` : '실시간 렌더링'}
+                                      </span>
+                                    </div>
+                                    <div className="p-2.5 bg-slate-50/80 dark:bg-slate-950/80 rounded-lg border border-slate-200/80 dark:border-slate-800/80 max-h-48 overflow-auto prose-custom text-[11px] leading-relaxed shadow-2xs">
+                                      {tbl.raw_html ? (
+                                        <div dangerouslySetInnerHTML={{ __html: tbl.raw_html }} />
+                                      ) : (
+                                        <p className="text-slate-400 dark:text-slate-600 italic text-xs">표 원형 데이터가 없습니다.</p>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -3295,10 +3356,12 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     <div className="flex items-center gap-2 flex-wrap">
                       <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
                         {editorTab === 'raw_html'
-                          ? '표 HTML 원형 코드 (raw_html)'
+                          ? (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
+                              ? '통합 HTML 원형 코드 (raw_html: 문단+표)'
+                              : '표 HTML 원형 코드 (raw_html)')
                           : editorTab === 'preview'
                           ? (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
-                              ? '통합 문서 미리보기 (HTML Preview)'
+                              ? '통합 문서 미리보기 (문단+표)'
                               : '표 렌더링 미리보기 (HTML Preview)')
                           : (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
                               ? '복합 청크 본문 텍스트 (Markdown) 편집'
@@ -3361,13 +3424,24 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                       <div
                         className="prose-custom text-xs"
                         dangerouslySetInnerHTML={{
-                          __html: activeChunk.raw_html || activeChunk.text || '<p>표 내용 없음</p>',
+                          __html: (() => {
+                            const isComposite = activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table');
+                            if (isComposite) {
+                              return reconstructCompositeHtml(activeChunk);
+                            }
+                            return activeChunk.raw_html || activeChunk.text || '<p>표 내용 없음</p>';
+                          })(),
                         }}
                       />
                     </div>
                   ) : (activeChunk.chunk_type === 'table' || activeChunk.chunk_type === 'composite' || Boolean(activeChunk.raw_html)) && editorTab === 'raw_html' ? (
                     <textarea
-                      value={activeChunk.raw_html || ''}
+                      value={
+                        activeChunk.raw_html ||
+                        (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
+                          ? reconstructCompositeHtml(activeChunk)
+                          : '')
+                      }
                       onChange={(e) => handleFieldChange('raw_html', e.target.value)}
                       rows={11}
                       className="w-full font-mono text-xs p-3.5 bg-slate-900 text-emerald-400 rounded-xl border border-slate-700 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 leading-relaxed resize-y"

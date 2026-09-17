@@ -1078,7 +1078,20 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertIn("자동차", comp_chunk["text"])
         self.assertIn("정비공", comp_chunk["text"])
         self.assertIn("10년 이상", comp_chunk["text"])
-        self.assertIn("table-sep", comp_chunk["raw_html"])
+        
+        # 복합 청크의 최상위 raw_html에는 문단(<p>)과 표(<table>)가 모두 포함되어야 함
+        self.assertIn("<p>", comp_chunk["raw_html"])
+        self.assertIn("MRI상 이상 소견", comp_chunk["raw_html"])
+        self.assertIn("아래 직종 중 하나 이상", comp_chunk["raw_html"])
+        self.assertIn("근무기간 10년 이상", comp_chunk["raw_html"])
+        self.assertIn("<table>", comp_chunk["raw_html"])
+        self.assertIn("M50.0", comp_chunk["raw_html"])
+
+        # metadata.tables 내 개별 표는 순수 표 HTML로 보존되어야 함 (문단 미포함)
+        self.assertIn("M50.0", comp_chunk["tables"][0]["raw_html"])
+        self.assertNotIn("MRI상 이상 소견", comp_chunk["tables"][0]["raw_html"])
+        self.assertIn("자동차", comp_chunk["tables"][1]["raw_html"])
+        self.assertNotIn("근무기간 10년 이상", comp_chunk["tables"][1]["raw_html"])
 
         # JSONL 내보내기 검증
         jsonl = chunker.export_to_jsonl(etl_res)
@@ -1147,6 +1160,65 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertIn("2026년 개정 기준", rec["table_footnote"])
         self.assertIn("특수직종 제외", rec["table_footnote"])
 
+    def test_reconstruct_legacy_composite_raw_html_order(self):
+        """구버전 데이터에서 raw_html에 표만 있고 문단이 누락된 경우 문단+표+문단+표 순서대로 복원되는지 검증"""
+        legacy_chunk = {
+            "chunk_id": "test_c0008",
+            "chunk_type": "composite",
+            "text": "1) 첫 번째 조건 문단\n\n| 코드 | 이름 |\n| --- | --- |\n| A01 | 질병1 |\n\n2) 두 번째 직종 조건 문단\n\n| 분야 | 직종 |\n| --- | --- |\n| 건설 | 목공 |\n\n3) 마지막 기간 요건 문단",
+            "raw_html": "<table><tr><td>A01</td><td>질병1</td></tr></table>\n<hr class=\"table-sep my-2\"/>\n<table><tr><td>건설</td><td>목공</td></tr></table>",
+            "tables": [
+                {"table_index": 0, "raw_html": "<table><tr><td>A01</td><td>질병1</td></tr></table>"},
+                {"table_index": 1, "raw_html": "<table><tr><td>건설</td><td>목공</td></tr></table>"}
+            ]
+        }
+
+        reconstructed = HierarchicalChunker.reconstruct_composite_raw_html(legacy_chunk)
+
+        # 문단1 -> 표1 -> 문단2 -> 표2 -> 문단3 순서 검증
+        idx_p1 = reconstructed.find("<p>1) 첫 번째 조건 문단</p>")
+        idx_t1 = reconstructed.find("<table><tr><td>A01</td><td>질병1</td></tr></table>")
+        idx_p2 = reconstructed.find("<p>2) 두 번째 직종 조건 문단</p>")
+        idx_t2 = reconstructed.find("<table><tr><td>건설</td><td>목공</td></tr></table>")
+        idx_p3 = reconstructed.find("<p>3) 마지막 기간 요건 문단</p>")
+
+        self.assertNotEqual(idx_p1, -1)
+        self.assertNotEqual(idx_t1, -1)
+        self.assertNotEqual(idx_p2, -1)
+        self.assertNotEqual(idx_t2, -1)
+        self.assertNotEqual(idx_p3, -1)
+
+        self.assertTrue(idx_p1 < idx_t1 < idx_p2 < idx_t2 < idx_p3)
+
+    def test_heal_composite_chunks(self):
+        """heal_composite_chunks가 구버전 청크 목록을 순회하며 누락된 raw_html을 순서대로 자동 치유하는지 검증"""
+        chunks = [
+            {
+                "chunk_id": "c1",
+                "chunk_type": "composite",
+                "text": "문단 1\n\n| 표 |\n| --- |\n| 내용 |\n\n문단 2",
+                "raw_html": "<table><tr><td>내용</td></tr></table>",
+                "tables": [{"raw_html": "<table><tr><td>내용</td></tr></table>"}]
+            },
+            {
+                "chunk_id": "c2",
+                "chunk_type": "paragraph",
+                "text": "일반 문단",
+                "raw_html": ""
+            }
+        ]
+
+        changed = HierarchicalChunker.heal_composite_chunks(chunks)
+        self.assertTrue(changed)
+        self.assertIn("<p>문단 1</p>", chunks[0]["raw_html"])
+        self.assertIn("<table><tr><td>내용</td></tr></table>", chunks[0]["raw_html"])
+        self.assertIn("<p>문단 2</p>", chunks[0]["raw_html"])
+
+        # 두 번째 호출 시 이미 치유되었으므로 changed는 False
+        changed2 = HierarchicalChunker.heal_composite_chunks(chunks)
+        self.assertFalse(changed2)
+
 
 if __name__ == "__main__":
     unittest.main()
+

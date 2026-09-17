@@ -813,6 +813,14 @@ async def get_sample_etl(strategy: Optional[str] = "general", filename: Optional
                 for p in edited_data.get("parent_chunks", []):
                     if p.get("breadcrumbs") and normalize_text(p["breadcrumbs"][0]) == normalize_text(old_truncated):
                         p["breadcrumbs"][0] = doc_name
+                # 복합(composite) 청크의 누락된 문단 HTML 자동 복원 및 디스크 영속화
+                healed = HierarchicalChunker.heal_composite_chunks(edited_data.get("child_chunks", []))
+                if healed:
+                    try:
+                        with open(edited_path, "w", encoding="utf-8") as f_save:
+                            json.dump(edited_data, f_save, ensure_ascii=False, indent=2)
+                    except Exception as save_err:
+                        print(f"Failed to auto-save healed composite chunks: {save_err}")
                 latest_etl_result = edited_data
                 return edited_data
         except Exception as e:
@@ -870,6 +878,8 @@ async def save_etl_result(req: Dict[str, Any]):
 
     save_path = target_content_list_path.parent / "rag_chunks_edited.json"
     try:
+        # 복합(composite) 청크의 누락된 문단 HTML 자동 복원
+        HierarchicalChunker.heal_composite_chunks(etl_data.get("child_chunks", []))
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(etl_data, f, ensure_ascii=False, indent=2)
     except Exception as e:

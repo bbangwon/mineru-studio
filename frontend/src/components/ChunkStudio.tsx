@@ -42,6 +42,7 @@ import {
   Globe,
   CornerDownRight,
   CornerUpLeft,
+  Maximize2,
 } from 'lucide-react';
 import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams, EmbeddedTableItem } from '../types';
 import { ChunkSplitModal } from './ChunkSplitModal';
@@ -113,6 +114,7 @@ interface ChunkStudioProps {
   onBatchCleanEmptySections?: () => void;
   onToggleIgnoreChunk: (chunkId: string) => void;
   onOpenJsonlModal: (chunk: ChildChunk) => void;
+  onOpenEditModal?: (chunk: ChildChunk) => void;
   onSplitChunk?: (
     chunkId: string,
     part1Text: string,
@@ -166,6 +168,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   onBatchCleanEmptySections,
   onToggleIgnoreChunk,
   onOpenJsonlModal,
+  onOpenEditModal,
   onSplitChunk,
   onMergeChunks,
   onDeleteChunks,
@@ -2609,6 +2612,22 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               </div>
 
                               <div className="flex items-center gap-1">
+                                {/* Quick Open Modal Edit Button */}
+                                {onOpenEditModal && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedChunkId(chunk.chunk_id);
+                                      onOpenEditModal(chunk);
+                                    }}
+                                    className="p-1 rounded transition cursor-pointer text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800"
+                                    title="이 청크를 큰 팝업 모달로 열어 편집"
+                                  >
+                                    <Maximize2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+
                                 {/* Quick Ignore Toggle Button */}
                                 <button
                                   type="button"
@@ -2801,6 +2820,18 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     <FileCode2 className="w-3.5 h-3.5" />
                     <span>JSONL</span>
                   </button>
+
+                  {onOpenEditModal && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenEditModal(activeChunk)}
+                      className="text-xs text-indigo-700 dark:text-indigo-300 hover:text-indigo-900 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 px-2 sm:px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 font-semibold cursor-pointer shadow-2xs"
+                      title="화면 중앙에 큰 팝업 모달로 청크 및 표를 확대하여 편집합니다"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                      <span>모달로 확대</span>
+                    </button>
+                  )}
                 </div>
               </div>
 

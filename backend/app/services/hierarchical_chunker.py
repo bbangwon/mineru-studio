@@ -1922,11 +1922,39 @@ class HierarchicalChunker:
             c.pop("image_path", None)
             c.pop("image_url", None)
 
+            # 표(tables) 정규화 및 table_id 일관성 부여
+            existing_tables = c.get("tables")
+            if not existing_tables:
+                raw_html = c.get("raw_html", "")
+                is_old_table = c.get("is_table") or c.get("chunk_type") == "table" or ("<table" in raw_html.lower())
+                if is_old_table and raw_html:
+                    c["tables"] = [{
+                        "table_id": f"{new_cid}_t1",
+                        "raw_html": raw_html,
+                        "caption": c.get("table_caption") or "",
+                        "footnote": c.get("table_footnote") or "",
+                        "table_type": c.get("table_type") or "table"
+                    }]
+                else:
+                    c["tables"] = []
+            else:
+                for idx, tbl in enumerate(existing_tables):
+                    tbl["table_id"] = f"{new_cid}_t{idx + 1}"
+
+            # 레거시 필드 완전 삭제 (Clean Drop)
+            c.pop("chunk_type", None)
+            c.pop("is_table", None)
+            c.pop("is_atomic_table", None)
+            c.pop("table_caption", None)
+            c.pop("table_footnote", None)
+            c.pop("table_type", None)
+
             if isinstance(c.get("metadata"), dict):
                 c["metadata"]["page"] = p_start
                 c["metadata"]["page_start"] = p_start
                 c["metadata"]["page_end"] = p_end
                 c["metadata"]["pages"] = list(range(p_start, p_end + 1))
+                c["metadata"]["type"] = cls.get_chunk_kind(c)
                 c["metadata"].pop("has_image", None)
                 c["metadata"].pop("image_path", None)
                 c["metadata"].pop("image_url", None)

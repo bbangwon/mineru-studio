@@ -1,5 +1,6 @@
 import type { HierarchicalEtlResult, ChildChunk, ParentChunk, SectionNode } from '../types';
 import { syncChunkPageMetadata } from './pageUtils';
+import { getChunkKind } from './chunkKindUtils';
 
 /**
  * 한국어 서브워드/BPE 특성을 반영한 표준 토큰 추정 공식:
@@ -512,6 +513,41 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
     const endPage = child.page_end || startPage;
     const finalEnd = endPage > startPage ? endPage : undefined;
 
+    // 표(tables) 정규화 및 table_id 일관성 부여
+    let tables = Array.isArray(child.tables) ? child.tables : [];
+    if (tables.length === 0) {
+      const rawHtml = child.raw_html || '';
+      const isOldTable = (child as any).is_table || (child as any).chunk_type === 'table' || (rawHtml && rawHtml.toLowerCase().includes('<table'));
+      if (isOldTable && rawHtml) {
+        tables = [{
+          table_index: 0,
+          table_id: `${newCid}_t1`,
+          raw_html: rawHtml,
+          caption: (child as any).table_caption || '',
+          footnote: (child as any).table_footnote || '',
+          table_type: (child as any).table_type || 'table',
+        }];
+      }
+    } else {
+      tables = tables.map((tbl, idx) => ({
+        ...tbl,
+        table_index: tbl.table_index ?? idx,
+        table_id: `${newCid}_t${idx + 1}`,
+      }));
+    }
+
+    const cleanChild: any = {
+      ...child,
+      chunk_id: newCid,
+      tables,
+    };
+    delete cleanChild.chunk_type;
+    delete cleanChild.is_table;
+    delete cleanChild.is_atomic_table;
+    delete cleanChild.table_caption;
+    delete cleanChild.table_footnote;
+    delete cleanChild.table_type;
+
     const meta = { ...(child.metadata || {}) };
     delete (meta as Record<string, any>).original_chunk_id;
     const synchronizedMeta = syncChunkPageMetadata(
@@ -519,12 +555,10 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
       startPage,
       finalEnd
     );
+    synchronizedMeta.type = getChunkKind(cleanChild);
 
-    return {
-      ...child,
-      chunk_id: newCid,
-      metadata: synchronizedMeta,
-    };
+    cleanChild.metadata = synchronizedMeta;
+    return cleanChild as ChildChunk;
   });
 
   // 3. 상호 참조 ID 일괄 갱신

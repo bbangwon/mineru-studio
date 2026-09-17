@@ -96,6 +96,7 @@ export type ParentInsertPosition =
 // 3. Child Chunk (검색 / 미시 계층, ~512 tokens or Atomic Table or Composite)
 export interface EmbeddedTableItem {
   table_index: number;
+  table_id?: string;
   caption?: string;
   footnote?: string;
   raw_html?: string;

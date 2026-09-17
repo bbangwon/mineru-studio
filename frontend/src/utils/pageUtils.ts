@@ -77,6 +77,11 @@ export function syncChunkSystemMetadata(
     ...tableSummary,
   };
 
+  if (chunk.chunk_type) {
+    updated.chunk_type = chunk.chunk_type;
+    updated.type = chunk.chunk_type;
+  }
+
   if (docTitle) {
     updated.doc_title = docTitle;
   }
@@ -86,14 +91,20 @@ export function syncChunkSystemMetadata(
 
 /**
  * 시스템 예약 메타데이터 키 목록입니다.
+ * - 청크 유형 및 도메인 구조: chunk_type, type (시스템 자동 추적/계산 속성)
  * - 문서/청크 식별자: doc_id, doc_title, chunk_id, parent_chunk_id, section_id 등
  * - 페이지/출처 좌표: page, page_start, page_end, pages, page_idx, page_number 등
  * - 표(Table) 구조/파생 속성: is_table, is_atomic_table, has_tables, table_count, tables 등
+ * - 본문/제목/계층: text, parent_text, title, breadcrumbs, heading_hierarchy 등
  * - 통계/이미지: token_count, token_estimate, char_length, has_image 등
  * 커스텀 메타데이터 입력, 복사/상속, 일괄 적용 시 이 키들은 원천 보호 및 제외됩니다.
  */
 export const RESERVED_METADATA_KEYS = new Set([
-  // 1. 문서 및 청크 식별자
+  // 1. 청크 유형 및 도메인 구조 (시스템 자동 추적 속성)
+  'chunk_type',
+  'type',
+
+  // 2. 문서 및 청크 식별자
   'doc_id',
   'doc_title',
   'chunk_id',
@@ -101,7 +112,7 @@ export const RESERVED_METADATA_KEYS = new Set([
   'section_id',
   'id',
 
-  // 2. 페이지 및 물리 좌표
+  // 3. 페이지 및 물리 좌표
   'page',
   'page_start',
   'page_end',
@@ -109,7 +120,7 @@ export const RESERVED_METADATA_KEYS = new Set([
   'page_idx',
   'page_number',
 
-  // 3. 표(Table) 구조 및 파생 속성 (시스템 자동 추적/계산 대상)
+  // 4. 표(Table) 구조 및 파생 속성 (시스템 자동 추적/계산 대상)
   'is_table',
   'is_atomic_table',
   'has_tables',
@@ -120,7 +131,14 @@ export const RESERVED_METADATA_KEYS = new Set([
   'table_footnote',
   'raw_html',
 
-  // 4. 이미지 및 텍스트/토큰 통계
+  // 5. 본문 문맥 및 제목/계층 정보
+  'text',
+  'parent_text',
+  'title',
+  'breadcrumbs',
+  'heading_hierarchy',
+
+  // 6. 이미지 및 텍스트/토큰 통계
   'has_image',
   'image_path',
   'image_url',

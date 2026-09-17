@@ -1094,7 +1094,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     if (!activeChunk || !newMetaKey.trim()) return;
     const trimmedKey = newMetaKey.trim();
     if (RESERVED_METADATA_KEYS.has(trimmedKey)) {
-      setMetaNotice(`'${trimmedKey}'는 시스템 예약어(출처/표/페이지/식별자 등)이므로 커스텀 태그로 사용할 수 없습니다.`);
+      setMetaNotice(`'${trimmedKey}'는 시스템 예약어(유형/출처/표/페이지/식별자 등)이므로 커스텀 태그로 사용할 수 없습니다.`);
       setTimeout(() => setMetaNotice(null), 3000);
       return;
     }
@@ -3771,6 +3771,20 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               <span className="font-semibold text-slate-900 dark:text-slate-100">{docTitle}</span>
                             </span>
                           )}
+                          <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-700 dark:text-slate-300 font-mono">
+                            <span className="text-slate-400 font-sans">유형:</span>
+                            <span className="font-semibold text-indigo-600 dark:text-indigo-400 font-sans">
+                              {activeChunk.chunk_type === 'table'
+                                ? '단독 표 (table)'
+                                : activeChunk.chunk_type === 'composite'
+                                ? '복합 (composite)'
+                                : activeChunk.chunk_type === 'article'
+                                ? '조문 (article)'
+                                : activeChunk.chunk_type === 'article_clause'
+                                ? '항/호 (clause)'
+                                : '문단 (paragraph)'}
+                            </span>
+                          </span>
                           <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-slate-700 dark:text-slate-300 font-mono">
                             <span className="text-slate-400 font-sans">위치:</span>
                             <span>{formatChunkPageFull(activeChunk)}</span>

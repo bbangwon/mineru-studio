@@ -7,7 +7,6 @@ import { FileText, LayoutDashboard, Sparkles } from 'lucide-react';
 import { DashboardOverview } from './components/DashboardOverview';
 import { ChunkStudio } from './components/ChunkStudio';
 import { JsonlModal } from './components/JsonlModal';
-import { ChunkEditModal } from './components/ChunkEditModal';
 import { QdrantConfigModal } from './components/QdrantConfigModal';
 import { LLMConfigModal } from './components/LLMConfigModal';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
@@ -105,7 +104,6 @@ export function App() {
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const [editingChunk, setEditingChunk] = useState<ChildChunk | null>(null);
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [selectedParentChunkId, setSelectedParentChunkId] = useState<string | null>(null);
@@ -117,7 +115,6 @@ export function App() {
 
   // LLM Refine & Config States
   const [isLLMConfigOpen, setIsLLMConfigOpen] = useState(false);
-  const [autoRefineChunk, setAutoRefineChunk] = useState(false);
 
   // Backup & Restore State
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
@@ -3061,21 +3058,6 @@ export function App() {
         parentSections={etlData?.sections || etlData?.parent_sections || []}
         parentChunks={etlData?.parent_chunks || []}
         onClose={() => setActiveModalChunk(null)}
-      />
-
-      {/* Chunk Edit Modal (Dashboard compatible) */}
-      <ChunkEditModal
-        chunk={editingChunk}
-        parentSections={etlData?.sections || etlData?.parent_sections || []}
-        parentChunks={etlData?.parent_chunks || []}
-        autoRefine={autoRefineChunk}
-        onClose={() => {
-          setEditingChunk(null);
-          setAutoRefineChunk(false);
-        }}
-        onSave={handleUpdateChunk}
-        onReassignParentSection={handleReassignParentSection}
-        onReparentChildChunk={handleReparentChildChunk}
       />
 
       {/* Qdrant Configuration Modal */}

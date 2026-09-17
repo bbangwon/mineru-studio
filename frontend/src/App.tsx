@@ -3025,7 +3025,6 @@ export function App() {
                 onBatchCleanEmptySections={handleBatchCleanEmptySections}
                 onToggleIgnoreChunk={handleToggleIgnoreChunk}
                 onOpenJsonlModal={setActiveModalChunk}
-                onOpenEditModal={setEditingChunk}
                 onSplitChunk={handleSplitChunk}
                 onMergeChunks={handleMergeChunks}
                 onDeleteChunks={handleDeleteChunks}

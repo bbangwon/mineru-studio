@@ -310,8 +310,6 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
   // 2. 표가 포함된 경우 -> 무조건 복합 청크(composite)로 승격 (복수 표 또는 문단+표 결합)
   const allTables: EmbeddedTableItem[] = [];
   const htmlParts: string[] = [];
-  const captions: string[] = [];
-  const footnotes: string[] = [];
 
   for (let i = 0; i < selectedChunks.length; i++) {
     const chunk = selectedChunks[i];
@@ -348,18 +346,9 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
         .replace(/\n/g, '<br/>');
       htmlParts.push(`<p>${escaped}</p>`);
     }
-
-    if (chunk.table_caption && chunk.table_caption.trim()) {
-      captions.push(chunk.table_caption.trim());
-    }
-    if (chunk.table_footnote && chunk.table_footnote.trim()) {
-      footnotes.push(chunk.table_footnote.trim());
-    }
   }
 
   const combinedRawHtml = htmlParts.length > 0 ? htmlParts.join('\n\n') : undefined;
-  const combinedCaption = captions.length > 0 ? Array.from(new Set(captions)).join(' / ') : undefined;
-  const combinedFootnote = footnotes.length > 0 ? Array.from(new Set(footnotes)).join(' / ') : undefined;
 
   return {
     chunk_type: 'composite',
@@ -367,8 +356,8 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
     is_atomic_table: false,
     tables: allTables,
     raw_html: combinedRawHtml,
-    table_caption: combinedCaption,
-    table_footnote: combinedFootnote,
+    table_caption: undefined,
+    table_footnote: undefined,
   };
 }
 
@@ -724,16 +713,6 @@ export function deleteTableFromChunk(chunk: ChildChunk, tableIndex: number): Chi
   }
   const newRawHtml = htmlParts.join('\n\n');
 
-  const newCaption = reindexedTables
-    .map((t) => t.caption?.trim())
-    .filter(Boolean)
-    .join(' / ') || undefined;
-
-  const newFootnote = reindexedTables
-    .map((t) => t.footnote?.trim())
-    .filter(Boolean)
-    .join(' / ') || undefined;
-
   return {
     ...chunk,
     chunk_type: 'composite',
@@ -741,16 +720,16 @@ export function deleteTableFromChunk(chunk: ChildChunk, tableIndex: number): Chi
     is_atomic_table: false,
     tables: reindexedTables,
     raw_html: newRawHtml,
-    table_caption: newCaption,
-    table_footnote: newFootnote,
+    table_caption: undefined,
+    table_footnote: undefined,
     text: newText,
     is_edited: true,
     metadata: {
       ...(chunk.metadata || {}),
       type: 'composite',
       tables: reindexedTables,
-      table_caption: newCaption,
-      table_footnote: newFootnote,
+      table_caption: undefined,
+      table_footnote: undefined,
     },
   };
 }
@@ -805,16 +784,6 @@ export function addTableToChunk(
   const rawSeparator = chunk.raw_html && chunk.raw_html.trim() ? '\n\n' : '';
   const updatedRawHtml = `${chunk.raw_html || ''}${rawSeparator}${tableHtml}`;
 
-  const aggregatedCaption = updatedTables
-    .map((t) => t.caption?.trim())
-    .filter(Boolean)
-    .join(' / ') || undefined;
-
-  const aggregatedFootnote = updatedTables
-    .map((t) => t.footnote?.trim())
-    .filter(Boolean)
-    .join(' / ') || undefined;
-
   return {
     ...chunk,
     chunk_type: 'composite',
@@ -822,16 +791,16 @@ export function addTableToChunk(
     is_atomic_table: false,
     tables: updatedTables,
     raw_html: updatedRawHtml,
-    table_caption: aggregatedCaption,
-    table_footnote: aggregatedFootnote,
+    table_caption: undefined,
+    table_footnote: undefined,
     text: updatedText,
     is_edited: true,
     metadata: {
       ...(chunk.metadata || {}),
       type: 'composite',
       tables: updatedTables,
-      table_caption: aggregatedCaption,
-      table_footnote: aggregatedFootnote,
+      table_caption: undefined,
+      table_footnote: undefined,
     },
   };
 }
@@ -925,16 +894,6 @@ export function updateTableInChunk(
   }
   const updatedRawHtml = htmlParts.join('\n\n');
 
-  const aggregatedCaption = currentTables
-    .map((t) => t.caption?.trim())
-    .filter(Boolean)
-    .join(' / ') || undefined;
-
-  const aggregatedFootnote = currentTables
-    .map((t) => t.footnote?.trim())
-    .filter(Boolean)
-    .join(' / ') || undefined;
-
   return {
     ...chunk,
     chunk_type: 'composite',
@@ -942,16 +901,16 @@ export function updateTableInChunk(
     is_atomic_table: false,
     tables: currentTables,
     raw_html: updatedRawHtml,
-    table_caption: aggregatedCaption,
-    table_footnote: aggregatedFootnote,
+    table_caption: undefined,
+    table_footnote: undefined,
     text: updatedText,
     is_edited: true,
     metadata: {
       ...(chunk.metadata || {}),
       type: 'composite',
       tables: currentTables,
-      table_caption: aggregatedCaption,
-      table_footnote: aggregatedFootnote,
+      table_caption: undefined,
+      table_footnote: undefined,
     },
   };
 }

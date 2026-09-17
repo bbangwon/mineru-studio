@@ -1101,8 +1101,10 @@ class TestHierarchicalChunker(unittest.TestCase):
         rec = json.loads(jsonl.strip().split("\n")[0])
         self.assertIn("tables", rec)
         self.assertEqual(len(rec["tables"]), 2)
-        self.assertIn("상병코드표", rec["table_caption"])
-        self.assertIn("해당직종표", rec["table_caption"])
+        self.assertIn("상병코드표", rec["tables"][0]["caption"])
+        self.assertIn("해당직종표", rec["tables"][1]["caption"])
+        self.assertNotIn("table_caption", rec)
+        self.assertNotIn("table_footnote", rec)
 
     def test_composite_table_individual_caption_footnote_editing(self):
         """복합 청크 내 개별 표의 caption, footnote 수정 후 JSONL 내보내기 시 반영 검증"""
@@ -1142,8 +1144,8 @@ class TestHierarchicalChunker(unittest.TestCase):
         child["tables"][0]["footnote"] = "※ 2026년 개정 기준"
         child["tables"][1]["caption"] = "[표 2] 직종별 가중치 목록"
         child["tables"][1]["footnote"] = "※ 특수직종 제외"
-        child["table_caption"] = " / ".join(t["caption"] for t in child["tables"])
-        child["table_footnote"] = " / ".join(t["footnote"] for t in child["tables"])
+        child["table_caption"] = None
+        child["table_footnote"] = None
 
         jsonl = chunker.export_to_jsonl(sample_etl)
         rec = json.loads(jsonl.strip())
@@ -1155,10 +1157,11 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertEqual(rec["tables"][0]["footnote"], "※ 2026년 개정 기준")
         self.assertEqual(rec["tables"][1]["caption"], "[표 2] 직종별 가중치 목록")
         self.assertEqual(rec["tables"][1]["footnote"], "※ 특수직종 제외")
-        self.assertIn("[표 1] 신규 산재 기준표", rec["table_caption"])
-        self.assertIn("[표 2] 직종별 가중치 목록", rec["table_caption"])
-        self.assertIn("2026년 개정 기준", rec["table_footnote"])
-        self.assertIn("특수직종 제외", rec["table_footnote"])
+        # 방안 A: 복합 청크는 최상위/metadata에 table_caption 및 table_footnote가 존재하지 않아야 함
+        self.assertNotIn("table_caption", rec)
+        self.assertNotIn("table_footnote", rec)
+        self.assertNotIn("table_caption", rec.get("metadata", {}))
+        self.assertNotIn("table_footnote", rec.get("metadata", {}))
 
     def test_reconstruct_legacy_composite_raw_html_order(self):
         """구버전 데이터에서 raw_html에 표만 있고 문단이 누락된 경우 문단+표+문단+표 순서대로 복원되는지 검증"""

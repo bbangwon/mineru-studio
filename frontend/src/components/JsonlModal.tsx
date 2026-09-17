@@ -65,10 +65,15 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
       page_end: endPage,
       pages: pages,
       is_atomic_table: isAtomicTable,
-      ...(chunk.table_caption ? { table_caption: chunk.table_caption } : {}),
-      ...(chunk.table_footnote ? { table_footnote: chunk.table_footnote } : {}),
+      ...(isAtomicTable && chunk.table_caption ? { table_caption: chunk.table_caption } : {}),
+      ...(isAtomicTable && chunk.table_footnote ? { table_footnote: chunk.table_footnote } : {}),
     },
   };
+
+  if (!isAtomicTable && record.metadata) {
+    delete record.metadata.table_caption;
+    delete record.metadata.table_footnote;
+  }
 
   const chunkTables = chunk.tables || chunk.metadata?.tables || [];
   const hasTables = isAtomicTable || chunkTables.length > 0;
@@ -78,8 +83,11 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
     record.metadata.tables = chunkTables;
   }
 
-  if (hasTables) {
-    if (chunk.raw_html) record.raw_html = chunk.raw_html;
+  if (hasTables && chunk.raw_html) {
+    record.raw_html = chunk.raw_html;
+  }
+
+  if (isAtomicTable) {
     if (chunk.table_caption) record.table_caption = chunk.table_caption;
     if (chunk.table_footnote) record.table_footnote = chunk.table_footnote;
   }

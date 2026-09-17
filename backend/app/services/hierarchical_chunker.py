@@ -1125,8 +1125,8 @@ class HierarchicalChunker:
                     meta["table_count"] = len(current_tables)
                     meta["tables"] = list(current_tables)
                     meta["is_atomic_table"] = False
-                    tbl_caption = " / ".join(filter(None, [t.get("caption", "") for t in current_tables])) or None
-                    tbl_footnote = " / ".join(filter(None, [t.get("footnote", "") for t in current_tables])) or None
+                    tbl_caption = None
+                    tbl_footnote = None
             else:
                 combined_raw_html = ""
                 chunk_type = current_chunk_type
@@ -1513,11 +1513,14 @@ class HierarchicalChunker:
                 meta["tables"] = chunk_tables
                 meta["has_tables"] = True
 
-            if is_table or chunk_tables:
+            if is_table:
                 if chunk.get("table_caption"):
                     meta["table_caption"] = chunk.get("table_caption")
                 if chunk.get("table_footnote"):
                     meta["table_footnote"] = chunk.get("table_footnote")
+            else:
+                meta.pop("table_caption", None)
+                meta.pop("table_footnote", None)
 
             parent_text = parent.get("text", "")
             if breadcrumbs_str and not parent_text.startswith(f"[{breadcrumbs_str}]"):
@@ -1550,10 +1553,14 @@ class HierarchicalChunker:
             if is_table or chunk_tables:
                 if chunk.get("raw_html"):
                     record["raw_html"] = chunk.get("raw_html", "")
+            if is_table:
                 if chunk.get("table_caption"):
                     record["table_caption"] = chunk.get("table_caption", "")
                 if chunk.get("table_footnote"):
                     record["table_footnote"] = chunk.get("table_footnote", "")
+            else:
+                record.pop("table_caption", None)
+                record.pop("table_footnote", None)
 
             lines.append(json.dumps(record, ensure_ascii=False))
 

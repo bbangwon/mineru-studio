@@ -985,30 +985,21 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       [field]: value,
     };
 
-    // Aggregate captions and footnotes for chunk-level search & display
-    const aggregatedCaption = currentTables
-      .map((t) => t.caption?.trim())
-      .filter(Boolean)
-      .join(' / ') || undefined;
-
-    const aggregatedFootnote = currentTables
-      .map((t) => t.footnote?.trim())
-      .filter(Boolean)
-      .join(' / ') || undefined;
-
     const updated: ChildChunk = {
       ...activeChunk,
       tables: currentTables,
-      table_caption: aggregatedCaption,
-      table_footnote: aggregatedFootnote,
+      table_caption: undefined,
+      table_footnote: undefined,
       is_edited: true,
       metadata: {
         ...(activeChunk.metadata || {}),
         tables: currentTables,
-        ...(aggregatedCaption ? { table_caption: aggregatedCaption } : {}),
-        ...(aggregatedFootnote ? { table_footnote: aggregatedFootnote } : {}),
       },
     };
+    if (updated.metadata) {
+      delete updated.metadata.table_caption;
+      delete updated.metadata.table_footnote;
+    }
 
     onUpdateChunk(updated, true);
   };

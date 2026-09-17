@@ -41,6 +41,7 @@ import {
   formatDisplayChunkId,
 } from './utils/idUtils';
 import { syncChunkPageMetadata, extractCustomMetadata, applyBulkCustomMetadata } from './utils/pageUtils';
+import { deriveChunkTypeAndTables, mergeChunkAssets } from './utils/tableChunkUtils';
 import type {
   PdfItem,
   GlobalStats,
@@ -1138,17 +1139,28 @@ export function App() {
     const targetParentId = target.parent_chunk_id || target.parent_id || '';
     const targetSectionId = target.section_id || '';
 
+    // 지능형 청크 타입 및 표 자산 분배 (표 파편화 방지 및 유령 표 메타데이터 제거)
+    const p1Asset = deriveChunkTypeAndTables(part1Text, target);
+    const p2Asset = deriveChunkTypeAndTables(part2Text, target);
+
     const chunk1: ChildChunk = {
       ...target,
       chunk_id: id1,
       parent_chunk_id: targetParentId,
       parent_id: targetParentId,
       section_id: targetSectionId,
+      chunk_type: p1Asset.chunk_type,
       text: part1Text,
       token_estimate: words1,
       page_number: p1,
       page_end: undefined,
       metadata: chunk1Meta,
+      raw_html: p1Asset.raw_html,
+      tables: p1Asset.tables,
+      table_caption: p1Asset.table_caption,
+      table_footnote: p1Asset.table_footnote,
+      is_table: p1Asset.is_table,
+      is_atomic_table: p1Asset.is_atomic_table,
       is_edited: true,
     };
 
@@ -1158,11 +1170,18 @@ export function App() {
       parent_chunk_id: targetParentId,
       parent_id: targetParentId,
       section_id: targetSectionId,
+      chunk_type: p2Asset.chunk_type,
       text: part2Text,
       token_estimate: words2,
       page_number: p2,
       page_end: undefined,
       metadata: chunk2Meta,
+      raw_html: p2Asset.raw_html,
+      tables: p2Asset.tables,
+      table_caption: p2Asset.table_caption,
+      table_footnote: p2Asset.table_footnote,
+      is_table: p2Asset.is_table,
+      is_atomic_table: p2Asset.is_atomic_table,
       is_edited: true,
     };
 
@@ -1232,6 +1251,7 @@ export function App() {
       total_child_chunks: updatedChunks.length,
       paragraph_chunks: updatedChunks.filter((c) => c.chunk_type === 'paragraph').length,
       table_chunks: updatedChunks.filter((c) => c.chunk_type === 'table').length,
+      composite_chunks: updatedChunks.filter((c) => c.chunk_type === 'composite').length,
       article_chunks: updatedChunks.filter((c) => c.chunk_type === 'article' || c.chunk_type === 'article_clause').length,
       total_words: totalWords,
     };
@@ -1298,17 +1318,27 @@ export function App() {
       finalEnd
     );
 
+    // 지능형 병합: 문단+표 병합 시 composite 자동 승격 및 표 원형(HTML), 캡션, 메타데이터 통합
+    const mergedAssets = mergeChunkAssets(selectedChunks);
+
     const mergedChunk: ChildChunk = {
       ...firstChunk,
       chunk_id: mergedId,
       parent_chunk_id: primaryParentId,
       parent_id: primaryParentId,
       section_id: primarySectionId,
+      chunk_type: mergedAssets.chunk_type,
       text: mergedText,
       token_estimate: words,
       page_number: minPage,
       page_end: finalEnd,
       metadata: mergedMeta,
+      raw_html: mergedAssets.raw_html,
+      tables: mergedAssets.tables,
+      table_caption: mergedAssets.table_caption,
+      table_footnote: mergedAssets.table_footnote,
+      is_table: mergedAssets.is_table,
+      is_atomic_table: mergedAssets.is_atomic_table,
       is_edited: true,
       is_ignored: false,
     };
@@ -1405,6 +1435,7 @@ export function App() {
       total_child_chunks: updatedChunks.length,
       paragraph_chunks: updatedChunks.filter((c) => c.chunk_type === 'paragraph').length,
       table_chunks: updatedChunks.filter((c) => c.chunk_type === 'table').length,
+      composite_chunks: updatedChunks.filter((c) => c.chunk_type === 'composite').length,
       article_chunks: updatedChunks.filter((c) => c.chunk_type === 'article' || c.chunk_type === 'article_clause').length,
       total_words: totalWords,
     };

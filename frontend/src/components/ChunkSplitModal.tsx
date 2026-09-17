@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Scissors,
   X,
@@ -8,10 +8,21 @@ import {
   Sparkles,
   Split,
   RotateCcw,
+  Table2,
+  AlignLeft,
+  Layers,
+  ShieldCheck,
 } from 'lucide-react';
 import type { ChildChunk } from '../types';
 import { estimateKoreanTokens } from '../utils/idUtils';
 import { CopyableBadge } from './CopyableBadge';
+import {
+  hasMarkdownTable,
+  isInsideTable,
+  findNearestTableBoundary,
+  findBlockSeparationIndex,
+  deriveChunkTypeAndTables,
+} from '../utils/tableChunkUtils';
 
 interface ChunkSplitModalProps {
   chunk: ChildChunk | null;
@@ -40,7 +51,19 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
     return estimateKoreanTokens(text);
   };
 
-  // Preset: Split at delimiter closest to text midpoint
+  const fullOriginalText = chunk?.text || '';
+  const hasTable = useMemo(() => {
+    if (!chunk) return false;
+    return (
+      chunk.chunk_type === 'composite' ||
+      chunk.chunk_type === 'table' ||
+      Boolean(chunk.is_table) ||
+      (chunk.tables && chunk.tables.length > 0) ||
+      hasMarkdownTable(fullOriginalText)
+    );
+  }, [chunk, fullOriginalText]);
+
+  // Preset: Split at delimiter closest to text midpoint (with Table Guard)
   const splitAtDelimiter = (fullText: string, delimiter: string) => {
     if (!fullText) return;
     const parts = fullText.split(delimiter);
@@ -60,13 +83,21 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
       }
     }
 
-    const p1 = parts.slice(0, bestIndex).join(delimiter).trim();
-    const p2 = parts.slice(bestIndex).join(delimiter).trim();
+    let p1 = parts.slice(0, bestIndex).join(delimiter).trim();
+    let p2 = parts.slice(bestIndex).join(delimiter).trim();
+
+    // Table Guard: 만약 분할 지점이 표 내부라면 안전 경계로 스냅
+    if (hasTable && isInsideTable(p1.length, fullText)) {
+      const safeIndex = findNearestTableBoundary(p1.length, fullText);
+      p1 = fullText.slice(0, safeIndex).trim();
+      p2 = fullText.slice(safeIndex).trim();
+    }
+
     setPart1(p1);
     setPart2(p2);
   };
 
-  // Preset: 50:50 character split at word boundary
+  // Preset: 50:50 character split at word boundary (with Table Guard)
   const splitAtMidpoint = (fullText: string) => {
     if (!fullText) return;
     const mid = Math.floor(fullText.length / 2);
@@ -82,8 +113,25 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
       splitIndex = rightSpace;
     }
 
+    // Table Guard: 만약 50:50 지점이 표 내부라면 표 경계로 스냅
+    if (hasTable && isInsideTable(splitIndex, fullText)) {
+      splitIndex = findNearestTableBoundary(splitIndex, fullText);
+    }
+
     setPart1(fullText.slice(0, splitIndex).trim());
     setPart2(fullText.slice(splitIndex).trim());
+  };
+
+  // Preset: 문단 ↔ 표 블록 단위 분리 (복합 청크 전용)
+  const splitAtBlockBoundary = (fullText: string) => {
+    if (!fullText) return;
+    const splitIndex = findBlockSeparationIndex(fullText);
+    if (splitIndex !== null && splitIndex > 0 && splitIndex < fullText.length) {
+      setPart1(fullText.slice(0, splitIndex).trim());
+      setPart2(fullText.slice(splitIndex).trim());
+    } else {
+      splitAtDelimiter(fullText, '\n\n');
+    }
   };
 
   // Initialize split values whenever chunk opens
@@ -92,6 +140,16 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
     const fullText = chunk.text || '';
     setPage1(chunk.page_number || 1);
     setPage2(chunk.page_end || chunk.page_number || 1);
+
+    // 복합 청크거나 표가 포함된 경우 블록 단위 분리를 우선 시도
+    if (hasMarkdownTable(fullText) || chunk.chunk_type === 'composite') {
+      const blockIdx = findBlockSeparationIndex(fullText);
+      if (blockIdx !== null && blockIdx > 0 && blockIdx < fullText.length) {
+        setPart1(fullText.slice(0, blockIdx).trim());
+        setPart2(fullText.slice(blockIdx).trim());
+        return;
+      }
+    }
 
     if (fullText.includes('\n\n')) {
       splitAtDelimiter(fullText, '\n\n');
@@ -113,6 +171,27 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
   const isPart1Valid = part1.trim().length > 0;
   const isPart2Valid = part2.trim().length > 0;
   const canSplit = isPart1Valid && isPart2Valid;
+
+  // 실시간 표 침범(절단) 감지:
+  // part1 끝자락 또는 part2 시작부에서 마크다운 표가 불완전하게 잘렸는지 검사
+  const isTableCutting = useMemo(() => {
+    if (!hasTable) return false;
+    // fullOriginalText 상에서 part1과 일치하는 오프셋 찾기
+    const cutPos = part1.length;
+    return isInsideTable(cutPos, fullOriginalText);
+  }, [hasTable, part1, fullOriginalText]);
+
+  // 안전 스냅 핸들러
+  const handleSnapToTableBoundary = () => {
+    if (!fullOriginalText) return;
+    const safeIndex = findNearestTableBoundary(part1.length, fullOriginalText);
+    setPart1(fullOriginalText.slice(0, safeIndex).trim());
+    setPart2(fullOriginalText.slice(safeIndex).trim());
+  };
+
+  // 실시간 예상 청크 타입 파생
+  const p1Asset = useMemo(() => deriveChunkTypeAndTables(part1, chunk), [part1, chunk]);
+  const p2Asset = useMemo(() => deriveChunkTypeAndTables(part2, chunk), [part2, chunk]);
 
   const chunkId1 = chunk.chunk_id;
   const chunkId2 = `${chunk.chunk_id} + 신규 번호`;
@@ -142,6 +221,17 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
                   titlePrefix="전체 청크 ID"
                   className="text-xs font-bold px-2 py-0.5 bg-slate-200 text-slate-700 rounded-md border border-slate-300 shrink-0"
                 />
+                {chunk.chunk_type === 'composite' ? (
+                  <span className="text-[11px] font-bold px-2 py-0.5 bg-purple-100 text-purple-800 rounded-md flex items-center gap-1">
+                    <Layers className="w-3 h-3 text-purple-600" />
+                    복합 청크 (문단+표)
+                  </span>
+                ) : chunk.chunk_type === 'table' ? (
+                  <span className="text-[11px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md flex items-center gap-1">
+                    <Table2 className="w-3 h-3 text-emerald-600" />
+                    표 청크
+                  </span>
+                ) : null}
                 <span className="text-xs text-slate-400 font-mono">
                   {chunk.page_end && chunk.page_end > chunk.page_number
                     ? `p.${chunk.page_number}~p.${chunk.page_end}`
@@ -166,9 +256,23 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
 
         {/* Preset Split Toolbar */}
         <div className="px-5 py-3 bg-indigo-50/40 border-b border-indigo-100/70 flex flex-wrap items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-1.5 text-xs text-slate-700">
+          <div className="flex items-center gap-1.5 text-xs text-slate-700 flex-wrap">
             <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
             <span className="font-semibold text-slate-800">자동 분할 프리셋:</span>
+
+            {/* 표 또는 복합 청크인 경우: 블록 분리 프리셋 최우선 노출 */}
+            {hasTable && (
+              <button
+                type="button"
+                onClick={() => splitAtBlockBoundary(fullOriginalText)}
+                className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-md shadow-2xs text-xs transition flex items-center gap-1 cursor-pointer"
+                title="문단과 표 블록 경계로 안전하게 분할"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>문단 ↔ 표 블록 분리</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => splitAtDelimiter(chunk.text || '', '\n\n')}
@@ -202,11 +306,12 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
           <button
             type="button"
             onClick={() => {
-              const fullText = chunk.text || '';
-              if (fullText.includes('\n\n')) {
-                splitAtDelimiter(fullText, '\n\n');
+              if (hasTable) {
+                splitAtBlockBoundary(fullOriginalText);
+              } else if (fullOriginalText.includes('\n\n')) {
+                splitAtDelimiter(fullOriginalText, '\n\n');
               } else {
-                splitAtMidpoint(fullText);
+                splitAtMidpoint(fullOriginalText);
               }
             }}
             className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
@@ -216,6 +321,27 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
             <span>초기화</span>
           </button>
         </div>
+
+        {/* Table Guard Alert Banner */}
+        {isTableCutting && (
+          <div className="px-5 py-2.5 bg-amber-50 border-b border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-3 shrink-0 animate-in fade-in duration-150">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <strong>표 내부 절단 감지:</strong> 표의 행이나 열 중간이 절단되었습니다. 이대로 분할하면 표 구조가 깨져 RAG 임베딩 및 검색 품질이 저하될 수 있습니다.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleSnapToTableBoundary}
+              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-md shrink-0 shadow-2xs transition flex items-center gap-1 cursor-pointer"
+              title="가장 가까운 표 시작 또는 끝 경계로 이동"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>표 경계로 안전 스냅</span>
+            </button>
+          </div>
+        )}
 
         {/* Split Content Comparison: 2 Columns */}
         <div className="flex-1 p-5 overflow-y-auto space-y-4">
@@ -241,12 +367,35 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
             {/* Split Part 1 */}
             <div className="flex flex-col border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
               <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
                   <h4 className="text-xs font-bold text-slate-800">청크 1</h4>
                   <span className="font-mono text-[10px] font-semibold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
                     {chunkId1}
                   </span>
+
+                  {/* 실시간 타입 뱃지 */}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5 ${
+                    p1Asset.chunk_type === 'table'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : p1Asset.chunk_type === 'composite'
+                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                      : 'bg-slate-200 text-slate-700 border border-slate-300'
+                  }`}>
+                    {p1Asset.chunk_type === 'table' ? (
+                      <Table2 className="w-2.5 h-2.5" />
+                    ) : p1Asset.chunk_type === 'composite' ? (
+                      <Layers className="w-2.5 h-2.5" />
+                    ) : (
+                      <AlignLeft className="w-2.5 h-2.5" />
+                    )}
+                    {p1Asset.chunk_type === 'table'
+                      ? '표 (table)'
+                      : p1Asset.chunk_type === 'composite'
+                      ? '복합 (composite)'
+                      : '문단 (paragraph)'}
+                  </span>
+
                   <div className="flex items-center gap-1 ml-1">
                     <span className="text-[11px] text-slate-500 font-semibold">Page</span>
                     <input
@@ -295,12 +444,35 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
             {/* Split Part 2 */}
             <div className="flex flex-col border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
               <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
                   <h4 className="text-xs font-bold text-slate-800">청크 2</h4>
                   <span className="font-mono text-[10px] font-semibold bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded">
                     {chunkId2}
                   </span>
+
+                  {/* 실시간 타입 뱃지 */}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-0.5 ${
+                    p2Asset.chunk_type === 'table'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : p2Asset.chunk_type === 'composite'
+                      ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                      : 'bg-slate-200 text-slate-700 border border-slate-300'
+                  }`}>
+                    {p2Asset.chunk_type === 'table' ? (
+                      <Table2 className="w-2.5 h-2.5" />
+                    ) : p2Asset.chunk_type === 'composite' ? (
+                      <Layers className="w-2.5 h-2.5" />
+                    ) : (
+                      <AlignLeft className="w-2.5 h-2.5" />
+                    )}
+                    {p2Asset.chunk_type === 'table'
+                      ? '표 (table)'
+                      : p2Asset.chunk_type === 'composite'
+                      ? '복합 (composite)'
+                      : '문단 (paragraph)'}
+                  </span>
+
                   <div className="flex items-center gap-1 ml-1">
                     <span className="text-[11px] text-slate-500 font-semibold">Page</span>
                     <input
@@ -359,7 +531,7 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
         <div className="p-4 border-t border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">
           <div className="text-xs text-slate-500 flex items-center gap-1.5">
             <Info className="w-4 h-4 text-indigo-500 shrink-0" />
-            <span>부모 섹션의 자식 청크 목록(`child_chunk_ids`)이 두 청크로 자동 교체됩니다.</span>
+            <span>부모 섹션의 자식 청크 목록(`child_chunk_ids`)이 두 청크로 자동 교체되며, 표 자산이 안전하게 재할당됩니다.</span>
           </div>
 
           <div className="flex items-center gap-2">

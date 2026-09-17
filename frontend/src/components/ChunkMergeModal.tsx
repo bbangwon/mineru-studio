@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { ChildChunk, ParentSection } from '../types';
 import { estimateKoreanTokens } from '../utils/idUtils';
+import { mergeChunkAssets } from '../utils/tableChunkUtils';
 import { CopyableBadge } from './CopyableBadge';
 
 interface ChunkMergeModalProps {
@@ -89,6 +90,9 @@ export const ChunkMergeModal: React.FC<ChunkMergeModalProps> = ({
 
   const primaryParent = firstChunk ? parentMap.get(firstChunk.section_id || firstChunk.parent_id || '') : null;
 
+  // 병합 후 예상 타입 및 표 자산 계산
+  const expectedAssets = useMemo(() => mergeChunkAssets(selectedChunks), [selectedChunks]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!mergedText.trim()) return;
@@ -120,10 +124,23 @@ export const ChunkMergeModal: React.FC<ChunkMergeModalProps> = ({
                 <span className="font-mono text-xs font-bold px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md">
                   {selectedChunks.length}개 청크 선택됨
                 </span>
+                {expectedAssets.chunk_type === 'composite' ? (
+                  <span className="text-xs font-bold px-2 py-0.5 bg-purple-100 text-purple-800 rounded-md flex items-center gap-1 border border-purple-200">
+                    <Layers className="w-3 h-3 text-purple-600" />
+                    병합 후: 복합 청크 (문단+표 결합)
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold px-2 py-0.5 bg-slate-200 text-slate-700 rounded-md flex items-center gap-1">
+                    <AlignLeft className="w-3 h-3 text-slate-500" />
+                    병합 후: 일반 문단
+                  </span>
+                )}
                 <span className="text-xs text-slate-400 font-mono">{pageDisplay}</span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                선택한 인접 청크들을 하나의 청크로 결합하고 텍스트 및 토큰 수를 합산합니다.
+                {expectedAssets.chunk_type === 'composite'
+                  ? '문단과 표가 결합되어 복합 청크로 승격되며, 표 원형 HTML과 메타데이터가 보존됩니다.'
+                  : '선택한 인접 청크들을 하나의 청크로 결합하고 텍스트 및 토큰 수를 합산합니다.'}
               </p>
             </div>
           </div>

@@ -1311,25 +1311,37 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
   // AI Refinement State (Studio Focus Editor)
   const [isStudioRefining, setIsStudioRefining] = useState(false);
-  const [studioRefineError, setStudioRefineError] = useState<string | null>(null);
-  const [studioDiffData, setStudioDiffData] = useState<LLMRefineResponse | null>(null);
-  const [isStudioDiffOpen, setIsStudioDiffOpen] = useState(false);
+  const [refineError, setRefineError] = useState<{ chunkId: string; message: string } | null>(null);
+  // 청크 ID별 AI 교정 결과 맵 (특정 청크 교정 후 다른 미교정 청크 선택 시 Diff 보기 버튼이 잘못 노출되는 현상 방지)
+  const [studioDiffDataByChunk, setStudioDiffDataByChunk] = useState<Record<string, LLMRefineResponse>>({});
+  const [openDiffChunkId, setOpenDiffChunkId] = useState<string | null>(null);
+
+  // 현재 활성 청크의 교정 Diff 데이터 (교정 이력이 있는 경우에만 유효)
+  const studioDiffData = activeChunk ? studioDiffDataByChunk[activeChunk.chunk_id] || null : null;
+  // 활성 청크의 Diff 모달 열림 여부
+  const isStudioDiffOpen = Boolean(activeChunk && openDiffChunkId === activeChunk.chunk_id && studioDiffData);
+  // 활성 청크의 에러 메시지
+  const studioRefineError = activeChunk && refineError?.chunkId === activeChunk.chunk_id ? refineError.message : null;
 
   const handleStudioRunAiRefine = async () => {
     if (!activeChunk) return;
+    const currentChunkId = activeChunk.chunk_id;
     const targetText = editorTab === 'raw_html' ? (activeChunk.raw_html || '') : (activeChunk.text || '');
     if (!targetText.trim()) {
-      setStudioRefineError('교정할 본문 텍스트가 비어 있습니다.');
+      setRefineError({ chunkId: currentChunkId, message: '교정할 본문 텍스트가 비어 있습니다.' });
       return;
     }
     setIsStudioRefining(true);
-    setStudioRefineError(null);
+    setRefineError(null);
     try {
       const res = await refineChunkText(targetText);
-      setStudioDiffData(res);
-      setIsStudioDiffOpen(true);
+      setStudioDiffDataByChunk((prev) => ({
+        ...prev,
+        [currentChunkId]: res,
+      }));
+      setOpenDiffChunkId(currentChunkId);
     } catch (err: any) {
-      setStudioRefineError(err.message || 'AI 교정 중 오류가 발생했습니다.');
+      setRefineError({ chunkId: currentChunkId, message: err.message || 'AI 교정 중 오류가 발생했습니다.' });
     } finally {
       setIsStudioRefining(false);
     }
@@ -3595,7 +3607,9 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                       {studioDiffData && (
                         <button
                           type="button"
-                          onClick={() => setIsStudioDiffOpen(true)}
+                          onClick={() => {
+                            if (activeChunk) setOpenDiffChunkId(activeChunk.chunk_id);
+                          }}
                           className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition"
                           title="AI 교정 결과 Diff 비교 창 열기"
                         >
@@ -3611,7 +3625,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                       <span>{studioRefineError}</span>
                       <button
                         type="button"
-                        onClick={() => setStudioRefineError(null)}
+                        onClick={() => setRefineError(null)}
                         className="text-rose-400 hover:text-rose-600 cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -4157,7 +4171,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       <RefineDiffModal
         isOpen={isStudioDiffOpen}
         diffData={studioDiffData}
-        onClose={() => setIsStudioDiffOpen(false)}
+        onClose={() => setOpenDiffChunkId(null)}
         onApply={(refined) => {
           if (editorTab === 'raw_html') {
             handleFieldChange('raw_html', refined);

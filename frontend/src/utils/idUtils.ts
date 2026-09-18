@@ -633,12 +633,7 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
     let pBcs = parent.breadcrumbs;
     let pText = parent.text;
     if (sec?.breadcrumbs) {
-      const secBcs = sec.breadcrumbs;
-      if (parent.title && parent.title !== sec.title && !secBcs.includes(parent.title)) {
-        pBcs = [...secBcs, parent.title];
-      } else {
-        pBcs = [...secBcs];
-      }
+      pBcs = [...sec.breadcrumbs];
       if (pText && pText.startsWith('[')) {
         const pBcStr = pBcs.join(' > ');
         pText = pText.replace(/^\[([^\]]+?)(\s*\(계속\))?\]/, (_match, _old, cont) => `[${pBcStr}${cont || ''}]`);
@@ -660,13 +655,7 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
     const newSid = sectionIdMap[oldSid] || oldSid;
     const sec = sectionObjMap.get(newSid);
 
-    let childBcs: string[];
-    if (sec?.breadcrumbs) {
-      const suffix = getChildSubheadingSuffix(child, undefined, sec.title);
-      childBcs = [...sec.breadcrumbs, ...suffix];
-    } else {
-      childBcs = child.breadcrumbs;
-    }
+    const childBcs = sec?.breadcrumbs ? [...sec.breadcrumbs] : child.breadcrumbs;
 
     return {
       ...child,

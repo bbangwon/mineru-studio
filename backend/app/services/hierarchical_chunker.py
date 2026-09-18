@@ -1006,7 +1006,7 @@ class HierarchicalChunker:
                         "article_display": art_display,
                         "text": clean_text,
                         "page": page_idx,
-                        "breadcrumbs": current_breadcrumbs + [art_display],
+                        "breadcrumbs": current_breadcrumbs,
                     })
                 else:
                     section_items.setdefault(current_sec_id, []).append({
@@ -1371,7 +1371,7 @@ class HierarchicalChunker:
             if i_type == "heading_h3":
                 flush_child_chunk()
                 title_text = item.get("title", "").strip()
-                current_breadcrumbs = breadcrumbs + [title_text] if title_text else list(breadcrumbs)
+                current_breadcrumbs = list(breadcrumbs)
                 current_chunk_type = "paragraph"
                 current_meta = {}
                 current_heading_title = title_text
@@ -1456,24 +1456,21 @@ class HierarchicalChunker:
             body_text = "\n\n".join(combined_texts).strip()
 
             first_c = current_children[0]
-            # 일반 문서에서 서로 다른 소제목(H3)이 묶였는지 검사
+            sec_bcs = first_c.get("breadcrumbs") or [sec_title]
+            bc_str = " > ".join(sec_bcs)
+
             distinct_headings = []
             for c in current_children:
                 art = c.get("metadata", {}).get("article_display")
-                c_bc = c.get("breadcrumbs", [])
-                h_name = art or (c_bc[-1] if c_bc else sec_title)
+                h_match = re.match(r"^###\s+([^\n]+)", c.get("text", "")) if not art else None
+                h_text = re.sub(r"\s*\(계속\)$", "", h_match.group(1).strip()) if h_match else None
+                h_name = art or h_text or sec_title
                 if h_name and h_name not in distinct_headings:
                     distinct_headings.append(h_name)
 
             if len(distinct_headings) > 1 and not first_c.get("metadata", {}).get("article_display"):
-                # [일반 문서] 여러 H3 소제목이 하나의 Parent에 통합된 경우
-                # 최상단 헤더는 공통 상위인 Section 레벨까지의 브레드크럼 사용
-                sec_bc = first_c.get("breadcrumbs", [])[:-1] or [sec_title]
-                bc_str = " > ".join(sec_bc)
                 title_val = sec_title
             else:
-                # 단일 소제목 또는 법률 조문
-                bc_str = " > ".join(first_c.get("breadcrumbs", [sec_title]))
                 title_val = current_parent_title or first_c.get("metadata", {}).get("article_display") or sec_title
 
             if current_parent_title and current_parent_title.endswith(" (계속)"):
@@ -1489,6 +1486,7 @@ class HierarchicalChunker:
                 "id": pid,  # 호환성 별칭
                 "section_id": sec_id,
                 "title": title_val,
+                "breadcrumbs": list(sec_bcs),
                 "text": parent_full_text,
                 "token_estimate": p_tokens,
                 "child_chunk_ids": [c["chunk_id"] for c in current_children],
@@ -1520,10 +1518,11 @@ class HierarchicalChunker:
                 flush_parent()
                 continue
 
-            # 2. 제목 식별: 법률 조문(article_display) 또는 일반 문서 Heading(breadcrumbs[-1])
+            # 2. 제목 식별: 법률 조문(article_display) 또는 일반 문서 Heading(텍스트 ### 헤딩)
             art_disp = child.get("metadata", {}).get("article_display")
-            child_bc = child.get("breadcrumbs", [])
-            target_heading = art_disp or (child_bc[-1] if child_bc else sec_title)
+            h_match = re.match(r"^###\s+([^\n]+)", child.get("text", "")) if not art_disp else None
+            h_title = re.sub(r"\s*\(계속\)$", "", h_match.group(1).strip()) if h_match else None
+            target_heading = art_disp or h_title or sec_title
 
             # 제목 변경 감지 시 독립 Parent 생성 (단, '(계속)' 접미사가 붙은 현재 제목의 베이스 타이틀과 비교)
             base_parent_title = current_parent_title.replace(" (계속)", "") if current_parent_title else None
@@ -2042,12 +2041,7 @@ class HierarchicalChunker:
 
             sec = section_obj_map.get(p.get("section_id"))
             if sec and sec.get("breadcrumbs"):
-                p_title = p.get("title")
-                sec_bcs = list(sec["breadcrumbs"])
-                if p_title and p_title != sec.get("title") and p_title not in sec_bcs:
-                    p["breadcrumbs"] = sec_bcs + [p_title]
-                else:
-                    p["breadcrumbs"] = sec_bcs
+                p["breadcrumbs"] = list(sec["breadcrumbs"])
 
                 p_text = p.get("text", "")
                 if p_text and p_text.startswith("["):
@@ -2070,31 +2064,7 @@ class HierarchicalChunker:
 
             sec = section_obj_map.get(c.get("section_id"))
             if sec and sec.get("breadcrumbs"):
-                sec_bcs = list(sec["breadcrumbs"])
-                sec_title = sec.get("title", "")
-                art_display = c.get("metadata", {}).get("article_display") or (
-                    f"{c.get('metadata', {}).get('article_no')}({c.get('metadata', {}).get('article_title')})"
-                    if c.get("metadata", {}).get("article_title")
-                    else c.get("metadata", {}).get("article_no")
-                )
-                h_suffix = []
-                if art_display:
-                    h_suffix = [art_display]
-                else:
-                    c_text = c.get("text", "")
-                    h_match = re.match(r"^###\s+([^\n]+)", c_text)
-                    if h_match:
-                        h_title = h_match.group(1).strip()
-                        if h_title.endswith(" (계속)"):
-                            h_title = h_title[:-7].strip()
-                        if h_title and h_title != sec_title and h_title not in sec_bcs:
-                            h_suffix = [h_title]
-                    elif c.get("breadcrumbs"):
-                        old_bc = c["breadcrumbs"]
-                        last_item = old_bc[-1] if old_bc else None
-                        if last_item and last_item != sec_title and last_item not in sec_bcs:
-                            h_suffix = [last_item]
-                c["breadcrumbs"] = sec_bcs + h_suffix
+                c["breadcrumbs"] = list(sec["breadcrumbs"])
 
         res["sections"] = new_sections
         res["parent_sections"] = new_sections

@@ -39,7 +39,6 @@ import {
   syncHierarchyOrder,
   estimateKoreanTokens,
   formatDisplayChunkId,
-  getChildSubheadingSuffix,
 } from './utils/idUtils';
 import { syncChunkPageMetadata, extractCustomMetadata, applyBulkCustomMetadata } from './utils/pageUtils';
 import { deriveChunkTypeAndTables, mergeChunkAssets } from './utils/tableChunkUtils';
@@ -1593,12 +1592,23 @@ export function App() {
 
     const pid = targetParent.parent_chunk_id || targetParent.id || '';
 
-    // 1) Update target parent chunk's section_id
+    const newSecBcs = newSection.breadcrumbs && newSection.breadcrumbs.length > 0
+      ? newSection.breadcrumbs
+      : [newSection.title];
+
+    // 1) Update target parent chunk's section_id and breadcrumbs
     const updatedParents = parentChunks.map((p) => {
       if ((p.parent_chunk_id || p.id) === pid) {
+        let pText = p.text;
+        if (pText && pText.startsWith('[')) {
+          const pBcStr = newSecBcs.join(' > ');
+          pText = pText.replace(/^\[([^\]]+?)(\s*\(계속\))?\]/, (_match, _old, cont) => `[${pBcStr}${cont || ''}]`);
+        }
         return {
           ...p,
           section_id: newSectionId,
+          breadcrumbs: [...newSecBcs],
+          text: pText,
           is_edited: true,
         };
       }
@@ -1614,20 +1624,10 @@ export function App() {
         c.parent_id === pid;
 
       if (belongs) {
-        const suffix = getChildSubheadingSuffix(c, undefined, newSection.title);
-        let newBreadcrumbs: string[];
-        if (suffix.length > 0) {
-          newBreadcrumbs = [...(newSection.breadcrumbs || [newSection.title]), ...suffix];
-        } else if (targetParent.title && targetParent.title !== newSection.title && !(newSection.breadcrumbs || []).includes(targetParent.title)) {
-          newBreadcrumbs = [...(newSection.breadcrumbs || [newSection.title]), targetParent.title];
-        } else {
-          newBreadcrumbs = [...(newSection.breadcrumbs || [newSection.title])];
-        }
-
         return {
           ...c,
           section_id: newSectionId,
-          breadcrumbs: newBreadcrumbs,
+          breadcrumbs: [...newSecBcs],
           is_edited: true,
         };
       }
@@ -1871,21 +1871,12 @@ export function App() {
 
     childChunks = childChunks.map((c) => {
       if (targetChildIdSet.has(c.chunk_id)) {
-        let newBreadcrumbs = destParentTitle ? [...baseSecBcs, destParentTitle] : [...baseSecBcs];
-        const isArticle = c.chunk_type === 'article' || c.chunk_type === 'article_clause';
-        if (isArticle && c.metadata?.article_no) {
-          const artDisplay = c.metadata?.article_title
-            ? `${c.metadata.article_no}(${c.metadata.article_title})`
-            : c.metadata.article_no;
-          newBreadcrumbs.push(artDisplay);
-        }
-
         return {
           ...c,
           parent_chunk_id: finalTargetParentId,
           parent_id: finalTargetParentId,
           section_id: finalTargetSectionId,
-          breadcrumbs: newBreadcrumbs,
+          breadcrumbs: [...baseSecBcs],
           is_edited: true,
         };
       }
@@ -1946,7 +1937,7 @@ export function App() {
       targetSection.breadcrumbs && targetSection.breadcrumbs.length > 0
         ? targetSection.breadcrumbs
         : [targetSection.title];
-    const childBreadcrumbs = [...secBreadcrumbs, data.title];
+    const childBreadcrumbs = [...secBreadcrumbs];
 
     // 커스텀 메타데이터 자동 상속 탐색 (페이지 정보는 복사하지 않고 격리)
     let inheritedCustomMeta: Record<string, any> = {};
@@ -2008,6 +1999,7 @@ export function App() {
       id: newParentId,
       section_id: data.sectionId,
       title: data.title,
+      breadcrumbs: [...secBreadcrumbs],
       text: data.initialChildText,
       token_estimate: childEstimate,
       child_chunk_ids: [newChildId],
@@ -2425,14 +2417,7 @@ export function App() {
       const secId = p.section_id;
       if (secId && sectionBreadcrumbsMap.has(secId)) {
         const secBcs = sectionBreadcrumbsMap.get(secId)!;
-        const sec = sections.find((s) => s.id === secId);
-        const pTitle = p.title;
-        let pBcs: string[];
-        if (pTitle && pTitle !== sec?.title && !secBcs.includes(pTitle)) {
-          pBcs = [...secBcs, pTitle];
-        } else {
-          pBcs = [...secBcs];
-        }
+        const pBcs = [...secBcs];
         let pText = p.text;
         if (pText && pText.startsWith('[')) {
           const pBcStr = pBcs.join(' > ');
@@ -2452,13 +2437,9 @@ export function App() {
       const secId = c.section_id;
       if (secId && sectionBreadcrumbsMap.has(secId)) {
         const secBcs = sectionBreadcrumbsMap.get(secId)!;
-        const oldSec = sections.find((s) => s.id === secId);
-        const oldSecBcs = oldSec?.breadcrumbs;
-        const suffix = getChildSubheadingSuffix(c, oldSecBcs, oldSec?.title);
-        const childBcs = [...secBcs, ...suffix];
         return {
           ...c,
-          breadcrumbs: childBcs,
+          breadcrumbs: [...secBcs],
           is_edited: true,
         };
       }
@@ -2556,9 +2537,7 @@ export function App() {
 
     const secBreadcrumbs =
       targetSection?.breadcrumbs || (targetSection?.title ? [targetSection.title] : []);
-    const childBreadcrumbs = targetParent.title
-      ? [...secBreadcrumbs, targetParent.title]
-      : [...secBreadcrumbs];
+    const childBreadcrumbs = [...secBreadcrumbs];
 
     // 1) 신규 Child 객체 속성 계산
     const tableItems = data.tables && data.tables.length > 0
@@ -2797,6 +2776,11 @@ export function App() {
     const pid = targetParent.parent_chunk_id || targetParent.id || '';
     const childIdSet = new Set(targetParent.child_chunk_ids || []);
 
+    const secBreadcrumbs =
+      targetSection.breadcrumbs && targetSection.breadcrumbs.length > 0
+        ? targetSection.breadcrumbs
+        : [targetSection.title];
+
     // 1) Parent 업데이트
     const updatedParents = parentChunks.map((p) => {
       if ((p.parent_chunk_id || p.id) === pid) {
@@ -2804,6 +2788,7 @@ export function App() {
           ...p,
           title: updates.title,
           section_id: newSectionId,
+          breadcrumbs: [...secBreadcrumbs],
           is_edited: true,
         };
       }
@@ -2811,27 +2796,12 @@ export function App() {
     });
 
     // 2) Child 청크들 breadcrumbs 및 section_id 동기화
-    const secBreadcrumbs =
-      targetSection.breadcrumbs && targetSection.breadcrumbs.length > 0
-        ? targetSection.breadcrumbs
-        : [targetSection.title];
-
     const updatedChildren = (etlData.child_chunks || []).map((c) => {
       if (childIdSet.has(c.chunk_id) || c.parent_chunk_id === pid || c.parent_id === pid) {
-        const suffix = getChildSubheadingSuffix(c, undefined, targetSection.title);
-        let childBcs: string[];
-        if (suffix.length > 0) {
-          childBcs = [...secBreadcrumbs, ...suffix];
-        } else if (updates.title && updates.title !== targetSection.title && !secBreadcrumbs.includes(updates.title)) {
-          childBcs = [...secBreadcrumbs, updates.title];
-        } else {
-          childBcs = [...secBreadcrumbs];
-        }
-
         return {
           ...c,
           section_id: newSectionId,
-          breadcrumbs: childBcs,
+          breadcrumbs: [...secBreadcrumbs],
           is_edited: true,
         };
       }

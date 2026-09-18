@@ -74,7 +74,6 @@ import {
   estimateKoreanTokens,
   formatDisplayChunkId,
   formatDisplayParentId,
-  getChildSubheadingSuffix,
 } from '../utils/idUtils';
 import {
   getChunkKind,
@@ -956,8 +955,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     if (field === 'parent_id') {
       const targetParent = parentSections.find((p) => p.id === value);
       if (targetParent) {
-        const suffix = getChildSubheadingSuffix(activeChunk, undefined, targetParent.title);
-        updated.breadcrumbs = [...targetParent.breadcrumbs, ...suffix];
+        updated.breadcrumbs = [...(targetParent.breadcrumbs || [targetParent.title])];
       }
     }
 

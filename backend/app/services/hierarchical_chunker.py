@@ -1531,8 +1531,8 @@ class HierarchicalChunker:
                 if base_parent_title and target_heading and base_parent_title != target_heading:
                     flush_parent()
             else:
-                # [일반 문서] 소제목 변경 감지 시 누적 토큰이 MIN_PARENT_TOKENS(600) 이상일 때만 분할하여 풍부한 문맥 보장
-                MIN_PARENT_TOKENS = 600
+                # [일반 문서] 소제목 변경 감지 시 누적 토큰이 MIN_PARENT_TOKENS(1600) 이상일 때만 분할하여 풍부한 문맥 보장
+                MIN_PARENT_TOKENS = 1600
                 if base_parent_title and target_heading and base_parent_title != target_heading:
                     if current_tokens >= MIN_PARENT_TOKENS:
                         flush_parent()

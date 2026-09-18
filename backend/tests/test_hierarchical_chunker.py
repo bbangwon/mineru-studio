@@ -870,9 +870,9 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertEqual(iv_sec["page_range"], [11, 15])
 
     def test_general_chunking_heading_parent_split(self):
-        """일반 문서에서 H3 소제목 변경 시 누적 토큰(600) 충족 시 Parent 청크가 분할되는지 검증"""
+        """일반 문서에서 H3 소제목 변경 시 누적 토큰(1600) 충족 시 Parent 청크가 분할되는지 검증"""
         chunker = HierarchicalChunker(doc_id="test_heading_split")
-        long_bg = "본 연구의 배경입니다. 중요한 연구 과제로서 다양한 산업적 배경을 심층적으로 분석합니다. " * 40
+        long_bg = "본 연구의 배경입니다. 중요한 연구 과제로서 다양한 산업적 배경을 심층적으로 분석합니다. " * 70
         sample_content_list = [
             {
                 "type": "title",
@@ -906,7 +906,7 @@ class TestHierarchicalChunker(unittest.TestCase):
         parents = etl_res["parent_chunks"]
         children = etl_res["child_chunks"]
 
-        # 1. 600 토큰 충족 후 서로 다른 H3 제목에 따라 Parent가 분할되었는지 검증 (최소 2개)
+        # 1. 1600 토큰 충족 후 서로 다른 H3 제목에 따라 Parent가 분할되었는지 검증 (최소 2개)
         self.assertEqual(len(parents), 2)
         self.assertEqual(parents[0]["title"], "1.1 연구 배경")
         self.assertEqual(parents[1]["title"], "1.2 연구 목적")

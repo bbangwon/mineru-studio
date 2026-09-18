@@ -42,6 +42,7 @@ import {
   Globe,
   CornerDownRight,
   CornerUpLeft,
+  RefreshCw,
 } from 'lucide-react';
 import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams, EmbeddedTableItem, AddChildData } from '../types';
 import { ChunkSplitModal } from './ChunkSplitModal';
@@ -971,7 +972,24 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       updated.token_estimate = count;
     }
 
+    // 복합/표 청크인 경우, 본문 텍스트 수정 시 원형 표(colspan/rowspan)를 보존하여 raw_html 자동 실시간 동기화
+    if (field === 'text' && hasTableData(activeChunk)) {
+      updated.raw_html = reconstructCompositeHtml(
+        { ...updated, text: value },
+        true
+      );
+    }
+
     onUpdateChunk(updated, true);
+  };
+
+  // Re-synchronize composite raw_html from text manually
+  const handleSyncRawHtmlFromText = () => {
+    if (!activeChunk) return;
+    const synced = reconstructCompositeHtml(activeChunk, true);
+    handleFieldChange('raw_html', synced);
+    setMetaNotice('본문 텍스트 내용을 바탕으로 원형 표를 보존한 통합 HTML을 성공적으로 동기화했습니다.');
+    setTimeout(() => setMetaNotice(null), 3000);
   };
 
   // Update caption or footnote of a specific table inside a chunk (both atomic and composite)
@@ -3668,19 +3686,35 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         }}
                       />
                     </div>
-                  ) : (activeChunk.chunk_type === 'table' || activeChunk.chunk_type === 'composite' || Boolean(activeChunk.raw_html)) && editorTab === 'raw_html' ? (
-                    <textarea
-                      value={
-                        activeChunk.raw_html ||
-                        (activeChunk.chunk_type === 'composite' || Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table')
-                          ? reconstructCompositeHtml(activeChunk)
-                          : '')
-                      }
-                      onChange={(e) => handleFieldChange('raw_html', e.target.value)}
-                      rows={11}
-                      className="w-full font-mono text-xs p-3.5 bg-slate-900 text-emerald-400 rounded-xl border border-slate-700 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 leading-relaxed resize-y"
-                      placeholder="<table>...</table>"
-                    />
+                  ) : (hasTableData(activeChunk) || Boolean(activeChunk.raw_html)) && editorTab === 'raw_html' ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-1">
+                        <span className="font-mono text-[10px] text-slate-400">
+                          {getChunkKind(activeChunk) === 'composite' ? '문단+표 통합 HTML 코드' : '원형 표 HTML 코드'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleSyncRawHtmlFromText}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                          title="본문 텍스트 내용과 원형 표를 결합하여 HTML을 재구성합니다"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                          <span>본문 텍스트 기반 HTML 재동기화</span>
+                        </button>
+                      </div>
+                      <textarea
+                        value={
+                          activeChunk.raw_html ||
+                          (hasTableData(activeChunk)
+                            ? reconstructCompositeHtml(activeChunk)
+                            : '')
+                        }
+                        onChange={(e) => handleFieldChange('raw_html', e.target.value)}
+                        rows={11}
+                        className="w-full font-mono text-xs p-3.5 bg-slate-900 text-emerald-400 rounded-xl border border-slate-700 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 leading-relaxed resize-y"
+                        placeholder="<table>...</table>"
+                      />
+                    </div>
                   ) : (
                     <textarea
                       value={activeChunk.text || ''}

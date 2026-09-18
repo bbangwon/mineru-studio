@@ -439,14 +439,14 @@ class HierarchicalChunker:
         return f"<p>{escaped}</p>"
 
     @classmethod
-    def reconstruct_composite_raw_html(cls, chunk: Dict[str, Any]) -> str:
+    def reconstruct_composite_raw_html(cls, chunk: Dict[str, Any], force: bool = False) -> str:
         """
         복합(composite) 청크의 raw_html에 문단 태그(<p>)가 누락된 구버전 데이터인 경우,
         chunk['text'](마크다운 본문)와 표 정보(tables 또는 raw_html)를 결합하여
         원본 문서 순서(문단 + 표 + 문단 + 표 ...) 그대로 복원된 완성형 HTML을 반환합니다.
         """
         raw_html = chunk.get("raw_html") or ""
-        if raw_html and re.search(r"<(?:p|div|span)\b", raw_html, re.I):
+        if not force and raw_html and re.search(r"<(?:p|div|span)\b", raw_html, re.I):
             return raw_html
 
         tables = chunk.get("tables") or (chunk.get("metadata", {}).get("tables") if isinstance(chunk.get("metadata"), dict) else []) or []
@@ -456,7 +456,7 @@ class HierarchicalChunker:
 
         text = chunk.get("text") or ""
         if not text:
-            return raw_html
+            return ("\n\n".join(table_htmls) if table_htmls else raw_html) or "<p>내용 없음</p>"
 
         blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
         reconstructed_parts: List[str] = []
@@ -465,7 +465,7 @@ class HierarchicalChunker:
         for b in blocks:
             lines = b.split("\n")
             is_md_table = any(line.strip().startswith("|") for line in lines) and any("---" in line for line in lines)
-            is_table_placeholder = b.startswith("[표") or b == "[표]"
+            is_table_placeholder = (b == "[표]" or bool(re.match(r"^\[표\s*\d*\]$", b))) and not is_md_table
 
             if is_md_table or is_table_placeholder:
                 if tbl_idx < len(table_htmls) and table_htmls[tbl_idx]:
@@ -1707,8 +1707,13 @@ class HierarchicalChunker:
                 record["page_end"] = end_page
             if has_tables and clean_tables:
                 record["tables"] = clean_tables
-            if chunk.get("raw_html"):
-                record["raw_html"] = chunk.get("raw_html", "")
+            if c_type == "composite":
+                raw_val = self.reconstruct_composite_raw_html(chunk) or chunk.get("raw_html", "")
+            else:
+                raw_val = chunk.get("raw_html", "")
+
+            if raw_val:
+                record["raw_html"] = raw_val
 
             lines.append(json.dumps(record, ensure_ascii=False))
 

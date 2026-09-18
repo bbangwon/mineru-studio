@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Code2, X, Copy, Check } from 'lucide-react';
 import type { ChildChunk, ParentSection, ParentChunk } from '../types';
-import { getChunkPageList } from '../utils/pageUtils';
+import { getChunkPageList, reconstructCompositeHtml } from '../utils/pageUtils';
 import { getChunkKind } from '../utils/chunkKindUtils';
 
 interface JsonlModalProps {
@@ -100,8 +100,13 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
   if (hasTables && cleanTables.length > 0) {
     record.tables = cleanTables;
   }
-  if (chunk.raw_html) {
-    record.raw_html = chunk.raw_html;
+  const effectiveRawHtml =
+    chunkKind === 'composite'
+      ? reconstructCompositeHtml(chunk)
+      : chunk.raw_html;
+
+  if (effectiveRawHtml) {
+    record.raw_html = effectiveRawHtml;
   }
 
   const jsonString = JSON.stringify(record, null, 2);

@@ -320,11 +320,12 @@ function escapeHtml(text: string): string {
  * 원본 문서 순서(문단 + 표 + 문단 + 표 ...) 그대로 복원된 통합 HTML 문자열을 생성합니다.
  */
 export function reconstructCompositeHtml(
-  chunk: Pick<ChildChunk, 'raw_html' | 'text' | 'tables' | 'metadata' | 'chunk_type'>
+  chunk: Pick<ChildChunk, 'raw_html' | 'text' | 'tables' | 'metadata' | 'chunk_type'>,
+  force: boolean = false
 ): string {
   const raw = chunk.raw_html || '';
-  // 이미 문단 태그(<p>, <div>, <span>)가 포함되어 있다면 원형 그대로 유지
-  if (raw && /<p\b|<div\b|<span\b/i.test(raw)) {
+  // force가 false이고 이미 문단 태그(<p>, <div>, <span>)가 포함되어 있다면 원형 그대로 유지
+  if (!force && raw && /<p\b|<div\b|<span\b/i.test(raw)) {
     return raw;
   }
 
@@ -338,7 +339,7 @@ export function reconstructCompositeHtml(
   }
 
   if (!chunk.text) {
-    return raw || '<p>내용 없음</p>';
+    return (tableHtmls.length > 0 ? tableHtmls.join('\n\n') : raw) || '<p>내용 없음</p>';
   }
 
   const blocks = chunk.text.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
@@ -348,7 +349,7 @@ export function reconstructCompositeHtml(
   for (const block of blocks) {
     const lines = block.split('\n');
     const isMdTable = lines.some((l) => l.trim().startsWith('|')) && lines.some((l) => l.includes('---'));
-    const isTablePlaceholder = block.startsWith('[표') || block === '[표]';
+    const isTablePlaceholder = (block === '[표]' || /^\[표\s*\d*\]$/.test(block)) && !isMdTable;
 
     if (isMdTable || isTablePlaceholder) {
       if (tblIdx < tableHtmls.length && tableHtmls[tblIdx]) {

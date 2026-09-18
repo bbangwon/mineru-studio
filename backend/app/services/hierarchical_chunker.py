@@ -1095,6 +1095,7 @@ class HierarchicalChunker:
         current_breadcrumbs: List[str] = []
         current_meta: Dict[str, Any] = {}
         current_chunk_type = "paragraph"
+        current_heading_title: Optional[str] = None
 
         def flush_child_chunk():
             nonlocal child_counter, current_text_units, current_html_units, current_tables, current_tokens, current_start_page, current_end_page
@@ -1282,7 +1283,14 @@ class HierarchicalChunker:
                     continue
 
                 # 3) 대형 표 또는 법률 문서 표인 경우: 이전 텍스트 flush 후 독립 원자적 표 청크 생성
-                flush_child_chunk()
+                if len(current_text_units) == 1 and current_heading_title and current_text_units[0] == f"### {current_heading_title}":
+                    if not caption:
+                        caption = current_heading_title
+                    current_text_units = []
+                    current_html_units = []
+                    current_tokens = 0
+                else:
+                    flush_child_chunk()
 
                 child_counter += 1
                 cid = f"{self.doc_id}_c{child_counter:04d}"
@@ -1354,9 +1362,21 @@ class HierarchicalChunker:
 
             if i_type == "heading_h3":
                 flush_child_chunk()
-                current_breadcrumbs = breadcrumbs + [item.get("title", "")]
+                title_text = item.get("title", "").strip()
+                current_breadcrumbs = breadcrumbs + [title_text] if title_text else list(breadcrumbs)
                 current_chunk_type = "paragraph"
                 current_meta = {}
+                current_heading_title = title_text
+                if title_text:
+                    heading_unit = f"### {title_text}"
+                    current_text_units.append(heading_unit)
+                    html_u = self._format_text_unit_as_html(heading_unit)
+                    if html_u:
+                        current_html_units.append(html_u)
+                    current_tokens += self.estimate_korean_tokens(heading_unit)
+                    if current_start_page is None:
+                        current_start_page = page_num
+                    current_end_page = page_num
                 continue
 
             raw_text = item.get("text", "")
@@ -1368,6 +1388,13 @@ class HierarchicalChunker:
                 u_tokens = self.estimate_korean_tokens(u)
                 if current_tokens + u_tokens > 512 and current_text_units:
                     flush_child_chunk()
+                    if current_heading_title and not is_legal:
+                        cont_heading = f"### {current_heading_title} (계속)"
+                        current_text_units.append(cont_heading)
+                        html_u = self._format_text_unit_as_html(cont_heading)
+                        if html_u:
+                            current_html_units.append(html_u)
+                        current_tokens += self.estimate_korean_tokens(cont_heading)
                 if current_start_page is None:
                     current_start_page = page_num
                 current_end_page = page_num
@@ -1421,15 +1448,32 @@ class HierarchicalChunker:
             body_text = "\n\n".join(combined_texts).strip()
 
             first_c = current_children[0]
-            bc_str = " > ".join(first_c.get("breadcrumbs", [sec_title]))
+            # 일반 문서에서 서로 다른 소제목(H3)이 묶였는지 검사
+            distinct_headings = []
+            for c in current_children:
+                art = c.get("metadata", {}).get("article_display")
+                c_bc = c.get("breadcrumbs", [])
+                h_name = art or (c_bc[-1] if c_bc else sec_title)
+                if h_name and h_name not in distinct_headings:
+                    distinct_headings.append(h_name)
+
+            if len(distinct_headings) > 1 and not first_c.get("metadata", {}).get("article_display"):
+                # [일반 문서] 여러 H3 소제목이 하나의 Parent에 통합된 경우
+                # 최상단 헤더는 공통 상위인 Section 레벨까지의 브레드크럼 사용
+                sec_bc = first_c.get("breadcrumbs", [])[:-1] or [sec_title]
+                bc_str = " > ".join(sec_bc)
+                title_val = sec_title
+            else:
+                # 단일 소제목 또는 법률 조문
+                bc_str = " > ".join(first_c.get("breadcrumbs", [sec_title]))
+                title_val = current_parent_title or first_c.get("metadata", {}).get("article_display") or sec_title
+
             if current_parent_title and current_parent_title.endswith(" (계속)"):
                 context_header = f"[{bc_str} (계속)]"
             else:
                 context_header = f"[{bc_str}]"
             raw_parent_text = f"{context_header}\n\n{body_text}".strip()
             parent_full_text = self.normalize_parent_text(raw_parent_text, preserve_newlines=self.preserve_newlines)
-
-            title_val = current_parent_title or first_c.get("metadata", {}).get("article_display") or sec_title
 
             p_tokens = self.estimate_korean_tokens(parent_full_text)
             p_chunk = {
@@ -1583,7 +1627,7 @@ class HierarchicalChunker:
                 })
 
             parent_text = parent.get("text", "")
-            if breadcrumbs_str and not parent_text.startswith(f"[{breadcrumbs_str}]"):
+            if breadcrumbs_str and not parent_text.startswith("["):
                 parent_context_text = f"[{breadcrumbs_str}]\n{parent_text}".strip()
             else:
                 parent_context_text = parent_text.strip()

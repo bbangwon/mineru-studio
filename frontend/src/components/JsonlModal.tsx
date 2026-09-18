@@ -34,7 +34,7 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
   const breadcrumbs_str = breadcrumbs.join(' > ');
   const parentText = parent?.text || '';
   const parentContextText = parentText
-    ? (breadcrumbs_str && !parentText.startsWith(`[${breadcrumbs_str}]`)
+    ? (breadcrumbs_str && !parentText.startsWith('[')
         ? `[${breadcrumbs_str}]\n${parentText}`
         : parentText)
     : '';

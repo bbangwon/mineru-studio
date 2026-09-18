@@ -948,9 +948,87 @@ class TestHierarchicalChunker(unittest.TestCase):
 
         etl_res = chunker.chunk_content_list(sample_content_list, doc_title="연구보고서", strategy="general")
         parents = etl_res["parent_chunks"]
+        children = etl_res["child_chunks"]
         # 누적 토큰이 600 미만이므로 1개의 부모 청크로 통합 보존되어야 함
         self.assertEqual(len(parents), 1)
-        self.assertEqual(parents[0]["title"], "1.1 짧은 배경")
+        # 다수 H3 소제목 포괄 시 Parent 제목은 상위 섹션 제목으로 설정됨
+        self.assertEqual(parents[0]["title"], "1. 서론")
+        # Parent 헤더는 Section 레벨까지의 브레드크럼
+        self.assertTrue(parents[0]["text"].startswith("[연구보고서 > 1. 서론]"))
+        # Parent 본문에 두 소제목이 모두 포함되어 문맥 보존
+        self.assertIn("### 1.1 짧은 배경", parents[0]["text"])
+        self.assertIn("### 1.2 짧은 목적", parents[0]["text"])
+
+        # Child 청크의 text에 소제목 마크다운이 포함되는지 검증
+        self.assertEqual(len(children), 2)
+        self.assertIn("### 1.1 짧은 배경", children[0]["text"])
+        self.assertIn("### 1.2 짧은 목적", children[1]["text"])
+
+        # JSONL 내보내기 시 parent_context_text 이중 헤더 방지 검증
+        jsonl_str = chunker.export_to_jsonl(etl_res)
+        records = [json.loads(line) for line in jsonl_str.strip().split("\n")]
+        self.assertEqual(len(records), 2)
+        for rec in records:
+            pct = rec["parent_context_text"]
+            # 이중 헤더(연속된 [브레드크럼]...[브레드크럼])가 없어야 함
+            self.assertEqual(pct.count("[연구보고서"), 1)
+
+    def test_general_chunking_heading_continuation_and_jsonl(self):
+        """소제목 하위 본문이 512 토큰 초과 시 후속 청크에 '(계속)'이 주입되는지 및 JSONL 정합성 검증"""
+        chunker = HierarchicalChunker(doc_id="test_heading_cont", preserve_newlines=True)
+        long_text = "이 문장은 연구 배경에 대한 상세 설명입니다. " * 35
+        sample_content_list = [
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1. 서론"}], "level": 1},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1.1 긴 배경"}], "level": 3},
+                "page_idx": 0
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": long_text}]},
+                "page_idx": 0
+            },
+            {
+                "type": "title",
+                "content": {"title_content": [{"type": "text", "content": "1.2 짧은 목적"}], "level": 3},
+                "page_idx": 1
+            },
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": "목적 본문입니다."}]},
+                "page_idx": 1
+            },
+        ]
+
+        etl_res = chunker.chunk_content_list(sample_content_list, doc_title="연구보고서", strategy="general")
+        children = etl_res["child_chunks"]
+
+        # 1.1 긴 배경 아래 512 초과로 최소 2개 이상 분할되었는지 검증
+        c1 = children[0]
+        c2 = children[1]
+        self.assertTrue(c1["text"].startswith("### 1.1 긴 배경"))
+        self.assertTrue(c2["text"].startswith("### 1.1 긴 배경 (계속)"))
+        # 둘 다 breadcrumbs는 1.1 긴 배경까지 유지
+        self.assertEqual(c1["breadcrumbs"][-1], "1.1 긴 배경")
+        self.assertEqual(c2["breadcrumbs"][-1], "1.1 긴 배경")
+
+        # 마지막 1.2 짧은 목적 청크
+        c3 = children[2]
+        self.assertTrue(c3["text"].startswith("### 1.2 짧은 목적"))
+        self.assertEqual(c3["breadcrumbs"][-1], "1.2 짧은 목적")
+
+        # JSONL 내보내기 검증
+        jsonl_str = chunker.export_to_jsonl(etl_res)
+        records = [json.loads(line) for line in jsonl_str.strip().split("\n")]
+        for rec in records:
+            pct = rec["parent_context_text"]
+            self.assertTrue(pct.startswith("["))
+            self.assertEqual(pct.count("[연구보고서"), 1)
 
     def test_general_chunking_table_inside_heading_not_split(self):
         """동일 Heading 하위에 본문+소형표+본문이 있을 때 하나의 composite Child 청크로 결합되는지 검증"""

@@ -389,7 +389,19 @@ export function getChildSubheadingSuffix(
     return [artDisplay];
   }
 
-  // 2. 텍스트 최상단 마크다운 소제목(### 헤딩) 식별
+  // 2. 메타데이터 소제목(heading_title) 식별
+  const metaHeading = child.metadata?.heading_title;
+  if (metaHeading) {
+    let hText = metaHeading.trim();
+    if (hText.endsWith(' (계속)')) {
+      hText = hText.slice(0, -7).trim();
+    }
+    if (hText && hText !== secTitle && (!oldSecBreadcrumbs || !oldSecBreadcrumbs.includes(hText))) {
+      return [hText];
+    }
+  }
+
+  // 3. 텍스트 최상단 마크다운 소제목(### 헤딩) 식별 (하위 호환)
   if (child.text) {
     const headingMatch = child.text.match(/^###\s+([^\n]+)/);
     if (headingMatch) {

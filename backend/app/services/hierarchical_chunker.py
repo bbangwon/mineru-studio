@@ -185,6 +185,11 @@ class HierarchicalChunker:
         """
         if not text:
             return ""
+        # 0. 빈 줄 2개 이상(\n{3,})으로 구분된 소제목/섹션 블록 보존
+        major_blocks = [b.strip() for b in re.split(r'\n{3,}', text) if b.strip()]
+        if len(major_blocks) > 1:
+            return '\n\n\n'.join(cls.normalize_parent_text(b, preserve_newlines=preserve_newlines) for b in major_blocks).strip()
+
         # 1. 영문 하이픈 줄바꿈 복원
         text = re.sub(r'(\w+)-\s*[\r\n]+\s*(\w+)', r'\1\2', text)
 
@@ -1112,10 +1117,20 @@ class HierarchicalChunker:
                 current_end_page = None
                 return
 
+            is_heading_chunk = bool(
+                cleaned_units and (
+                    (current_heading_title and (
+                        cleaned_units[0] == current_heading_title
+                        or cleaned_units[0] == f"{current_heading_title} (계속)"
+                    ))
+                    or cleaned_units[0].startswith("### ")
+                )
+            )
+
             if current_tables or self.preserve_newlines:
                 full_child_text = "\n\n".join(u for u in cleaned_units if u)
             else:
-                if cleaned_units and cleaned_units[0].startswith("### "):
+                if is_heading_chunk:
                     h_unit = cleaned_units[0]
                     body_units = cleaned_units[1:]
                     if body_units:
@@ -1148,6 +1163,11 @@ class HierarchicalChunker:
             meta["page_start"] = start_p
             meta["page_end"] = end_p
             meta["pages"] = pages_list
+            if is_heading_chunk:
+                heading_val = current_heading_title or (
+                    cleaned_units[0][4:].strip() if cleaned_units[0].startswith("### ") else cleaned_units[0]
+                )
+                meta["heading_title"] = heading_val
 
             if current_tables:
                 # 텍스트 유닛이 1개뿐이고 표도 1개뿐이라면 순수 단독 표 청크로 처리
@@ -1291,7 +1311,7 @@ class HierarchicalChunker:
                     continue
 
                 # 3) 대형 표 또는 법률 문서 표인 경우: 이전 텍스트 flush 후 독립 원자적 표 청크 생성
-                if len(current_text_units) == 1 and current_heading_title and current_text_units[0] == f"### {current_heading_title}":
+                if len(current_text_units) == 1 and current_heading_title and current_text_units[0] in (current_heading_title, f"### {current_heading_title}"):
                     if not caption:
                         caption = current_heading_title
                     current_text_units = []
@@ -1376,7 +1396,7 @@ class HierarchicalChunker:
                 current_meta = {}
                 current_heading_title = title_text
                 if title_text:
-                    heading_unit = f"### {title_text}"
+                    heading_unit = title_text
                     current_text_units.append(heading_unit)
                     html_u = self._format_text_unit_as_html(heading_unit)
                     if html_u:
@@ -1397,7 +1417,7 @@ class HierarchicalChunker:
                 if current_tokens + u_tokens > 512 and current_text_units:
                     flush_child_chunk()
                     if current_heading_title and not is_legal:
-                        cont_heading = f"### {current_heading_title} (계속)"
+                        cont_heading = f"{current_heading_title} (계속)"
                         current_text_units.append(cont_heading)
                         html_u = self._format_text_unit_as_html(cont_heading)
                         if html_u:
@@ -1435,6 +1455,20 @@ class HierarchicalChunker:
         current_tokens = 0
         current_parent_title: Optional[str] = None
 
+        def _get_child_heading(c_node: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+            art = c_node.get("metadata", {}).get("article_display")
+            if art:
+                return art, art
+            h_meta = c_node.get("metadata", {}).get("heading_title")
+            if h_meta:
+                clean_h = re.sub(r"\s*\(계속\)$", "", h_meta.strip())
+                return clean_h, None
+            h_match = re.match(r"^###\s+([^\n]+)", c_node.get("text", ""))
+            if h_match:
+                clean_h = re.sub(r"\s*\(계속\)$", "", h_match.group(1).strip())
+                return clean_h, None
+            return None, None
+
         def flush_parent():
             nonlocal parent_counter, current_children, current_tokens, current_parent_title
             if not current_children:
@@ -1443,17 +1477,35 @@ class HierarchicalChunker:
             parent_counter += 1
             pid = f"{self.doc_id}_p{parent_counter:04d}"
 
-            combined_texts = []
+            body_parts = []
             for c in current_children:
                 if c.get("chunk_type") == "table":
                     cap = c.get("table_caption")
                     cap_prefix = f"[표: {cap}]\n" if cap else "[표]\n"
                     table_content = c.get("raw_html") or c.get("text", "")
-                    combined_texts.append(f"{cap_prefix}{table_content}".strip())
+                    c_text = f"{cap_prefix}{table_content}".strip()
                 else:
-                    combined_texts.append(c.get("text", ""))
+                    c_text = c.get("text", "")
 
-            body_text = "\n\n".join(combined_texts).strip()
+                if not c_text:
+                    continue
+
+                if not body_parts:
+                    body_parts.append(c_text)
+                else:
+                    h_title = c.get("metadata", {}).get("heading_title")
+                    is_h = bool(h_title and (c_text.startswith(h_title) or c_text.startswith(f"### {h_title}")))
+                    if not is_h and not c.get("metadata", {}).get("article_display"):
+                        is_h = bool(re.match(r"^###\s+", c_text))
+
+                    if is_h:
+                        # 소제목 앞은 빈 줄 2개(\n\n\n)로 여백 구분
+                        body_parts.append("\n\n\n" + c_text)
+                    else:
+                        # 일반 문단 간격은 빈 줄 1개(\n\n)
+                        body_parts.append("\n\n" + c_text)
+
+            body_text = "".join(body_parts).strip()
 
             first_c = current_children[0]
             sec_bcs = first_c.get("breadcrumbs") or [sec_title]
@@ -1461,12 +1513,10 @@ class HierarchicalChunker:
 
             distinct_headings = []
             for c in current_children:
-                art = c.get("metadata", {}).get("article_display")
-                h_match = re.match(r"^###\s+([^\n]+)", c.get("text", "")) if not art else None
-                h_text = re.sub(r"\s*\(계속\)$", "", h_match.group(1).strip()) if h_match else None
-                h_name = art or h_text or sec_title
-                if h_name and h_name not in distinct_headings:
-                    distinct_headings.append(h_name)
+                h_name, _ = _get_child_heading(c)
+                effective_h = h_name or sec_title
+                if effective_h and effective_h not in distinct_headings:
+                    distinct_headings.append(effective_h)
 
             if len(distinct_headings) > 1 and not first_c.get("metadata", {}).get("article_display"):
                 title_val = sec_title
@@ -1518,11 +1568,9 @@ class HierarchicalChunker:
                 flush_parent()
                 continue
 
-            # 2. 제목 식별: 법률 조문(article_display) 또는 일반 문서 Heading(텍스트 ### 헤딩)
-            art_disp = child.get("metadata", {}).get("article_display")
-            h_match = re.match(r"^###\s+([^\n]+)", child.get("text", "")) if not art_disp else None
-            h_title = re.sub(r"\s*\(계속\)$", "", h_match.group(1).strip()) if h_match else None
-            target_heading = art_disp or h_title or sec_title
+            # 2. 제목 식별: 법률 조문(article_display) 또는 일반 문서 Heading(metadata heading_title / 텍스트 헤딩)
+            h_name, art_disp = _get_child_heading(child)
+            target_heading = h_name or sec_title
 
             # 제목 변경 감지 시 독립 Parent 생성 (단, '(계속)' 접미사가 붙은 현재 제목의 베이스 타이틀과 비교)
             base_parent_title = current_parent_title.replace(" (계속)", "") if current_parent_title else None

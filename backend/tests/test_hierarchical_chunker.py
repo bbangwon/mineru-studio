@@ -59,11 +59,10 @@ class TestHierarchicalChunker(unittest.TestCase):
             caption="급여 지급 기준표",
             footnote="세전 기준 금액임"
         )
-        self.assertIn("[표: 급여 지급 기준표]", search_text)
-        self.assertIn("구분", search_text)
-        self.assertIn("지급액", search_text)
-        self.assertIn("기본급", search_text)
-        self.assertIn("(주: 세전 기준 금액임)", search_text)
+        self.assertIn("**[표 제목: 급여 지급 기준표]**", search_text)
+        self.assertIn("| 구분 | 지급액 | 비고 |", search_text)
+        self.assertIn("| 기본급 | 3,000,000 | 정기지급 |", search_text)
+        self.assertIn("**[표 각주: 세전 기준 금액임]**", search_text)
 
     def test_legal_chunking_hierarchy(self):
         chunker = HierarchicalChunker(doc_id="test_legal_doc")
@@ -253,7 +252,7 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertEqual(record["tables"][0]["caption"], "임금표")
         self.assertEqual(record["tables"][0]["footnote"], "* 세전 기준, 수당 별도")
         self.assertNotIn("table_type", record["tables"][0])
-        self.assertIn("(주: * 세전 기준, 수당 별도)", record["text"])
+        self.assertIn("**[표 각주: * 세전 기준, 수당 별도]**", record["text"])
 
     def test_huge_table_promoted_to_parent(self):
         # Create a table exceeding 2048 tokens
@@ -1519,6 +1518,97 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertEqual(reindexed_leg["parent_chunks"][0]["title"], "제1조(목적)")
         self.assertEqual(reindexed_leg["child_chunks"][0]["metadata"]["article_display"], "제1조(목적)")
         self.assertTrue(reindexed_leg["parent_chunks"][0]["text"].startswith("[사규 > 제1장 총칙]"))
+
+    def test_pure_table_with_separated_caption_and_footnote_preserves_table_type(self):
+        """표 제목 문단 + 표 본문 + 각주 문단이 입력될 때 composite가 아닌 table 청크로 보존되는지 검증"""
+        chunker = HierarchicalChunker(doc_id="sep_table_test")
+        sample = [
+            {"type": "title", "content": {"title_content": [{"type": "text", "content": "1. 실적 보고"}], "level": 1}, "page_idx": 0},
+            {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "[표 1-1] 2024년 상반기 실적현황"}]}, "page_idx": 0},
+            {
+                "type": "table",
+                "content": {
+                    "html": "<table><tr><th>부서</th><th>목표</th><th>달성</th></tr><tr><td>영업</td><td>100</td><td>120</td></tr></table>",
+                    "table_caption": [],
+                    "table_footnote": []
+                },
+                "page_idx": 0
+            },
+            {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "※ 출처: 재무기획팀 내부 데이터"}]}, "page_idx": 0}
+        ]
+        res = chunker.chunk_content_list(sample, doc_title="실적보고서", strategy="general")
+        children = res["child_chunks"]
+
+        # 단독 table 청크로 보존되어야 함 (composite로 변환되지 않음)
+        self.assertEqual(len(children), 1)
+        tbl_chunk = children[0]
+        self.assertEqual(tbl_chunk["chunk_type"], "table")
+        self.assertTrue(tbl_chunk["is_table"])
+        self.assertTrue(tbl_chunk["is_atomic_table"])
+        self.assertEqual(tbl_chunk["metadata"]["type"], "table")
+        self.assertIn("**[표 제목: 2024년 상반기 실적현황]**", tbl_chunk["text"])
+        self.assertIn("| 부서 | 목표 | 달성 |", tbl_chunk["text"])
+        self.assertIn("| 영업 | 100 | 120 |", tbl_chunk["text"])
+        self.assertIn("**[표 각주: 재무기획팀 내부 데이터]**", tbl_chunk["text"])
+
+    def test_large_table_retains_all_rows_and_sets_warning_metadata(self):
+        """대형 표라도 행을 자르지 않고 전체 Markdown Table을 보존하며 token_overflow 및 warning 메타데이터를 부여하는지 검증"""
+        chunker = HierarchicalChunker(doc_id="large_table_warning_test")
+        rows = "".join(f"<tr><td>부서_{i}</td><td>담당업무_{i}_상세데이터항목</td><td>비고_{i}</td></tr>" for i in range(120))
+        html = f"<table><tr><th>부서</th><th>업무</th><th>비고</th></tr>{rows}</table>"
+        sample = [
+            {
+                "type": "table",
+                "content": {
+                    "html": html,
+                    "table_caption": [{"type": "text", "content": "전사 업무분장표"}],
+                    "table_footnote": [{"type": "text", "content": "2024년 1월 기준"}]
+                },
+                "page_idx": 0
+            }
+        ]
+        res = chunker.chunk_content_list(sample, doc_title="조직도", strategy="general")
+        tbl_chunk = res["child_chunks"][0]
+
+        # 모든 행이 text에 보존되어야 함 (자르지 않음)
+        self.assertEqual(tbl_chunk["chunk_type"], "table")
+        self.assertIn("부서_0", tbl_chunk["text"])
+        self.assertIn("부서_119", tbl_chunk["text"])
+        self.assertIn("**[표 제목: 전사 업무분장표]**", tbl_chunk["text"])
+        self.assertIn("**[표 각주: 2024년 1월 기준]**", tbl_chunk["text"])
+
+        # 512 토큰 초과이므로 warning 메타데이터가 세팅되어야 함
+        self.assertGreater(tbl_chunk["token_estimate"], 512)
+        self.assertTrue(tbl_chunk["metadata"].get("token_overflow"))
+        self.assertIn("512 토큰 한도 초과", tbl_chunk["metadata"].get("warning", ""))
+
+    def test_composite_chunk_table_markdown_format_consistency(self):
+        """복합 청크 내의 표도 **[표 제목: ...]**, **[표 각주: ...]** 및 Markdown Table 형식을 동일하게 따르는지 검증"""
+        chunker = HierarchicalChunker(doc_id="composite_format_test")
+        sample = [
+            {"type": "title", "content": {"title_content": [{"type": "text", "content": "1. 개요"}], "level": 1}, "page_idx": 0},
+            {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "다음은 분기별 지원금 안내입니다."}]}, "page_idx": 0},
+            {
+                "type": "table",
+                "content": {
+                    "html": "<table><tr><th>분기</th><th>금액</th></tr><tr><td>1분기</td><td>50만</td></tr></table>",
+                    "table_caption": [{"type": "text", "content": "지원금 내역"}],
+                    "table_footnote": [{"type": "text", "content": "신청자에 한함"}]
+                },
+                "page_idx": 0
+            },
+            {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "위 기준에 따라 차등 지급됩니다."}]}, "page_idx": 0}
+        ]
+        res = chunker.chunk_content_list(sample, doc_title="지원금규정", strategy="general")
+        comp_chunk = res["child_chunks"][0]
+
+        self.assertEqual(comp_chunk["chunk_type"], "composite")
+        self.assertIn("다음은 분기별 지원금 안내입니다.", comp_chunk["text"])
+        self.assertIn("**[표 제목: 지원금 내역]**", comp_chunk["text"])
+        self.assertIn("| 분기 | 금액 |", comp_chunk["text"])
+        self.assertIn("| 1분기 | 50만 |", comp_chunk["text"])
+        self.assertIn("**[표 각주: 신청자에 한함]**", comp_chunk["text"])
+        self.assertIn("위 기준에 따라 차등 지급됩니다.", comp_chunk["text"])
 
 
 if __name__ == "__main__":

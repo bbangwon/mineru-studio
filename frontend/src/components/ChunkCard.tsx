@@ -98,10 +98,21 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
               빈 청크
             </span>
           ) : isTable ? (
-            <span className="bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-              표 원형 보존 상태
-            </span>
+            <>
+              <span className="bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                표 원형 보존 상태
+              </span>
+              {(wordCount > 512 || chunk.metadata?.token_overflow) && (
+                <span
+                  className="bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
+                  title={chunk.metadata?.warning || `대형 표 (~${wordCount}T) - 512 토큰 한도 초과 (분할 또는 정제 권장)`}
+                >
+                  <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                  대형 표 (~{wordCount}T, 분할/정제 권장)
+                </span>
+              )}
+            </>
           ) : isOverTokenLimit ? (
             <span className="bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
               <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400" />

@@ -73,6 +73,34 @@ class HierarchicalChunker:
     RE_KOREAN_SENTENCE_END = re.compile(r'(?<=(?:다|음|함|임|됨)\.)(?![")\'])\s+')
     RE_GENERAL_SENTENCE_END = re.compile(r'(?<=[.!?])(?![")\'])\s+(?=[A-Z가-힣0-9])')
 
+    # 표 제목 및 각주 정규식
+    RE_TABLE_TITLE_TEXT = re.compile(
+        r"^(?:\*\*\[표\s*(?:제목)?:\s*|\[\s*표(?:\s*[\d\.\-]+)?\s*[\:\.\-\]]|【\s*표\s*】|표\s*\d+[\.\:\-]|Table\s*\d+[\.\:\-])",
+        re.IGNORECASE
+    )
+    RE_TABLE_FOOTNOTE_TEXT = re.compile(
+        r"^(?:\*\*\[표\s*각주:\s*|(?:※|\(?주\)?\s*[:\)]|출처\s*[:\)]|참고\s*[:\)]|\*|\#)\s*)+",
+        re.IGNORECASE
+    )
+
+    @staticmethod
+    def format_table_title(caption: str) -> str:
+        clean = (caption or "").strip()
+        if not clean:
+            return ""
+        m = re.match(r"^\*\*\[표\s*(?:제목)?:\s*(.+?)\]\*\*$", clean)
+        val = m.group(1).strip() if m else clean
+        return f"**[표 제목: {val}]**"
+
+    @staticmethod
+    def format_table_footnote(footnote: str) -> str:
+        clean = (footnote or "").strip()
+        if not clean:
+            return ""
+        m = re.match(r"^\*\*\[표\s*각주:\s*(.+?)\]\*\*$", clean)
+        val = m.group(1).strip() if m else clean
+        return f"**[표 각주: {val}]**"
+
     @staticmethod
     def generate_doc_id(name: Optional[str] = None) -> str:
         """
@@ -337,49 +365,25 @@ class HierarchicalChunker:
         max_tokens: int = 512
     ) -> str:
         """
-        초대형 표도 소형 임베딩 모델(512 토큰)에 안전하게 적재될 수 있도록
-        [표 캡션 + 컬럼 목록 + 상위 핵심 행 요약] 형태의 검색 요약 텍스트를 생성합니다.
+        원형 표와 복합 청크의 일관성을 위해 Markdown Table 형식으로 표 검색 요약 텍스트를 생성합니다.
+        대형 표라도 임의로 행을 자르지 않고 전체 행을 온전히 보존하며,
+        토큰 초과 여부는 청크 메타데이터(token_overflow, warning) 및 UI를 통해 작업자에게 경고합니다.
         """
-        parser = _HTMLTableExtractor()
-        try:
-            parser.feed(raw_html)
-            rows = parser.rows
-        except Exception:
-            rows = []
+        md_table = cls.html_table_to_markdown(raw_html, caption=caption, footnote=footnote)
+        if md_table:
+            return md_table
 
-        lines: List[str] = []
-        if caption:
-            lines.append(f"[표: {caption}]")
-        else:
-            lines.append("[표]")
-
-        if rows:
-            header_row = rows[0]
-            header_str = " | ".join(header_row[:10])
-            lines.append(f"컬럼: {header_str}")
-
-            data_rows = rows[1:]
-            if data_rows:
-                lines.append("주요 데이터:")
-                for r in data_rows[:6]:
-                    row_str = " | ".join(r[:10])
-                    cand = f"- {row_str}"
-                    test_text = "\n".join(lines + [cand])
-                    if footnote:
-                        test_text += f"\n(주: {footnote})"
-                    if cls.estimate_korean_tokens(test_text) > max_tokens:
-                        break
-                    lines.append(cand)
-        elif raw_html:
+        lines = []
+        if caption and caption.strip():
+            lines.append(cls.format_table_title(caption))
+        if raw_html:
             clean_html = re.sub(r'<[^>]+>', ' ', raw_html)
-            clean_html = " ".join(clean_html.split())[:300]
-            lines.append(f"내용 요약: {clean_html}")
-
-        if footnote:
-            lines.append(f"(주: {footnote})")
-
-        res_text = "\n".join(lines).strip()
-        return res_text
+            clean_html = " ".join(clean_html.split())
+            if clean_html:
+                lines.append(clean_html)
+        if footnote and footnote.strip():
+            lines.append(cls.format_table_footnote(footnote))
+        return "\n".join(lines).strip()
 
     @classmethod
     def html_table_to_markdown(
@@ -389,9 +393,9 @@ class HierarchicalChunker:
         footnote: Optional[str] = None
     ) -> str:
         """
-        소형 표 및 복합 청크 생성을 위해 HTML 테이블을 LLM 및 마크다운 친화적인 표 문자열로 변환합니다.
-        - 컬럼 헤더 및 데이터 행 파싱
-        - 캡션([표: 제목]) 및 각주(_각주_) 반영
+        소형 표, 대형 표 및 복합 청크를 위해 HTML 테이블을 Markdown 테이블 문자열로 변환합니다.
+        - 컬럼 헤더 및 모든 데이터 행 파싱 (임의 자름 없이 전체 보존)
+        - 캡션(**[표 제목: ...]**) 및 각주(**[표 각주: ...]**) 표준 형식 반영
         """
         if not raw_html or not raw_html.strip():
             return ""
@@ -409,20 +413,20 @@ class HierarchicalChunker:
 
             lines: List[str] = []
             if caption and caption.strip():
-                lines.append(f"**[표: {caption.strip()}]**")
+                lines.append(cls.format_table_title(caption))
 
             # 헤더 행
             header_row = [c.replace("|", "/") for c in rows[0]] + [""] * (max_cols - len(rows[0]))
             lines.append("| " + " | ".join(header_row) + " |")
             lines.append("| " + " | ".join(["---"] * max_cols) + " |")
 
-            # 본문 행
+            # 본문 행 (전체 행 보존)
             for r in rows[1:]:
                 clean_row = [c.replace("|", "/") for c in r] + [""] * (max_cols - len(r))
                 lines.append("| " + " | ".join(clean_row) + " |")
 
             if footnote and footnote.strip():
-                lines.append(f"_{footnote.strip()}_")
+                lines.append(cls.format_table_footnote(footnote))
 
             return "\n".join(lines)
         except Exception:
@@ -1170,15 +1174,74 @@ class HierarchicalChunker:
                 meta["heading_title"] = heading_val
 
             if current_tables:
-                # 텍스트 유닛이 1개뿐이고 표도 1개뿐이라면 순수 단독 표 청크로 처리
-                if len(current_tables) == 1 and len(cleaned_units) == 1:
+                # 1개의 표만 존재할 때, 함께 있는 텍스트 유닛들이 표 제목/각주에 해당하는지 검사
+                is_pure_table = False
+                extracted_caption = None
+                extracted_footnote = None
+
+                if len(current_tables) == 1:
+                    single_t = current_tables[0]
+                    if len(cleaned_units) == 1:
+                        is_pure_table = True
+                        extracted_caption = single_t.get("caption") or None
+                        extracted_footnote = single_t.get("footnote") or None
+                    else:
+                        # 표 자체 마크다운(| ... |\n| --- |)을 제외한 나머지 유닛 검사
+                        non_table_units = []
+                        for u in cleaned_units:
+                            u_str = u.strip()
+                            if ("| ---" in u_str or "|---" in u_str) and "\n|" in u_str:
+                                continue
+                            non_table_units.append(u_str)
+
+                        title_cands = []
+                        fn_cands = []
+                        other_cands = []
+                        for u in non_table_units:
+                            if self.RE_TABLE_TITLE_TEXT.search(u):
+                                title_cands.append(u)
+                            elif self.RE_TABLE_FOOTNOTE_TEXT.search(u):
+                                fn_cands.append(u)
+                            else:
+                                other_cands.append(u)
+
+                        # 일반 본문 문단이 전혀 없고 오직 표 제목/각주만 존재하는 경우 -> 순수 표 청크로 확정
+                        if not other_cands:
+                            is_pure_table = True
+                            cap_parts = []
+                            if single_t.get("caption"):
+                                cap_parts.append(single_t.get("caption"))
+                            for t in title_cands:
+                                m = re.search(r"\*\*\[표\s*(?:제목)?:\s*(.+?)\]\*\*", t)
+                                if m:
+                                    cap_parts.append(m.group(1).strip())
+                                else:
+                                    clean_t = self.RE_TABLE_TITLE_TEXT.sub("", t).strip(" :-_[]()【】*")
+                                    cap_parts.append(clean_t or t)
+                            extracted_caption = " / ".join(p for p in cap_parts if p) or None
+
+                            fn_parts = []
+                            if single_t.get("footnote"):
+                                fn_parts.append(single_t.get("footnote"))
+                            for f in fn_cands:
+                                m = re.search(r"\*\*\[표\s*각주:\s*(.+?)\]\*\*", f)
+                                if m:
+                                    fn_parts.append(m.group(1).strip())
+                                else:
+                                    clean_f = self.RE_TABLE_FOOTNOTE_TEXT.sub("", f).strip(" :-_[]()【】*")
+                                    fn_parts.append(clean_f or f)
+                            extracted_footnote = " / ".join(p for p in fn_parts if p) or None
+
+                if is_pure_table:
                     chunk_type = "table"
                     is_table = True
                     is_atomic_table = True
                     single_t = current_tables[0]
                     combined_raw_html = single_t.get("raw_html", "")
-                    tbl_caption = single_t.get("caption") or None
-                    tbl_footnote = single_t.get("footnote") or None
+                    tbl_caption = extracted_caption
+                    tbl_footnote = extracted_footnote
+                    single_t["caption"] = tbl_caption or ""
+                    single_t["footnote"] = tbl_footnote or ""
                     meta["type"] = "table"
                     meta["has_tables"] = True
                     meta["table_count"] = 1
@@ -1210,6 +1273,14 @@ class HierarchicalChunker:
                 if "type" not in meta:
                     meta["type"] = chunk_type
 
+            child_tokens = self.estimate_korean_tokens(full_child_text)
+            if child_tokens > 512:
+                meta["token_overflow"] = True
+                if is_table:
+                    meta["warning"] = f"대형 표 (~{child_tokens}T) - 512 토큰 한도 초과 (분할 또는 정제 권장)"
+                else:
+                    meta["warning"] = f"청크 토큰 초과 (~{child_tokens}T) - 512 토큰 한도 초과 (분할 권장)"
+
             child_chunks.append({
                 "chunk_id": cid,
                 "parent_chunk_id": "",  # Parent 패킹 시 주입
@@ -1221,7 +1292,7 @@ class HierarchicalChunker:
                 "table_caption": tbl_caption,
                 "table_footnote": tbl_footnote,
                 "tables": list(current_tables) if current_tables else [],
-                "token_estimate": self.estimate_korean_tokens(full_child_text),
+                "token_estimate": child_tokens,
                 "page_number": start_p,
                 "page_end": end_p,
                 "breadcrumbs": list(current_breadcrumbs),
@@ -1310,10 +1381,21 @@ class HierarchicalChunker:
                     })
                     continue
 
-                # 3) 대형 표 또는 법률 문서 표인 경우: 이전 텍스트 flush 후 독립 원자적 표 청크 생성
+                # 3) 대형 표 또는 법률 문서 표인 경우: 이전 텍스트 유닛 중 단독 표 제목 패턴이 있으면 흡수 후 flush
                 if len(current_text_units) == 1 and current_heading_title and current_text_units[0] in (current_heading_title, f"### {current_heading_title}"):
                     if not caption:
                         caption = current_heading_title
+                    current_text_units = []
+                    current_html_units = []
+                    current_tokens = 0
+                elif len(current_text_units) == 1 and self.RE_TABLE_TITLE_TEXT.search(current_text_units[0]):
+                    if not caption:
+                        m = re.search(r"\*\*\[표\s*(?:제목)?:\s*(.+?)\]\*\*", current_text_units[0])
+                        if m:
+                            caption = m.group(1).strip()
+                        else:
+                            clean_t = self.RE_TABLE_TITLE_TEXT.sub("", current_text_units[0]).strip(" :-_[]()【】*")
+                            caption = clean_t or current_text_units[0]
                     current_text_units = []
                     current_html_units = []
                     current_tokens = 0
@@ -1335,6 +1417,10 @@ class HierarchicalChunker:
                     "page_end": tbl_end_p,
                     "pages": tbl_pages,
                 }
+                if tbl_tokens > 512:
+                    tbl_meta["token_overflow"] = True
+                    tbl_meta["warning"] = f"대형 표 (~{tbl_tokens}T) - 512 토큰 한도 초과 (분할 또는 정제 권장)"
+
                 if current_meta.get("article_display"):
                     tbl_meta["article_no"] = current_meta.get("article_no", "")
                     tbl_meta["article_title"] = current_meta.get("article_title", "")
@@ -1351,7 +1437,7 @@ class HierarchicalChunker:
                     "table_caption": caption,
                     "table_footnote": footnote,
                     "table_type": table_type,
-                    "token_estimate": self.estimate_korean_tokens(search_text),
+                    "token_estimate": tbl_tokens,
                     "page_number": tbl_start_p,
                     "page_end": tbl_end_p,
                     "breadcrumbs": effective_breadcrumbs,

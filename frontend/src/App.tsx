@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from './utils/useTheme';
 import { Header } from './components/Header';
 import { SidebarNav } from './components/SidebarNav';
@@ -110,6 +110,8 @@ export function App() {
   const [pdfList, setPdfList] = useState<PdfItem[]>([]);
   const [globalStats, setGlobalStats] = useState<GlobalStats | undefined>(undefined);
   const [selectedPdf, setSelectedPdf] = useState<string>('');
+  const selectedPdfRef = useRef(selectedPdf);
+  selectedPdfRef.current = selectedPdf;
   const [isUploading, setIsUploading] = useState(false);
 
   const [engine, setEngine] = useState('pipeline');
@@ -248,22 +250,22 @@ export function App() {
       if (data.global_stats) {
         setGlobalStats(data.global_stats);
       }
-      if (data.current) {
-        setSelectedPdf(data.current);
-        if (isLegalDoc(data.current)) {
-          setStrategy('legal');
+      setSelectedPdf((prev) => {
+        if (prev && (data.pdfs || []).some((p) => p.filename === prev)) {
+          return prev;
         }
-        const currentItem = (data.pdfs || []).find((p) => p.filename === data.current);
-        if (currentItem) {
-          setEndPage(Math.max(0, currentItem.total_pages - 1));
+        const next = data.current || (data.pdfs && data.pdfs.length > 0 ? data.pdfs[0].filename : '');
+        if (next) {
+          if (isLegalDoc(next)) {
+            setStrategy('legal');
+          }
+          const currentItem = (data.pdfs || []).find((p) => p.filename === next);
+          if (currentItem) {
+            setEndPage(Math.max(0, currentItem.total_pages - 1));
+          }
         }
-      } else if (data.pdfs && data.pdfs.length > 0) {
-        setSelectedPdf(data.pdfs[0].filename);
-        if (isLegalDoc(data.pdfs[0].filename)) {
-          setStrategy('legal');
-        }
-        setEndPage(Math.max(0, data.pdfs[0].total_pages - 1));
-      }
+        return next;
+      });
     } catch (err: any) {
       console.error(err);
       showToast('PDF 목록을 불러오는 중 오류 발생', true);
@@ -379,20 +381,29 @@ export function App() {
 
         if (job.status === 'completed') {
           setIsParsing(false);
+          const isViewingCompletedDoc = !selectedPdfRef.current || selectedPdfRef.current === job.filename;
+
           if (job.result) {
-            const normalized = normalizeEtlData(job.result);
-            setEtlData(normalized);
-            const firstSec = normalized.sections?.find((s) => (s.child_chunk_ids?.length || 0) > 0) || normalized.sections?.[0];
-            setSelectedSectionId(firstSec?.id || null);
-            showToast(
-              `🎉 백그라운드 ETL 완료! (소요: ${job.elapsed_time || 0}초, 청크: ${job.result.stats.total_child_chunks}개)`
-            );
+            if (isViewingCompletedDoc) {
+              const normalized = normalizeEtlData(job.result);
+              setEtlData(normalized);
+              const firstSec = normalized.sections?.find((s) => (s.child_chunk_ids?.length || 0) > 0) || normalized.sections?.[0];
+              setSelectedSectionId(firstSec?.id || null);
+              showToast(
+                `🎉 [${job.filename || '문서'}] 백그라운드 ETL 완료! (소요: ${job.elapsed_time || 0}초, 청크: ${job.result.stats.total_child_chunks}개)`
+              );
+            } else {
+              // 사용자가 다른 문서를 열어 편집 중인 경우: 화면을 덮어쓰지 않고 안내 알림만 표시
+              showToast(
+                `🎉 [${job.filename || '문서'}] 백그라운드 ETL 완료! 대시보드에서 확인하실 수 있습니다.`
+              );
+            }
           }
           await fetchPdfs();
           clearInterval(intervalId);
         } else if (job.status === 'failed') {
           setIsParsing(false);
-          showToast(`❌ 태스크 실패: ${job.error || '파싱 중 오류 발생'}`, true);
+          showToast(`❌ 태스크 실패 [${job.filename || ''}]: ${job.error || '파싱 중 오류 발생'}`, true);
           await fetchPdfs();
           clearInterval(intervalId);
         }
@@ -2987,7 +2998,11 @@ export function App() {
     if (!etlData) return;
     setIsSaving(true);
     try {
-      const res = await saveEtlResult(etlData);
+      const dataToSave = {
+        ...etlData,
+        active_pdf: etlData.active_pdf || selectedPdf,
+      };
+      const res = await saveEtlResult(dataToSave);
       setIsDirty(false);
       showToast(`🎉 ${res.message || '수정본이 파일(rag_chunks_edited.json)에 성공적으로 저장되었습니다.'}`);
     } catch (err: any) {
@@ -3005,7 +3020,7 @@ export function App() {
 
     setIsResetting(true);
     try {
-      const original = await resetEtlResult(strategy);
+      const original = await resetEtlResult(strategy, selectedPdf);
       const normalized = normalizeEtlData(original);
       setEtlData(normalized);
       setIsDirty(false);

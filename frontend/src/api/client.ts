@@ -125,11 +125,11 @@ export async function saveEtlResult(data: EtlResult): Promise<import('../types')
   return res.json();
 }
 
-export async function resetEtlResult(strategy: string = 'general'): Promise<EtlResult> {
+export async function resetEtlResult(strategy: string = 'general', filename?: string): Promise<EtlResult> {
   const res = await fetch('/api/etl/reset', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ strategy }),
+    body: JSON.stringify({ strategy, filename }),
   });
 
   if (!res.ok) {

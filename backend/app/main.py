@@ -146,12 +146,13 @@ def process_etl_job(task_id: str, req_data: dict, pdf_path_str: str):
         job["progress_msg"] = "문서 위계 구조 및 법률 조문 계층 청킹 중..."
 
         content_list = parse_res.get("content_list", [])
+        target_content_list_path = None
         if parse_res.get("content_list_path"):
-            latest_content_list_path = Path(parse_res["content_list_path"])
+            target_content_list_path = Path(parse_res["content_list_path"])
         elif not content_list:
             found = find_latest_content_list(pdf_path.stem)
             if found:
-                latest_content_list_path = found[0]
+                target_content_list_path = found[0]
                 content_list = found[1]
 
         stem_nfc = unicodedata.normalize("NFC", pdf_path.stem)
@@ -167,18 +168,22 @@ def process_etl_job(task_id: str, req_data: dict, pdf_path_str: str):
         etl_res["strategy"] = strategy
         etl_res["preserve_newlines"] = preserve_newlines
 
-        latest_etl_result = etl_res
-        current_selected_pdf_name = pdf_name_nfc
-
-        # 새로 파싱/청킹된 최신 산출물을 rag_chunks_edited.json에 즉시 영속화하여 이전 수정본 캐시 덮어쓰기
-        if latest_content_list_path and latest_content_list_path.exists():
-            edited_save_path = latest_content_list_path.parent / "rag_chunks_edited.json"
+        # 새로 파싱/청킹된 최신 산출물을 해당 문서 디렉토리의 rag_chunks_edited.json에 즉시 영속화
+        if target_content_list_path and target_content_list_path.exists():
+            edited_save_path = target_content_list_path.parent / "rag_chunks_edited.json"
             try:
                 with open(edited_save_path, "w", encoding="utf-8") as f:
                     json.dump(etl_res, f, ensure_ascii=False, indent=2)
                 _doc_stats_cache.pop(str(edited_save_path), None)
             except Exception as e:
                 print(f"Failed to auto-save rag_chunks_edited.json: {e}")
+
+        # 사용자가 다른 문서를 작업 중인 경우 전역 활성 문서 침범 방지
+        if current_selected_pdf_name is None or normalize_text(current_selected_pdf_name) == normalize_text(pdf_name_nfc):
+            latest_etl_result = etl_res
+            current_selected_pdf_name = pdf_name_nfc
+            if target_content_list_path:
+                latest_content_list_path = target_content_list_path
 
         job["status"] = "completed"
         job["progress_msg"] = "파싱 및 청킹 완료"
@@ -860,21 +865,30 @@ class SaveEtlRequest(BaseModel):
 @app.post("/api/etl/save")
 async def save_etl_result(req: Dict[str, Any]):
     """사용자가 편집한 ETL 결과 전체를 백엔드에 영속 저장"""
-    global latest_etl_result, latest_content_list_path
+    global latest_etl_result, latest_content_list_path, current_selected_pdf_name
 
     etl_data = req.get("etl_result", req)
     if not etl_data or "child_chunks" not in etl_data:
         raise HTTPException(status_code=400, detail="유효한 ETL 결과 데이터가 아닙니다.")
 
-    target_content_list_path = latest_content_list_path
-    if not target_content_list_path or not target_content_list_path.exists():
-        found = find_latest_content_list(current_selected_pdf_name)
-        if found:
-            target_content_list_path = found[0]
-            latest_content_list_path = target_content_list_path
+    target_doc = (
+        etl_data.get("active_pdf")
+        or etl_data.get("doc_title")
+        or req.get("filename")
+        or current_selected_pdf_name
+    )
 
-    if not target_content_list_path:
-        raise HTTPException(status_code=404, detail="저장할 대상 파싱 결과 디렉토리를 찾을 수 없습니다.")
+    found = find_latest_content_list(target_doc) if target_doc else None
+    if not found:
+        if latest_content_list_path and latest_content_list_path.exists():
+            target_content_list_path = latest_content_list_path
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"저장할 대상 파싱 결과 디렉토리를 찾을 수 없습니다. (대상: {target_doc or '알 수 없음'})",
+            )
+    else:
+        target_content_list_path = found[0]
 
     save_path = target_content_list_path.parent / "rag_chunks_edited.json"
     try:
@@ -882,10 +896,18 @@ async def save_etl_result(req: Dict[str, Any]):
         HierarchicalChunker.heal_composite_chunks(etl_data.get("child_chunks", []))
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(etl_data, f, ensure_ascii=False, indent=2)
+        _doc_stats_cache.pop(str(save_path), None)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 저장 실패: {str(e)}")
 
-    latest_etl_result = etl_data
+    # 현재 작업 중인 문서와 일치할 때만 메모리 캐시 갱신
+    if target_doc and current_selected_pdf_name and normalize_text(current_selected_pdf_name) == normalize_text(Path(target_doc).name):
+        latest_content_list_path = target_content_list_path
+        latest_etl_result = etl_data
+    elif not current_selected_pdf_name:
+        latest_content_list_path = target_content_list_path
+        latest_etl_result = etl_data
+
     total_chunks = len(etl_data.get("child_chunks", []))
     saved_time = time.time()
 
@@ -900,27 +922,32 @@ async def save_etl_result(req: Dict[str, Any]):
 class ResetRequest(BaseModel):
     strategy: Optional[str] = "general"
     preserve_newlines: Optional[bool] = True
+    filename: Optional[str] = None
 
 
 @app.post("/api/etl/reset")
 async def reset_etl_result(req: Optional[ResetRequest] = None):
     """수정본(rag_chunks_edited.json)을 제거하고 원본 파싱 결과로 리셋"""
-    global latest_etl_result, latest_content_list_path
+    global latest_etl_result, latest_content_list_path, current_selected_pdf_name
 
-    target_content_list_path = latest_content_list_path
-    if not target_content_list_path or not target_content_list_path.exists():
-        found = find_latest_content_list(current_selected_pdf_name)
-        if found:
-            target_content_list_path = found[0]
-            latest_content_list_path = target_content_list_path
-
-    if not target_content_list_path or not target_content_list_path.exists():
-        raise HTTPException(status_code=404, detail="원본 파싱 결과를 찾을 수 없습니다.")
+    target_doc = (req.filename if req and req.filename else None) or current_selected_pdf_name
+    found = find_latest_content_list(target_doc) if target_doc else None
+    if not found:
+        if latest_content_list_path and latest_content_list_path.exists():
+            target_content_list_path = latest_content_list_path
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"원본 파싱 결과를 찾을 수 없습니다. (대상: {target_doc or '알 수 없음'})",
+            )
+    else:
+        target_content_list_path = found[0]
 
     save_path = target_content_list_path.parent / "rag_chunks_edited.json"
     if save_path.exists():
         try:
             save_path.unlink()
+            _doc_stats_cache.pop(str(save_path), None)
         except Exception as e:
             print(f"수정본 파일 삭제 실패: {e}")
 
@@ -932,14 +959,20 @@ async def reset_etl_result(req: Optional[ResetRequest] = None):
 
     strat = (req.strategy if req and req.strategy else None) or "general"
     preserve_newlines = True if (req and req.preserve_newlines is None) else (req.preserve_newlines if req else True)
-    preferred_name = current_selected_pdf_name or target_content_list_path.parent.parent.name
+    preferred_name = target_doc or current_selected_pdf_name or target_content_list_path.parent.parent.name
     doc_name = unicodedata.normalize("NFC", Path(preferred_name).stem)
     chunker = HierarchicalChunker(doc_id=doc_name, preserve_newlines=preserve_newlines)
     etl_res = chunker.chunk_content_list(content_list, doc_title=doc_name, strategy=strat, preserve_newlines=preserve_newlines)
     etl_res["active_pdf"] = unicodedata.normalize("NFC", preferred_name)
     etl_res["preserve_newlines"] = preserve_newlines
 
-    latest_etl_result = etl_res
+    if target_doc and current_selected_pdf_name and normalize_text(current_selected_pdf_name) == normalize_text(Path(target_doc).name):
+        latest_content_list_path = target_content_list_path
+        latest_etl_result = etl_res
+    elif not current_selected_pdf_name:
+        latest_content_list_path = target_content_list_path
+        latest_etl_result = etl_res
+
     return etl_res
 
 

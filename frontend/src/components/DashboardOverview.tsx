@@ -822,7 +822,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 filteredList.map((item) => {
                   const isCurrent = item.filename === selectedPdf;
                   const isRunningThis =
-                    isParsing && (activeJob?.filename === item.filename || selectedPdf === item.filename);
+                    isParsing && activeJob?.filename === item.filename;
 
                   return (
                     <tr

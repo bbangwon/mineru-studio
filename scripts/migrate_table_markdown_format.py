@@ -116,27 +116,17 @@ def migrate_file(file_path: str) -> Dict[str, Any]:
                 single_t["raw_html"] = clean_html
                 table_updated_count += 1
 
-                # 대형 표 경고 메타데이터
-                if new_tokens > 512:
-                    meta["token_overflow"] = True
-                    meta["warning"] = f"대형 표 (~{new_tokens}T) - 512 토큰 한도 초과 (분할 또는 정제 권장)"
-                    overflow_warning_count += 1
-                else:
-                    meta.pop("token_overflow", None)
-                    meta.pop("warning", None)
+                # 불필요한 경고 메타데이터 제거
+                meta.pop("token_overflow", None)
+                meta.pop("warning", None)
 
-        # 3. 복합 청크(composite) 토큰 및 경고 갱신
+        # 3. 복합 청크(composite) 토큰 갱신 및 경고 메타데이터 제거
         elif kind == "composite":
             comp_text = c.get("text", "")
             comp_tokens = HierarchicalChunker.estimate_korean_tokens(comp_text)
             c["token_estimate"] = comp_tokens
-            if comp_tokens > 512:
-                meta["token_overflow"] = True
-                meta["warning"] = f"대형 표 (~{comp_tokens}T) - 512 토큰 한도 초과 (분할 또는 정제 권장)"
-                overflow_warning_count += 1
-            else:
-                meta.pop("token_overflow", None)
-                meta.pop("warning", None)
+            meta.pop("token_overflow", None)
+            meta.pop("warning", None)
 
     # 4. 복합 청크 HTML 정합성 및 단독 표 오염 복원
     HierarchicalChunker.heal_composite_chunks(children)

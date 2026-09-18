@@ -1552,9 +1552,9 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertIn("| 영업 | 100 | 120 |", tbl_chunk["text"])
         self.assertIn("**[표 각주: 재무기획팀 내부 데이터]**", tbl_chunk["text"])
 
-    def test_large_table_retains_all_rows_and_sets_warning_metadata(self):
-        """대형 표라도 행을 자르지 않고 전체 Markdown Table을 보존하며 token_overflow 및 warning 메타데이터를 부여하는지 검증"""
-        chunker = HierarchicalChunker(doc_id="large_table_warning_test")
+    def test_large_table_retains_all_rows(self):
+        """대형 표라도 행을 자르지 않고 전체 Markdown Table을 보존하며, 불필요한 메타데이터(token_overflow, warning)를 생성하지 않는지 검증"""
+        chunker = HierarchicalChunker(doc_id="large_table_test")
         rows = "".join(f"<tr><td>부서_{i}</td><td>담당업무_{i}_상세데이터항목</td><td>비고_{i}</td></tr>" for i in range(120))
         html = f"<table><tr><th>부서</th><th>업무</th><th>비고</th></tr>{rows}</table>"
         sample = [
@@ -1578,10 +1578,9 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertIn("**[표 제목: 전사 업무분장표]**", tbl_chunk["text"])
         self.assertIn("**[표 각주: 2024년 1월 기준]**", tbl_chunk["text"])
 
-        # 512 토큰 초과이므로 warning 메타데이터가 세팅되어야 함
-        self.assertGreater(tbl_chunk["token_estimate"], 512)
-        self.assertTrue(tbl_chunk["metadata"].get("token_overflow"))
-        self.assertIn("512 토큰 한도 초과", tbl_chunk["metadata"].get("warning", ""))
+        # 메타데이터에 token_overflow 및 warning이 없어야 함
+        self.assertNotIn("token_overflow", tbl_chunk["metadata"])
+        self.assertNotIn("warning", tbl_chunk["metadata"])
 
     def test_composite_chunk_table_markdown_format_consistency(self):
         """복합 청크 내의 표도 **[표 제목: ...]**, **[표 각주: ...]** 및 Markdown Table 형식을 동일하게 따르는지 검증"""

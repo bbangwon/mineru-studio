@@ -366,8 +366,7 @@ class HierarchicalChunker:
     ) -> str:
         """
         원형 표와 복합 청크의 일관성을 위해 Markdown Table 형식으로 표 검색 요약 텍스트를 생성합니다.
-        대형 표라도 임의로 행을 자르지 않고 전체 행을 온전히 보존하며,
-        토큰 초과 여부는 청크 메타데이터(token_overflow, warning) 및 UI를 통해 작업자에게 경고합니다.
+        대형 표라도 임의로 행을 자르지 않고 전체 행을 온전히 보존합니다.
         """
         md_table = cls.html_table_to_markdown(raw_html, caption=caption, footnote=footnote)
         if md_table:
@@ -1278,12 +1277,6 @@ class HierarchicalChunker:
                     meta["type"] = chunk_type
 
             child_tokens = self.estimate_korean_tokens(full_child_text)
-            if child_tokens > 512:
-                meta["token_overflow"] = True
-                if is_table:
-                    meta["warning"] = f"대형 표 (~{child_tokens}T) - 512 토큰 한도 초과 (분할 또는 정제 권장)"
-                else:
-                    meta["warning"] = f"청크 토큰 초과 (~{child_tokens}T) - 512 토큰 한도 초과 (분할 권장)"
 
             child_chunks.append({
                 "chunk_id": cid,
@@ -1419,9 +1412,6 @@ class HierarchicalChunker:
                     "page_end": tbl_end_p,
                     "pages": tbl_pages,
                 }
-                if tbl_tokens > 512:
-                    tbl_meta["token_overflow"] = True
-                    tbl_meta["warning"] = f"대형 표 (~{tbl_tokens}T) - 512 토큰 한도 초과 (분할 또는 정제 권장)"
 
                 if current_meta.get("article_display"):
                     tbl_meta["article_no"] = current_meta.get("article_no", "")

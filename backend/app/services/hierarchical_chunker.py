@@ -1115,7 +1115,15 @@ class HierarchicalChunker:
             if current_tables or self.preserve_newlines:
                 full_child_text = "\n\n".join(u for u in cleaned_units if u)
             else:
-                full_child_text = self.normalize_text_for_embedding(" ".join(cleaned_units))
+                if cleaned_units and cleaned_units[0].startswith("### "):
+                    h_unit = cleaned_units[0]
+                    body_units = cleaned_units[1:]
+                    if body_units:
+                        full_child_text = f"{h_unit}\n\n" + self.normalize_text_for_embedding(" ".join(body_units))
+                    else:
+                        full_child_text = h_unit
+                else:
+                    full_child_text = self.normalize_text_for_embedding(" ".join(cleaned_units))
 
             if not full_child_text:
                 current_text_units = []
@@ -2035,10 +2043,16 @@ class HierarchicalChunker:
             sec = section_obj_map.get(p.get("section_id"))
             if sec and sec.get("breadcrumbs"):
                 p_title = p.get("title")
-                if p_title and p_title != sec.get("title"):
-                    p["breadcrumbs"] = sec["breadcrumbs"] + [p_title]
+                sec_bcs = list(sec["breadcrumbs"])
+                if p_title and p_title != sec.get("title") and p_title not in sec_bcs:
+                    p["breadcrumbs"] = sec_bcs + [p_title]
                 else:
-                    p["breadcrumbs"] = list(sec["breadcrumbs"])
+                    p["breadcrumbs"] = sec_bcs
+
+                p_text = p.get("text", "")
+                if p_text and p_text.startswith("["):
+                    p_bc_str = " > ".join(p["breadcrumbs"])
+                    p["text"] = re.sub(r"^\[([^\]]+?)(\s*\(계속\))?\]", rf"[{p_bc_str}\2]", p_text)
 
             p["child_chunk_ids"] = [
                 child_id_map[cid] for cid in p.get("child_chunk_ids", []) if cid in child_id_map
@@ -2056,7 +2070,31 @@ class HierarchicalChunker:
 
             sec = section_obj_map.get(c.get("section_id"))
             if sec and sec.get("breadcrumbs"):
-                c["breadcrumbs"] = list(sec["breadcrumbs"])
+                sec_bcs = list(sec["breadcrumbs"])
+                sec_title = sec.get("title", "")
+                art_display = c.get("metadata", {}).get("article_display") or (
+                    f"{c.get('metadata', {}).get('article_no')}({c.get('metadata', {}).get('article_title')})"
+                    if c.get("metadata", {}).get("article_title")
+                    else c.get("metadata", {}).get("article_no")
+                )
+                h_suffix = []
+                if art_display:
+                    h_suffix = [art_display]
+                else:
+                    c_text = c.get("text", "")
+                    h_match = re.match(r"^###\s+([^\n]+)", c_text)
+                    if h_match:
+                        h_title = h_match.group(1).strip()
+                        if h_title.endswith(" (계속)"):
+                            h_title = h_title[:-7].strip()
+                        if h_title and h_title != sec_title and h_title not in sec_bcs:
+                            h_suffix = [h_title]
+                    elif c.get("breadcrumbs"):
+                        old_bc = c["breadcrumbs"]
+                        last_item = old_bc[-1] if old_bc else None
+                        if last_item and last_item != sec_title and last_item not in sec_bcs:
+                            h_suffix = [last_item]
+                c["breadcrumbs"] = sec_bcs + h_suffix
 
         res["sections"] = new_sections
         res["parent_sections"] = new_sections

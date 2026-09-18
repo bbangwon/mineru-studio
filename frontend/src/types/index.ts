@@ -85,6 +85,7 @@ export interface ParentChunk {
   token_estimate: number;
   child_chunk_ids: string[];       // 소속된 Child 청크 ID 목록
   page_range: [number, number];
+  breadcrumbs?: string[];
   is_edited?: boolean;
 }
 

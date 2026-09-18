@@ -373,6 +373,60 @@ export function recalculateSectionHierarchy(
 }
 
 /**
+ * Child 청크의 고유 소제목(H3 마크다운 헤딩, 법률 조문, 또는 breadcrumbs 서브셋)을 추출합니다.
+ */
+export function getChildSubheadingSuffix(
+  child: ChildChunk,
+  oldSecBreadcrumbs?: string[],
+  secTitle?: string
+): string[] {
+  // 1. 법률 조문 메타데이터 식별
+  const artDisplay = child.metadata?.article_display ||
+    (child.metadata?.article_title
+      ? `${child.metadata.article_no}(${child.metadata.article_title})`
+      : child.metadata?.article_no);
+  if (artDisplay) {
+    return [artDisplay];
+  }
+
+  // 2. 텍스트 최상단 마크다운 소제목(### 헤딩) 식별
+  if (child.text) {
+    const headingMatch = child.text.match(/^###\s+([^\n]+)/);
+    if (headingMatch) {
+      let hText = headingMatch[1].trim();
+      if (hText.endsWith(' (계속)')) {
+        hText = hText.slice(0, -7).trim();
+      }
+      if (hText && hText !== secTitle && (!oldSecBreadcrumbs || !oldSecBreadcrumbs.includes(hText))) {
+        return [hText];
+      }
+    }
+  }
+
+  // 3. 기존 breadcrumbs 하위 경로 검사
+  const bcs = child.breadcrumbs || [];
+  if (bcs.length > 0) {
+    if (oldSecBreadcrumbs && oldSecBreadcrumbs.length > 0) {
+      if (bcs.length > oldSecBreadcrumbs.length) {
+        const candidateSuffix = bcs.slice(oldSecBreadcrumbs.length);
+        const filtered = candidateSuffix.filter(
+          (item) => item !== secTitle && (!oldSecBreadcrumbs || !oldSecBreadcrumbs.includes(item))
+        );
+        if (filtered.length > 0) {
+          return filtered;
+        }
+      }
+    }
+    const lastItem = bcs[bcs.length - 1];
+    if (lastItem && lastItem !== secTitle && (!oldSecBreadcrumbs || !oldSecBreadcrumbs.includes(lastItem))) {
+      return [lastItem];
+    }
+  }
+
+  return [];
+}
+
+/**
  * 문서 물리적 등장 순서(Page & Block Position)를 기준으로
  * 3단계 계층(Section - Parent - Child)의 전체 ID를 순차적으로 일괄 재정렬(Re-index)합니다.
  * - Section ID: {doc_id}_s00 (루트), {doc_id}_s01, s02...
@@ -573,11 +627,31 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
   const finalSections = recalculateSectionHierarchy(mappedSections, etl.doc_title);
   const sectionObjMap = new Map<string, SectionNode>(finalSections.map((s) => [s.id, s]));
 
-  const finalParents: ParentChunk[] = newParents.map((parent) => ({
-    ...parent,
-    section_id: sectionIdMap[parent.section_id] || parent.section_id,
-    child_chunk_ids: parent.child_chunk_ids.map((cid) => childIdMap[cid] || cid).filter(Boolean),
-  }));
+  const finalParents: ParentChunk[] = newParents.map((parent) => {
+    const newSid = sectionIdMap[parent.section_id] || parent.section_id;
+    const sec = sectionObjMap.get(newSid);
+    let pBcs = parent.breadcrumbs;
+    let pText = parent.text;
+    if (sec?.breadcrumbs) {
+      const secBcs = sec.breadcrumbs;
+      if (parent.title && parent.title !== sec.title && !secBcs.includes(parent.title)) {
+        pBcs = [...secBcs, parent.title];
+      } else {
+        pBcs = [...secBcs];
+      }
+      if (pText && pText.startsWith('[')) {
+        const pBcStr = pBcs.join(' > ');
+        pText = pText.replace(/^\[([^\]]+?)(\s*\(계속\))?\]/, (_match, _old, cont) => `[${pBcStr}${cont || ''}]`);
+      }
+    }
+    return {
+      ...parent,
+      section_id: newSid,
+      breadcrumbs: pBcs,
+      text: pText,
+      child_chunk_ids: parent.child_chunk_ids.map((cid) => childIdMap[cid] || cid).filter(Boolean),
+    };
+  });
 
   const finalChildren: ChildChunk[] = newChildren.map((child) => {
     const oldPid = child.parent_chunk_id || child.parent_id || '';
@@ -586,12 +660,20 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
     const newSid = sectionIdMap[oldSid] || oldSid;
     const sec = sectionObjMap.get(newSid);
 
+    let childBcs: string[];
+    if (sec?.breadcrumbs) {
+      const suffix = getChildSubheadingSuffix(child, undefined, sec.title);
+      childBcs = [...sec.breadcrumbs, ...suffix];
+    } else {
+      childBcs = child.breadcrumbs;
+    }
+
     return {
       ...child,
       parent_chunk_id: newPid,
       parent_id: newPid,
       section_id: newSid,
-      breadcrumbs: sec?.breadcrumbs ? [...sec.breadcrumbs] : child.breadcrumbs,
+      breadcrumbs: childBcs,
     };
   });
 

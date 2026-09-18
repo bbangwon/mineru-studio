@@ -1483,7 +1483,42 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertNotIn("table_type", c_rec["tables"][0])
         self.assertNotIn("table_type", c_rec["tables"][1])
 
+    def test_reindex_preserves_subheadings_and_articles(self):
+        """reindex_etl_result 실행 시 소제목(H3), 법률 조문, Parent 브레드크럼 및 텍스트 헤더가 유지되는지 검증"""
+        chunker = HierarchicalChunker(doc_id="reindex_subheading_test")
+        sample_general = [
+            {"type": "title", "content": {"title_content": [{"type": "text", "content": "1. 서론"}], "level": 1}, "page_idx": 0},
+            {"type": "title", "content": {"title_content": [{"type": "text", "content": "1.1 배경"}], "level": 3}, "page_idx": 0},
+            {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "배경 내용입니다."}]}, "page_idx": 0},
+            {"type": "title", "content": {"title_content": [{"type": "text", "content": "1.2 목적"}], "level": 3}, "page_idx": 0},
+            {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "목적 내용입니다."}]}, "page_idx": 0},
+        ]
+        etl_general = chunker.chunk_content_list(sample_general, doc_title="보고서", strategy="general")
+        self.assertEqual(etl_general["child_chunks"][0]["breadcrumbs"], ["보고서", "1. 서론", "1.1 배경"])
+        self.assertEqual(etl_general["child_chunks"][1]["breadcrumbs"], ["보고서", "1. 서론", "1.2 목적"])
+
+        # Reindex
+        reindexed_gen = HierarchicalChunker.reindex_etl_result(etl_general)
+        self.assertEqual(reindexed_gen["child_chunks"][0]["breadcrumbs"], ["보고서", "1. 서론", "1.1 배경"])
+        self.assertEqual(reindexed_gen["child_chunks"][1]["breadcrumbs"], ["보고서", "1. 서론", "1.2 목적"])
+        self.assertTrue(reindexed_gen["child_chunks"][0]["text"].startswith("### 1.1 배경\n\n"))
+        self.assertTrue(reindexed_gen["parent_chunks"][0]["text"].startswith("[보고서 > 1. 서론]"))
+
+        # 법률 문서 검증
+        sample_legal = [
+            {"type": "text", "text": "제1장 총칙", "text_level": 1, "page_idx": 0},
+            {"type": "text", "text": "제1조(목적) ① 목적 내용입니다.", "page_idx": 0},
+        ]
+        etl_legal = chunker.chunk_content_list(sample_legal, doc_title="사규", strategy="legal")
+        self.assertEqual(etl_legal["child_chunks"][0]["breadcrumbs"], ["사규", "제1장 총칙", "제1조(목적)"])
+
+        reindexed_leg = HierarchicalChunker.reindex_etl_result(etl_legal)
+        self.assertEqual(reindexed_leg["child_chunks"][0]["breadcrumbs"], ["사규", "제1장 총칙", "제1조(목적)"])
+        self.assertEqual(reindexed_leg["parent_chunks"][0]["breadcrumbs"], ["사규", "제1장 총칙", "제1조(목적)"])
+        self.assertTrue(reindexed_leg["parent_chunks"][0]["text"].startswith("[사규 > 제1장 총칙 > 제1조(목적)]"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -39,6 +39,7 @@ import {
   syncHierarchyOrder,
   estimateKoreanTokens,
   formatDisplayChunkId,
+  getChildSubheadingSuffix,
 } from './utils/idUtils';
 import { syncChunkPageMetadata, extractCustomMetadata, applyBulkCustomMetadata } from './utils/pageUtils';
 import { deriveChunkTypeAndTables, mergeChunkAssets } from './utils/tableChunkUtils';
@@ -1613,9 +1614,15 @@ export function App() {
         c.parent_id === pid;
 
       if (belongs) {
-        const newBreadcrumbs = targetParent.title
-          ? [...(newSection.breadcrumbs || [newSection.title]), targetParent.title]
-          : [...(newSection.breadcrumbs || [newSection.title])];
+        const suffix = getChildSubheadingSuffix(c, undefined, newSection.title);
+        let newBreadcrumbs: string[];
+        if (suffix.length > 0) {
+          newBreadcrumbs = [...(newSection.breadcrumbs || [newSection.title]), ...suffix];
+        } else if (targetParent.title && targetParent.title !== newSection.title && !(newSection.breadcrumbs || []).includes(targetParent.title)) {
+          newBreadcrumbs = [...(newSection.breadcrumbs || [newSection.title]), targetParent.title];
+        } else {
+          newBreadcrumbs = [...(newSection.breadcrumbs || [newSection.title])];
+        }
 
         return {
           ...c,
@@ -2417,9 +2424,24 @@ export function App() {
     const updatedParentChunks = parentChunks.map((p) => {
       const secId = p.section_id;
       if (secId && sectionBreadcrumbsMap.has(secId)) {
+        const secBcs = sectionBreadcrumbsMap.get(secId)!;
+        const sec = sections.find((s) => s.id === secId);
+        const pTitle = p.title;
+        let pBcs: string[];
+        if (pTitle && pTitle !== sec?.title && !secBcs.includes(pTitle)) {
+          pBcs = [...secBcs, pTitle];
+        } else {
+          pBcs = [...secBcs];
+        }
+        let pText = p.text;
+        if (pText && pText.startsWith('[')) {
+          const pBcStr = pBcs.join(' > ');
+          pText = pText.replace(/^\[([^\]]+?)(\s*\(계속\))?\]/, (_match, _old, cont) => `[${pBcStr}${cont || ''}]`);
+        }
         return {
           ...p,
-          breadcrumbs: sectionBreadcrumbsMap.get(secId),
+          breadcrumbs: pBcs,
+          text: pText,
           is_edited: true,
         };
       }
@@ -2429,9 +2451,11 @@ export function App() {
     const updatedChildChunks = childChunks.map((c) => {
       const secId = c.section_id;
       if (secId && sectionBreadcrumbsMap.has(secId)) {
-        const parentChunk = parentChunks.find((p) => (p.parent_chunk_id || p.id) === (c.parent_chunk_id || c.parent_id));
         const secBcs = sectionBreadcrumbsMap.get(secId)!;
-        const childBcs = parentChunk?.title ? [...secBcs, parentChunk.title] : [...secBcs];
+        const oldSec = sections.find((s) => s.id === secId);
+        const oldSecBcs = oldSec?.breadcrumbs;
+        const suffix = getChildSubheadingSuffix(c, oldSecBcs, oldSec?.title);
+        const childBcs = [...secBcs, ...suffix];
         return {
           ...c,
           breadcrumbs: childBcs,
@@ -2791,16 +2815,23 @@ export function App() {
       targetSection.breadcrumbs && targetSection.breadcrumbs.length > 0
         ? targetSection.breadcrumbs
         : [targetSection.title];
-    const newBreadcrumbs = updates.title
-      ? [...secBreadcrumbs, updates.title]
-      : [...secBreadcrumbs];
 
     const updatedChildren = (etlData.child_chunks || []).map((c) => {
       if (childIdSet.has(c.chunk_id) || c.parent_chunk_id === pid || c.parent_id === pid) {
+        const suffix = getChildSubheadingSuffix(c, undefined, targetSection.title);
+        let childBcs: string[];
+        if (suffix.length > 0) {
+          childBcs = [...secBreadcrumbs, ...suffix];
+        } else if (updates.title && updates.title !== targetSection.title && !secBreadcrumbs.includes(updates.title)) {
+          childBcs = [...secBreadcrumbs, updates.title];
+        } else {
+          childBcs = [...secBreadcrumbs];
+        }
+
         return {
           ...c,
           section_id: newSectionId,
-          breadcrumbs: newBreadcrumbs,
+          breadcrumbs: childBcs,
           is_edited: true,
         };
       }

@@ -747,18 +747,24 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   }, [activeChunk?.chunk_id, activeChunk?.page_number, activeChunk?.page_end]);
 
   // 복합(composite) 청크의 raw_html에 문단 태그가 누락된 구버전 데이터 자동 복원
+  // 단독 표(table) 청크가 <p> 태그로 오염된 경우 순수 tables[0].raw_html로 자가 복구
   useEffect(() => {
     if (activeChunk) {
-      const isComposite =
-        activeChunk.chunk_type === 'composite' ||
-        Boolean((activeChunk.tables || activeChunk.metadata?.tables || []).length && activeChunk.chunk_type !== 'table');
-      if (isComposite) {
+      const kind = getChunkKind(activeChunk);
+      if (kind === 'composite') {
         const raw = activeChunk.raw_html || '';
         if (!raw || !/<p\b|<div\b|<span\b/i.test(raw)) {
           const healedRaw = reconstructCompositeHtml(activeChunk);
           if (healedRaw && healedRaw !== raw) {
             onUpdateChunk({ ...activeChunk, raw_html: healedRaw, is_edited: true }, true);
           }
+        }
+      } else if (kind === 'table') {
+        const tables = activeChunk.tables || activeChunk.metadata?.tables || [];
+        const cleanHtml = tables[0]?.raw_html;
+        const currentRaw = activeChunk.raw_html || '';
+        if (cleanHtml && currentRaw && /<p\b|<div\b|<span\b/i.test(currentRaw)) {
+          onUpdateChunk({ ...activeChunk, raw_html: cleanHtml, is_edited: true }, true);
         }
       }
     }

@@ -33,6 +33,9 @@ export function hasBodyText(chunk: Partial<ChildChunk> | null | undefined): bool
   if (chunk.table_caption) captions.push(chunk.table_caption.trim());
   if (chunk.table_footnote) footnotes.push(chunk.table_footnote.trim());
 
+  const reTableTitle = /^(?:\*\*\[표\s*(?:제목)?:\s*|\[\s*표|【\s*표\s*】|표\s*\d+|Table\s*\d+)/i;
+  const reTableFootnote = /^(?:\*\*\[표\s*각주:\s*|※|\(?주\)?\s*[:\)]|출처\s*[:\)]|참고\s*[:\)]|\*|\#)/i;
+
   // 표 마크다운 문법(| ... |), 캡션([표...]), 각주(*, ※)를 제외한 순수 텍스트가 존재하는지 판별
   const nonTableText = trimmed
     .split('\n')
@@ -40,8 +43,8 @@ export function hasBodyText(chunk: Partial<ChildChunk> | null | undefined): bool
     .filter((line) => {
       if (!line) return false;
       if (line.startsWith('|')) return false;
-      if (line.startsWith('[표') || captions.some((cap) => cap && line.includes(cap))) return false;
-      if (line.startsWith('*') || line.startsWith('※') || line.startsWith('출처:') || footnotes.some((fn) => fn && line.includes(fn))) return false;
+      if (reTableTitle.test(line) || captions.some((cap) => cap && line.includes(cap))) return false;
+      if (reTableFootnote.test(line) || footnotes.some((fn) => fn && line.includes(fn))) return false;
       return true;
     })
     .join('')

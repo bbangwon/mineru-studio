@@ -1,4 +1,5 @@
 import type { ChildChunk, EmbeddedTableItem } from '../types';
+import { getChunkKind } from './chunkKindUtils';
 
 /**
  * 청크의 페이지 번호/범위를 읽기 쉬운 문자열로 포맷팅합니다. (예: "p.3", "p.3~p.5")
@@ -348,7 +349,9 @@ export function reconstructCompositeHtml(
 
   for (const block of blocks) {
     const lines = block.split('\n');
-    const isMdTable = lines.some((l) => l.trim().startsWith('|')) && lines.some((l) => l.includes('---'));
+    const isMdTable =
+      (lines.some((l) => l.trim().startsWith('|')) && lines.some((l) => l.includes('---'))) ||
+      (/\|/g.test(block) && /---/g.test(block));
     const isTablePlaceholder = (block === '[표]' || /^\[표\s*\d*\]$/.test(block)) && !isMdTable;
 
     if (isMdTable || isTablePlaceholder) {
@@ -378,12 +381,23 @@ export function reconstructCompositeHtml(
 /**
  * composite 청크의 raw_html에 문단 태그가 누락된 경우,
  * reconstructCompositeHtml을 이용해 raw_html을 완성형으로 복원합니다.
+ * 단독 표(table) 청크가 <p> 태그로 오염된 경우 tables[0].raw_html로 자가 복구합니다.
  */
 export function healCompositeChunk(chunk: ChildChunk): ChildChunk {
-  const isComposite =
-    chunk.chunk_type === 'composite' ||
-    Boolean((chunk.tables || chunk.metadata?.tables || []).length && chunk.chunk_type !== 'table');
-  if (!isComposite) return chunk;
+  const kind = getChunkKind(chunk);
+  if (kind !== 'composite') {
+    if (kind === 'table') {
+      const tables: EmbeddedTableItem[] = chunk.tables || chunk.metadata?.tables || [];
+      const cleanHtml = tables[0]?.raw_html;
+      if (cleanHtml && chunk.raw_html && /<p\b|<div\b|<span\b/i.test(chunk.raw_html)) {
+        return {
+          ...chunk,
+          raw_html: cleanHtml,
+        };
+      }
+    }
+    return chunk;
+  }
 
   const currentRaw = chunk.raw_html || '';
   if (!currentRaw || !/<p\b|<div\b|<span\b/i.test(currentRaw)) {

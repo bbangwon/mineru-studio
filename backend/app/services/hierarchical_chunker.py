@@ -489,8 +489,8 @@ class HierarchicalChunker:
 
         return "\n\n".join(reconstructed_parts) or raw_html
 
-    @staticmethod
-    def get_chunk_kind(chunk: Dict[str, Any]) -> str:
+    @classmethod
+    def get_chunk_kind(cls, chunk: Dict[str, Any]) -> str:
         """
         청크의 실제 데이터(tables, text, metadata)를 기반으로 UI 및 통계용 종류를 동적 계산합니다.
         """
@@ -516,8 +516,8 @@ class HierarchicalChunker:
             return "composite"
 
         text = (chunk.get("text") or "").strip()
-        caption = str(chunk.get("table_caption") or "").strip()
-        footnote = str(chunk.get("table_footnote") or "").strip()
+        caption = str(chunk.get("table_caption") or (tables[0].get("caption") if tables else "") or "").strip()
+        footnote = str(chunk.get("table_footnote") or (tables[0].get("footnote") if tables else "") or "").strip()
 
         non_table_lines = []
         for line in text.split("\n"):
@@ -526,9 +526,9 @@ class HierarchicalChunker:
                 continue
             if line_str.startswith("|"):
                 continue
-            if line_str.startswith("[표") or (caption and caption in line_str):
+            if line_str.startswith("[표") or (caption and caption in line_str) or cls.RE_TABLE_TITLE_TEXT.search(line_str):
                 continue
-            if line_str.startswith(("*", "※", "출처:")) or (footnote and footnote in line_str):
+            if line_str.startswith(("*", "※", "출처:")) or (footnote and footnote in line_str) or cls.RE_TABLE_FOOTNOTE_TEXT.search(line_str):
                 continue
             non_table_lines.append(line_str)
 
@@ -541,19 +541,25 @@ class HierarchicalChunker:
     def heal_composite_chunks(cls, child_chunks: List[Dict[str, Any]]) -> bool:
         """
         child_chunks 목록 중 표와 본문이 함께 있는 복합 청크의 raw_html에 문단 태그가 누락된 항목을 자동 복원합니다.
-        하나 이상 복원되었으면 True를 반환합니다.
+        순수 단독 표(table) 청크는 절대 복합 HTML로 오염시키지 않으며, 오염된 경우 tables[0].raw_html로 복구합니다.
         """
         changed = False
         for c in child_chunks:
             tables = c.get("tables") or (c.get("metadata") or {}).get("tables") or []
-            is_comp = cls.get_chunk_kind(c) == "composite" or bool(tables and c.get("text", "").strip())
-            if is_comp:
+            kind = cls.get_chunk_kind(c)
+            if kind == "composite":
                 current_raw = c.get("raw_html") or ""
                 if not re.search(r"<(?:p|div|span)\b", current_raw, re.I):
                     reconstructed = cls.reconstruct_composite_raw_html(c)
                     if reconstructed and reconstructed != current_raw:
                         c["raw_html"] = reconstructed
                         changed = True
+            elif kind == "table" and tables:
+                current_raw = c.get("raw_html") or ""
+                clean_table_html = tables[0].get("raw_html") or ""
+                if clean_table_html and re.search(r"<(?:p|div|span)\b", current_raw, re.I):
+                    c["raw_html"] = clean_table_html
+                    changed = True
         return changed
 
     def __init__(self, doc_id: Optional[str] = None, filter_headers_footers: bool = True, preserve_newlines: bool = False):
@@ -1245,9 +1251,7 @@ class HierarchicalChunker:
                     meta["type"] = "table"
                     meta["has_tables"] = True
                     meta["table_count"] = 1
-                    full_child_text = self.normalize_text_for_embedding(
-                        self.generate_table_search_text(combined_raw_html, tbl_caption or "", tbl_footnote or "")
-                    )
+                    full_child_text = self.generate_table_search_text(combined_raw_html, tbl_caption or "", tbl_footnote or "")
                 else:
                     # 복합 청크: 문단(<p>)과 표(<table>)가 문서 순서대로 결합된 완성형 HTML
                     combined_raw_html = "\n\n".join(u for u in current_html_units if u.strip())
@@ -1324,9 +1328,7 @@ class HierarchicalChunker:
                     tbl_end_p = tbl_start_p
                 tbl_pages = list(range(tbl_start_p, tbl_end_p + 1))
 
-                search_text = self.normalize_text_for_embedding(
-                    self.generate_table_search_text(raw_html, caption, footnote)
-                )
+                search_text = self.generate_table_search_text(raw_html, caption, footnote)
                 tbl_tokens = self.estimate_korean_tokens(search_text)
                 raw_html_tokens = self.estimate_korean_tokens(raw_html) if raw_html else tbl_tokens
 

@@ -454,11 +454,12 @@ class TestHierarchicalChunker(unittest.TestCase):
         chunker = HierarchicalChunker(doc_id="newline_test_doc")
         etl_res = chunker.chunk_content_list(sample_content_list, doc_title="조례집", strategy="legal")
 
-        # 모든 Child Chunk에 줄바꿈이 전혀 없어야 함!
+        # 일반 문단 Child Chunk에 줄바꿈이 전혀 없어야 함 (표 청크는 Markdown Table 구조적 개행 유지)
         self.assertGreater(len(etl_res["child_chunks"]), 0)
         for child in etl_res["child_chunks"]:
-            self.assertNotIn("\n", child["text"], f"Child chunk {child['chunk_id']} contains newline: {child['text']}")
-            self.assertNotIn("\r", child["text"])
+            if not child.get("is_table"):
+                self.assertNotIn("\n", child["text"], f"Child chunk {child['chunk_id']} contains newline: {child['text']}")
+                self.assertNotIn("\r", child["text"])
 
         # Parent Chunk에는 문단/목록 구조적 개행(\n\n 또는 \n)이 존재해야 함!
         self.assertGreater(len(etl_res["parent_chunks"]), 0)

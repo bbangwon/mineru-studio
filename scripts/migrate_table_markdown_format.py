@@ -85,26 +85,35 @@ def migrate_file(file_path: str) -> Dict[str, Any]:
             c["is_atomic_table"] = True
             promoted_to_table_count += 1
 
-        # 2. 단독 표 청크 텍스트 갱신
+        # 2. 단독 표 청크 텍스트 갱신 및 raw_html 정제
         if kind == "table" or (not kind and tables and len(tables) == 1):
             single_t = tables[0] if tables else {}
-            raw_html = single_t.get("raw_html") or c.get("raw_html") or ""
+            # tables[0]의 순수 raw_html이 있으면 우선 복원
+            clean_html = single_t.get("raw_html") or ""
+            if not clean_html:
+                current_raw = c.get("raw_html") or ""
+                # 혹시 앞쪽에 <p>...</p>로 오염되어 있다면 <table... 추출
+                m = re.search(r"(<table\b[\s\S]*?</table>)", current_raw, re.I)
+                clean_html = m.group(1) if m else current_raw
+
             caption = single_t.get("caption") or c.get("table_caption") or ""
             footnote = single_t.get("footnote") or c.get("table_footnote") or ""
 
-            if raw_html:
+            if clean_html:
                 new_text = HierarchicalChunker.generate_table_search_text(
-                    raw_html=raw_html,
+                    raw_html=clean_html,
                     caption=caption,
                     footnote=footnote
                 )
-                normalized_text = HierarchicalChunker.normalize_text_for_embedding(new_text)
-                new_tokens = HierarchicalChunker.estimate_korean_tokens(normalized_text)
+                new_tokens = HierarchicalChunker.estimate_korean_tokens(new_text)
 
-                c["text"] = normalized_text
+                # 마크다운 표 줄바꿈 보존
+                c["text"] = new_text
+                c["raw_html"] = clean_html
                 c["token_estimate"] = new_tokens
                 single_t["caption"] = caption
                 single_t["footnote"] = footnote
+                single_t["raw_html"] = clean_html
                 table_updated_count += 1
 
                 # 대형 표 경고 메타데이터
@@ -129,7 +138,10 @@ def migrate_file(file_path: str) -> Dict[str, Any]:
                 meta.pop("token_overflow", None)
                 meta.pop("warning", None)
 
-    # 4. stats 재계산
+    # 4. 복합 청크 HTML 정합성 및 단독 표 오염 복원
+    HierarchicalChunker.heal_composite_chunks(children)
+
+    # 5. stats 재계산
     new_stats = HierarchicalChunker._calculate_stats(sections, parents, children)
     data["stats"] = new_stats
 

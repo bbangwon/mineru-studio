@@ -347,7 +347,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
         (c) =>
           c.chunk_id.toLowerCase().includes(term) ||
           (c.text && c.text.toLowerCase().includes(term)) ||
-          (c.table_caption && c.table_caption.toLowerCase().includes(term))
+          Boolean(c.tables?.some((t) => (t.caption && t.caption.toLowerCase().includes(term)) || (t.footnote && t.footnote.toLowerCase().includes(term)))) ||
+          Boolean(c.table_caption && c.table_caption.toLowerCase().includes(term))
       );
       if (titleMatch || parentMatch || chunkMatch) {
         matched.add(s.id);
@@ -511,7 +512,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     if (isComposite) {
       preview = `[복합: 표${tableList.length || 1}] ${chunk.text?.slice(0, 24) || ''}`;
     } else if (isTable) {
-      preview = chunk.table_caption ? `[표] ${chunk.table_caption}` : '[원형 표]';
+      const tableCap = tableList[0]?.caption || chunk.table_caption;
+      preview = tableCap ? `[표] ${tableCap}` : '[원형 표]';
     } else if (isArticle) {
       const artNo = chunk.metadata?.article_no || '조문';
       const firstLine = chunk.text?.trim().split('\n')[0] || '';
@@ -680,7 +682,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
         (c) =>
           c.text.toLowerCase().includes(q) ||
           c.chunk_id.toLowerCase().includes(q) ||
-          (c.table_caption && c.table_caption.toLowerCase().includes(q))
+          Boolean(c.tables?.some((t) => (t.caption && t.caption.toLowerCase().includes(q)) || (t.footnote && t.footnote.toLowerCase().includes(q)))) ||
+          Boolean(c.table_caption && c.table_caption.toLowerCase().includes(q))
       );
     }
 
@@ -971,16 +974,25 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     onUpdateChunk(updated, true);
   };
 
-  // Update caption or footnote of a specific table inside a composite chunk
-  const handleCompositeTableFieldChange = (
+  // Update caption or footnote of a specific table inside a chunk (both atomic and composite)
+  const handleTableItemFieldChange = (
     tableIndex: number,
     field: 'caption' | 'footnote',
     value: string
   ) => {
     if (!activeChunk) return;
-    const currentTables: EmbeddedTableItem[] = [
+    let currentTables: EmbeddedTableItem[] = [
       ...(activeChunk.tables || activeChunk.metadata?.tables || []),
     ];
+    if (currentTables.length === 0) {
+      currentTables = [{
+        table_index: 0,
+        table_id: `${activeChunk.chunk_id}_t1`,
+        raw_html: activeChunk.raw_html || '',
+        caption: '',
+        footnote: '',
+      }];
+    }
     if (tableIndex < 0 || tableIndex >= currentTables.length) return;
 
     currentTables[tableIndex] = {
@@ -1007,6 +1019,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     onUpdateChunk(updated, true);
   };
 
+  const handleCompositeTableFieldChange = handleTableItemFieldChange;
+
   // Open table editor modal
   const handleOpenTableEditor = (
     chunk: ChildChunk,
@@ -1015,13 +1029,15 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     caption?: string,
     footnote?: string
   ) => {
+    const chunkTables = chunk.tables || chunk.metadata?.tables || [];
+    const targetTable = chunkTables[tableIndex];
     setTableEditorTarget({
       chunk,
       tableIndex,
-      initialHtml: html || (chunk.chunk_type === 'table' ? chunk.raw_html : undefined),
+      initialHtml: html || targetTable?.raw_html || (chunk.chunk_type === 'table' ? chunk.raw_html : undefined),
       initialMarkdown: chunk.text,
-      caption: caption || chunk.table_caption,
-      footnote: footnote || chunk.table_footnote,
+      caption: caption ?? targetTable?.caption ?? chunk.table_caption,
+      footnote: footnote ?? targetTable?.footnote ?? chunk.table_footnote,
     });
   };
 
@@ -2802,9 +2818,13 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
                             {/* Text Snippet (Line Clamped) */}
                             <div className="pt-2 text-slate-700 dark:text-slate-200 leading-snug line-clamp-2 text-[11px]">
-                              {isTable && chunk.table_caption
-                                ? `[표] ${chunk.table_caption}`
-                                : chunk.text || (chunk.raw_html ? 'HTML 표 데이터' : '(빈 청크)')}
+                              {(() => {
+                                const tblCap = chunk.tables?.[0]?.caption || chunk.metadata?.tables?.[0]?.caption || chunk.table_caption;
+                                if (isTable && tblCap) {
+                                  return `[표] ${tblCap}`;
+                                }
+                                return chunk.text || (chunk.raw_html ? 'HTML 표 데이터' : '(빈 청크)');
+                              })()}
                             </div>
 
                             {/* Footer Row: Parent Section & Token count */}
@@ -3356,7 +3376,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenTableEditor(activeChunk, 0, activeChunk.raw_html, activeChunk.table_caption, activeChunk.table_footnote)}
+                                  onClick={() => handleOpenTableEditor(activeChunk, 0, activeChunk.raw_html, activeTableList[0]?.caption, activeTableList[0]?.footnote)}
                                   className="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
                                   title="표 셀 편집 및 가로/세로 셀 병합 창 열기"
                                 >
@@ -3389,8 +3409,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                 <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 제목 (Caption)</label>
                                 <input
                                   type="text"
-                                  value={activeChunk.table_caption || ''}
-                                  onChange={(e) => handleFieldChange('table_caption', e.target.value)}
+                                  value={activeTableList[0]?.caption || ''}
+                                  onChange={(e) => handleTableItemFieldChange(0, 'caption', e.target.value)}
                                   placeholder="예: [표 1] 세부기준"
                                   className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
                                 />
@@ -3399,8 +3419,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                 <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 각주 (Footnote)</label>
                                 <input
                                   type="text"
-                                  value={activeChunk.table_footnote || ''}
-                                  onChange={(e) => handleFieldChange('table_footnote', e.target.value)}
+                                  value={activeTableList[0]?.footnote || ''}
+                                  onChange={(e) => handleTableItemFieldChange(0, 'footnote', e.target.value)}
                                   placeholder="예: ※ 기준치 초과 시 재검사"
                                   className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
                                 />

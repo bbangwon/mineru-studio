@@ -83,7 +83,8 @@ export const ChunkExplorer: React.FC<ChunkExplorerProps> = ({
         (c) =>
           c.text.toLowerCase().includes(q) ||
           c.chunk_id.toLowerCase().includes(q) ||
-          (c.table_caption && c.table_caption.toLowerCase().includes(q))
+          Boolean(c.tables?.some((t) => (t.caption && t.caption.toLowerCase().includes(q)) || (t.footnote && t.footnote.toLowerCase().includes(q)))) ||
+          Boolean(c.table_caption && c.table_caption.toLowerCase().includes(q))
       );
     }
 

@@ -22,8 +22,16 @@ export function hasBodyText(chunk: Partial<ChildChunk> | null | undefined): bool
   const trimmed = chunk.text.trim();
   if (!trimmed) return false;
 
-  const caption = (chunk.table_caption || '').trim();
-  const footnote = (chunk.table_footnote || '').trim();
+  const captions: string[] = [];
+  const footnotes: string[] = [];
+  if (chunk.tables && Array.isArray(chunk.tables)) {
+    for (const t of chunk.tables) {
+      if (t.caption) captions.push(t.caption.trim());
+      if (t.footnote) footnotes.push(t.footnote.trim());
+    }
+  }
+  if (chunk.table_caption) captions.push(chunk.table_caption.trim());
+  if (chunk.table_footnote) footnotes.push(chunk.table_footnote.trim());
 
   // 표 마크다운 문법(| ... |), 캡션([표...]), 각주(*, ※)를 제외한 순수 텍스트가 존재하는지 판별
   const nonTableText = trimmed
@@ -32,8 +40,8 @@ export function hasBodyText(chunk: Partial<ChildChunk> | null | undefined): bool
     .filter((line) => {
       if (!line) return false;
       if (line.startsWith('|')) return false;
-      if (line.startsWith('[표') || (caption && line.includes(caption))) return false;
-      if (line.startsWith('*') || line.startsWith('※') || line.startsWith('출처:') || (footnote && line.includes(footnote))) return false;
+      if (line.startsWith('[표') || captions.some((cap) => cap && line.includes(cap))) return false;
+      if (line.startsWith('*') || line.startsWith('※') || line.startsWith('출처:') || footnotes.some((fn) => fn && line.includes(fn))) return false;
       return true;
     })
     .join('')

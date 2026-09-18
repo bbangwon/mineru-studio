@@ -234,11 +234,23 @@ export function deriveChunkTypeAndTables(
   const tableHtmlMatches = origRawHtml.match(/<table\b[\s\S]*?<\/table>/gi) || [];
   const matchedHtml = tableHtmlMatches.length > 0 ? tableHtmlMatches.join('\n\n') : origRawHtml;
 
+  const derivedTables = origTables.length > 0
+    ? origTables
+    : (matchedHtml
+        ? [{
+            table_index: 0,
+            table_id: originalChunk ? `${originalChunk.chunk_id}_t1` : undefined,
+            raw_html: matchedHtml,
+            caption: originalChunk?.tables?.[0]?.caption || originalChunk?.table_caption,
+            footnote: originalChunk?.tables?.[0]?.footnote || originalChunk?.table_footnote,
+          }]
+        : undefined);
+
   return {
-    tables: origTables.length > 0 ? origTables : undefined,
+    tables: derivedTables,
     raw_html: matchedHtml || undefined,
-    table_caption: originalChunk?.table_caption,
-    table_footnote: originalChunk?.table_footnote,
+    table_caption: undefined,
+    table_footnote: undefined,
   };
 }
 

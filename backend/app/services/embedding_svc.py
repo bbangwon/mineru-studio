@@ -278,6 +278,17 @@ class EmbeddingService:
             }
             pure_custom_meta = {k: v for k, v in chunk_meta.items() if k not in reserved_keys}
 
+            first_tbl_cap = (
+                chunk_tables[0].get("caption", "")
+                if chunk_tables and isinstance(chunk_tables[0], dict)
+                else ""
+            )
+            first_tbl_fn = (
+                chunk_tables[0].get("footnote", "")
+                if chunk_tables and isinstance(chunk_tables[0], dict)
+                else ""
+            )
+
             payload = {
                 "chunk_id": cid,
                 "doc_id": doc_id_val,
@@ -286,7 +297,7 @@ class EmbeddingService:
                 "parent_text": p_text,
                 "section_id": chunk.get("section_id", ""),
                 "chunk_type": chunk_kind,
-                "title": chunk.get("title") or chunk.get("table_caption") or "",
+                "title": chunk.get("title") or (first_tbl_cap if is_atomic_table else "") or chunk.get("table_caption") or "",
                 "page_number": page_start,
                 "page_end": page_end,
                 "page_idx": page_idx,
@@ -297,8 +308,8 @@ class EmbeddingService:
                 "token_estimate": token_count,
                 "char_length": len(texts[i]),
                 "raw_html": chunk.get("raw_html"),
-                "table_caption": chunk.get("table_caption") if is_atomic_table else None,
-                "table_footnote": chunk.get("table_footnote") if is_atomic_table else None,
+                "table_caption": (first_tbl_cap if is_atomic_table and first_tbl_cap else None) or chunk.get("table_caption"),
+                "table_footnote": (first_tbl_fn if is_atomic_table and first_tbl_fn else None) or chunk.get("table_footnote"),
                 "table_type": chunk.get("table_type"),
                 "has_tables": has_tables,
                 "table_count": table_count,

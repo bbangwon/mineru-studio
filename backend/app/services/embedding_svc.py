@@ -247,10 +247,11 @@ class EmbeddingService:
             # doc_id 및 doc_title 보정
             doc_id_val = chunk.get("doc_id") or chunk_meta.get("doc_id") or ""
             if not doc_id_val:
-                if breadcrumbs and isinstance(breadcrumbs, list) and len(breadcrumbs) > 0:
-                    doc_id_val = str(breadcrumbs[0]).strip()
-                elif "_c" in cid:
+                if "_c" in cid:
                     doc_id_val = cid.rsplit("_c", 1)[0].strip()
+                elif breadcrumbs and isinstance(breadcrumbs, list) and len(breadcrumbs) > 0:
+                    from backend.app.services.hierarchical_chunker import HierarchicalChunker
+                    doc_id_val = HierarchicalChunker.generate_doc_id(str(breadcrumbs[0]).strip())
 
             doc_title_val = (
                 chunk.get("doc_title")
@@ -267,7 +268,8 @@ class EmbeddingService:
             is_table = has_tables
             is_atomic_table = (chunk_kind == "table")
 
-            # 시스템 예약어 분리 -> 순수 커스텀 비즈니스 태그만 metadata 필드에 보존
+            # 시스템 예약어 분리 -> 순수 커스텀 비즈니스 태그만 metadata 필드에 보존하되,
+            # metadata.doc_id 및 metadata.doc_title 필터링 지원을 위해 주입
             reserved_keys = {
                 "doc_id", "doc_title", "chunk_id", "parent_chunk_id", "section_id", "id",
                 "page", "page_start", "page_end", "pages", "page_idx", "page_number",
@@ -276,7 +278,9 @@ class EmbeddingService:
                 "has_image", "image_path", "image_url", "token_count", "token_estimate", "char_length",
                 "text", "parent_text", "title", "chunk_type", "breadcrumbs", "heading_hierarchy", "type"
             }
-            pure_custom_meta = {k: v for k, v in chunk_meta.items() if k not in reserved_keys}
+            payload_meta = {k: v for k, v in chunk_meta.items() if k not in reserved_keys}
+            payload_meta["doc_id"] = doc_id_val
+            payload_meta["doc_title"] = doc_title_val
 
             first_tbl_cap = (
                 chunk_tables[0].get("caption", "")
@@ -316,7 +320,7 @@ class EmbeddingService:
                 "is_table": is_table,
                 "is_atomic_table": is_atomic_table,
                 "tables": chunk_tables,
-                "metadata": pure_custom_meta,
+                "metadata": payload_meta,
             }
 
             points.append({

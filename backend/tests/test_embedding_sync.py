@@ -90,3 +90,54 @@ def test_get_indexed_doc_names_collection_change_isolation(tmp_path, monkeypatch
     assert saved["collection_name"] == "new_col"
     assert "신규_문서" in saved["documents"]
     assert "구_문서" not in saved["documents"]
+
+
+def test_embed_and_upsert_doc_id_in_payload_and_metadata(tmp_path, monkeypatch):
+    test_manifest_path = tmp_path / "qdrant_indexed_docs.json"
+    monkeypatch.setattr("backend.app.services.embedding_svc.INDEXED_DOCS_MANIFEST_PATH", test_manifest_path)
+    monkeypatch.setattr("backend.app.services.embedding_svc.OUTPUT_DIR", tmp_path)
+
+    mock_sparse = MagicMock()
+    mock_sparse.encode_documents.return_value = [{"indices": [1], "values": [0.5]}]
+
+    mock_dense = MagicMock()
+    mock_dense.encode_texts.return_value = [[0.1, 0.2, 0.3]]
+
+    mock_manager = MagicMock()
+    mock_manager.upsert_points.return_value = 1
+
+    sample_child = {
+        "chunk_id": "doc_93b2d5c7c6085f47a9650346e7607db0_c0001",
+        "text": "테스트 본문 내용",
+        "breadcrumbs": ["산업재해보상보험법", "제1장 총칙"],
+        "metadata": {"type": "article", "custom_tag": "legal_tag"},
+    }
+
+    test_cfg = QdrantConfig(collection_name="test_col")
+
+    with patch("backend.app.services.embedding_svc.get_sparse_encoder", return_value=mock_sparse), \
+         patch("backend.app.services.embedding_svc.get_dense_encoder", return_value=mock_dense), \
+         patch.object(embedding_svc, "get_manager", return_value=mock_manager):
+        res = embedding_svc.embed_and_upsert(
+            child_chunks=[sample_child],
+            config=test_cfg,
+        )
+
+    assert res["success"] is True
+    assert mock_manager.upsert_points.called
+    call_args = mock_manager.upsert_points.call_args
+    points = call_args[1].get("points") or call_args[0][0]
+    assert len(points) == 1
+
+    p = points[0]
+    payload = p["payload"]
+    expected_doc_id = "doc_93b2d5c7c6085f47a9650346e7607db0"
+
+    # 1. Qdrant payload 최상위 doc_id 및 doc_title 검증
+    assert payload["doc_id"] == expected_doc_id
+    assert payload["doc_title"] == "산업재해보상보험법"
+
+    # 2. payload.metadata 내부 doc_id 및 doc_title 중첩 필터링 호환성 검증
+    assert payload["metadata"]["doc_id"] == expected_doc_id
+    assert payload["metadata"]["doc_title"] == "산업재해보상보험법"
+    assert payload["metadata"]["custom_tag"] == "legal_tag"

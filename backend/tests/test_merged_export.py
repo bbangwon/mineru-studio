@@ -72,12 +72,16 @@ def test_chunk_ids_four_digit_padding():
     assert reindexed["child_chunks"][0]["chunk_id"] == f"{doc_id}_c0001"
     assert reindexed["child_chunks"][1]["chunk_id"] == f"{doc_id}_c0002"
 
-    # JSONL 변환 시 id 확인
+    # JSONL 변환 시 id 및 doc_id 확인
     jsonl_str = chunker.export_to_jsonl(reindexed)
     lines = [json.loads(line) for line in jsonl_str.strip().split("\n") if line.strip()]
     assert len(lines) == 2
     assert lines[0]["id"] == f"{doc_id}_c0001"
     assert lines[1]["id"] == f"{doc_id}_c0002"
+    assert lines[0]["doc_id"] == doc_id
+    assert lines[1]["doc_id"] == doc_id
+    assert lines[0]["metadata"]["doc_id"] == doc_id
+    assert lines[1]["metadata"]["doc_id"] == doc_id
     assert lines[0]["parent_chunk_id"] == f"{doc_id}_p0001"
 
 

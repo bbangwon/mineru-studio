@@ -1277,9 +1277,12 @@ class HierarchicalChunker:
                     meta["type"] = chunk_type
 
             child_tokens = self.estimate_korean_tokens(full_child_text)
+            if "doc_id" not in meta and self.doc_id:
+                meta["doc_id"] = self.doc_id
 
             child_chunks.append({
                 "chunk_id": cid,
+                "doc_id": self.doc_id,
                 "parent_chunk_id": "",  # Parent 패킹 시 주입
                 "parent_id": "",        # 하위 호환성 별칭
                 "section_id": sec_id,
@@ -1418,8 +1421,12 @@ class HierarchicalChunker:
                     tbl_meta["article_title"] = current_meta.get("article_title", "")
                     tbl_meta["article_display"] = current_meta.get("article_display", "")
 
+                if "doc_id" not in tbl_meta and self.doc_id:
+                    tbl_meta["doc_id"] = self.doc_id
+
                 child_chunks.append({
                     "chunk_id": cid,
+                    "doc_id": self.doc_id,
                     "parent_chunk_id": "",
                     "parent_id": "",
                     "section_id": sec_id,
@@ -1611,6 +1618,7 @@ class HierarchicalChunker:
             p_tokens = self.estimate_korean_tokens(parent_full_text)
             p_chunk = {
                 "parent_chunk_id": pid,
+                "doc_id": self.doc_id,
                 "id": pid,  # 호환성 별칭
                 "section_id": sec_id,
                 "title": title_val,
@@ -1684,8 +1692,16 @@ class HierarchicalChunker:
         RAG Vector DB 및 하이브리드 검색 엔진 적재를 위한 표준 JSONL을 생성합니다.
         - 검색/임베딩 대상: text
         - LLM 프롬프트 생성 문맥: parent_context_text (Small-to-Big Retrieval 100% 지원)
+        - Qdrant 및 메타데이터 필터링 지원: 최상위 및 metadata 내 doc_id, doc_title 주입
         """
         lines: List[str] = []
+        etl_doc_id = (
+            etl_result.get("doc_id")
+            or getattr(self, "doc_id", None)
+            or (self.generate_doc_id(etl_result.get("doc_title")) if etl_result.get("doc_title") else None)
+        )
+        global_doc_title = etl_result.get("doc_title", "")
+
         parent_map = {
             p.get("parent_chunk_id", p.get("id", "")): p
             for p in etl_result.get("parent_chunks", [])
@@ -1704,6 +1720,20 @@ class HierarchicalChunker:
 
             breadcrumbs = chunk.get("breadcrumbs") or section.get("breadcrumbs") or []
             breadcrumbs_str = " > ".join(breadcrumbs) if breadcrumbs else ""
+
+            cid = chunk.get("chunk_id", "")
+            chunk_doc_id = (
+                chunk.get("doc_id")
+                or (chunk.get("metadata") or {}).get("doc_id")
+                or etl_doc_id
+                or (cid.rsplit("_c", 1)[0] if "_c" in cid else "doc")
+            )
+            chunk_doc_title = (
+                chunk.get("doc_title")
+                or (chunk.get("metadata") or {}).get("doc_title")
+                or global_doc_title
+                or (breadcrumbs[0] if breadcrumbs else "")
+            )
 
             start_page = chunk.get("page_number", 1)
             end_page = chunk.get("page_end", start_page)
@@ -1728,9 +1758,10 @@ class HierarchicalChunker:
             meta.pop("image_path", None)
             meta.pop("image_url", None)
 
-            # 표준 메타데이터 스칼라 필드 주입
+            # 표준 메타데이터 스칼라 필드 주입 (metadata 필터링 호환)
+            meta["doc_id"] = chunk_doc_id
+            meta["doc_title"] = chunk_doc_title
             meta["type"] = c_type
-            meta["doc_title"] = etl_result.get("doc_title", "")
             meta["section"] = section.get("title", "")
             meta["page"] = start_page
             meta["page_start"] = start_page
@@ -1741,7 +1772,6 @@ class HierarchicalChunker:
 
             # tables 항목 정제: table_type 제거 및 필수 속성(table_id, caption, footnote, raw_html)만 보존
             clean_tables = []
-            cid = chunk.get("chunk_id", "")
             for idx, t in enumerate(chunk_tables):
                 clean_tables.append({
                     "table_id": t.get("table_id") or f"{cid}_t{idx + 1}",
@@ -1767,6 +1797,8 @@ class HierarchicalChunker:
 
             record = {
                 "id": cid,
+                "doc_id": chunk_doc_id,
+                "doc_title": chunk_doc_title,
                 "parent_chunk_id": pid,
                 "section_id": sec_id,
                 "section_title": section.get("title", ""),
@@ -2088,6 +2120,7 @@ class HierarchicalChunker:
             parent_id_map[old_pid] = new_pid
             p["parent_chunk_id"] = new_pid
             p["id"] = new_pid
+            p["doc_id"] = doc_id
             new_parents.append(p)
 
         child_id_map: Dict[str, str] = {}
@@ -2099,6 +2132,7 @@ class HierarchicalChunker:
             child_counter += 1
             child_id_map[old_cid] = new_cid
             c["chunk_id"] = new_cid
+            c["doc_id"] = doc_id
 
             p_start = c.get("page_number", 1)
             p_end = c.get("page_end", p_start)
@@ -2136,6 +2170,9 @@ class HierarchicalChunker:
             c.pop("table_type", None)
 
             if isinstance(c.get("metadata"), dict):
+                c["metadata"]["doc_id"] = doc_id
+                if res.get("doc_title"):
+                    c["metadata"]["doc_title"] = res.get("doc_title")
                 c["metadata"]["page"] = p_start
                 c["metadata"]["page_start"] = p_start
                 c["metadata"]["page_end"] = p_end

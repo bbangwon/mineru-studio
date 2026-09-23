@@ -203,6 +203,10 @@ class TestHierarchicalChunker(unittest.TestCase):
             record = json.loads(line)
             # Verify Small-to-Big Retrieval required fields:
             self.assertIn("id", record)
+            self.assertIn("doc_id", record)
+            self.assertEqual(record["doc_id"], "jsonl_test")
+            self.assertIn("doc_title", record)
+            self.assertEqual(record["doc_title"], "사규")
             self.assertIn("parent_chunk_id", record)
             self.assertIn("section_id", record)
             self.assertIn("section_title", record)
@@ -216,6 +220,7 @@ class TestHierarchicalChunker(unittest.TestCase):
             self.assertNotIn("chunk_type", record)
             self.assertNotIn("tables", record.get("metadata", {}))
             self.assertIn("metadata", record)
+            self.assertEqual(record["metadata"]["doc_id"], "jsonl_test")
             self.assertEqual(record["metadata"]["doc_title"], "사규")
             self.assertEqual(record["metadata"]["type"], "article")
             self.assertFalse(record["metadata"]["has_tables"])
@@ -1440,6 +1445,12 @@ class TestHierarchicalChunker(unittest.TestCase):
         jsonl = chunker.export_to_jsonl(sample_etl)
         records = [json.loads(line) for line in jsonl.strip().splitlines()]
         self.assertEqual(len(records), 3)
+
+        for rec in records:
+            self.assertEqual(rec["doc_id"], "consistency_test")
+            self.assertEqual(rec["metadata"]["doc_id"], "consistency_test")
+            self.assertEqual(rec["doc_title"], "표준화 검증 문서")
+            self.assertEqual(rec["metadata"]["doc_title"], "표준화 검증 문서")
 
         # 1. 문단 청크 검증
         p_rec = records[0]

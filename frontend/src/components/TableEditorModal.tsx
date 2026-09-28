@@ -68,7 +68,13 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
     return '';
   });
 
-  const [footnote, setFootnote] = useState<string>(initialFootnote || '');
+  const [footnote, setFootnote] = useState<string>(() => {
+    if (initialFootnote !== undefined) return initialFootnote;
+    if (initialHtml && initialHtml.includes('<table')) {
+      return parseHtmlTableToGrid(initialHtml).footnote || '';
+    }
+    return '';
+  });
   const [selectedCell, setSelectedCell] = useState<{ r: number; c: number } | null>({ r: 0, c: 0 });
   const [activeTab, setActiveTab] = useState<'grid' | 'preview'>('grid');
   const [isTsvInputOpen, setIsTsvInputOpen] = useState<boolean>(false);

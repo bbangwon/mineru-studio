@@ -379,7 +379,10 @@ export function parseHtmlTableToGrid(html: string): {
   const captionEl = table.querySelector('caption');
   const caption = captionEl ? captionEl.textContent?.trim() : undefined;
 
-  const trEls = Array.from(table.querySelectorAll('tr'));
+  const footnoteEl = table.querySelector('tfoot');
+  const footnote = footnoteEl ? footnoteEl.textContent?.trim() : undefined;
+
+  const trEls = Array.from(table.querySelectorAll('tr')).filter((tr) => !tr.closest('tfoot'));
   if (trEls.length === 0) return defaultRes;
 
   // 1차 패스: 행 수 및 열 수 추정
@@ -449,11 +452,13 @@ export function parseHtmlTableToGrid(html: string): {
   return {
     grid: finalGrid.length > 0 ? finalGrid : createDefaultTableGrid(3, 3),
     caption,
+    footnote,
   };
 }
 
 /**
  * TableGrid를 표준 HTML <table> 문자열로 직렬화합니다.
+ * 저장 시 불필요한 style/class 및 불필요한 개행(\n) 없이 순수 시맨틱 태그(colspan, rowspan 포함)의 컴팩트한 인라인 HTML로 출력합니다.
  */
 export function gridToHtmlTable(
   grid: TableGrid,
@@ -462,15 +467,15 @@ export function gridToHtmlTable(
 ): string {
   if (!grid || grid.length === 0) return '';
 
-  const lines: string[] = ['<table class="mineru-table border-collapse border border-slate-300 dark:border-slate-700 w-full text-xs">'];
+  let html = '<table>';
 
   if (caption && caption.trim()) {
-    lines.push(`  <caption class="font-bold text-slate-700 dark:text-slate-300 text-left py-1">${caption.trim()}</caption>`);
+    html += `<caption>${caption.trim()}</caption>`;
   }
 
-  lines.push('  <tbody>');
+  html += '<tbody>';
   for (let r = 0; r < grid.length; r++) {
-    lines.push('    <tr>');
+    html += '<tr>';
     for (let c = 0; c < grid[r].length; c++) {
       const cell = grid[r][c];
       if (cell.isMergedHidden) continue; // 병합으로 덮인 셀은 렌더링하지 않음
@@ -478,25 +483,24 @@ export function gridToHtmlTable(
       const tag = r === 0 ? 'th' : 'td';
       const csAttr = cell.colSpan && cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : '';
       const rsAttr = cell.rowSpan && cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : '';
-      const bgClass = r === 0 ? 'bg-slate-100 dark:bg-slate-800 font-semibold' : 'bg-white dark:bg-slate-900';
       const escapedText = (cell.text || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\n/g, '<br/>');
 
-      lines.push(`      <${tag}${csAttr}${rsAttr} class="border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 ${bgClass}">${escapedText}</${tag}>`);
+      html += `<${tag}${csAttr}${rsAttr}>${escapedText}</${tag}>`;
     }
-    lines.push('    </tr>');
+    html += '</tr>';
   }
-  lines.push('  </tbody>');
+  html += '</tbody>';
 
   if (footnote && footnote.trim()) {
-    lines.push(`  <tfoot><tr><td colspan="${grid[0]?.length || 1}" class="text-[10px] text-slate-500 py-1 italic">${footnote.trim()}</td></tr></tfoot>`);
+    html += `<tfoot><tr><td colspan="${grid[0]?.length || 1}">${footnote.trim()}</td></tr></tfoot>`;
   }
 
-  lines.push('</table>');
-  return lines.join('\n');
+  html += '</table>';
+  return html;
 }
 
 /**

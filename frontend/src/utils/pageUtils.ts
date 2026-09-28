@@ -343,19 +343,19 @@ export function buildOuterTableHtml(
   const fnText = (footnote || '').trim();
 
   if (capText) {
-    const captionTag = `\n  <caption>${escapeHtml(capText)}</caption>`;
+    const captionTag = `<caption>${escapeHtml(capText)}</caption>`;
     res = res.replace(/(<table\b[^>]*>)/i, `$1${captionTag}`);
   }
 
   if (fnText) {
-    const tfootTag = `\n  <tfoot>\n    <tr><td colspan="100%">${escapeHtml(fnText)}</td></tr>\n  </tfoot>\n`;
+    const tfootTag = `<tfoot><tr><td colspan="100%">${escapeHtml(fnText)}</td></tr></tfoot>`;
     const lastCloseIndex = res.toLowerCase().lastIndexOf('</table>');
     if (lastCloseIndex !== -1) {
       res = res.slice(0, lastCloseIndex) + tfootTag + res.slice(lastCloseIndex);
     }
   }
 
-  return res;
+  return res.trim();
 }
 
 /**

@@ -485,7 +485,7 @@ class HierarchicalChunker:
 
         if cap_text:
             escaped_cap = html.escape(cap_text)
-            caption_tag = f"\n  <caption>{escaped_cap}</caption>"
+            caption_tag = f"<caption>{escaped_cap}</caption>"
             m = re.search(r"<table\b[^>]*>", res, re.I)
             if m:
                 idx = m.end()
@@ -493,13 +493,13 @@ class HierarchicalChunker:
 
         if fn_text:
             escaped_fn = html.escape(fn_text)
-            tfoot_tag = f"\n  <tfoot>\n    <tr><td colspan=\"100%\">{escaped_fn}</td></tr>\n  </tfoot>\n"
+            tfoot_tag = f"<tfoot><tr><td colspan=\"100%\">{escaped_fn}</td></tr></tfoot>"
             m = list(re.finditer(r"</table>", res, re.I))
             if m:
                 idx = m[-1].start()
                 res = res[:idx] + tfoot_tag + res[idx:]
 
-        return res
+        return res.strip()
 
     @classmethod
     def reconstruct_composite_raw_html(cls, chunk: Dict[str, Any], force: bool = False) -> str:

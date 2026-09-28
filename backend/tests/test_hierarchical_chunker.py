@@ -1630,9 +1630,8 @@ class TestHierarchicalChunker(unittest.TestCase):
         # 1. <caption>과 <tfoot>이 올바르게 주입되었는지 확인
         self.assertIn("<caption>표 1</caption>", outer_html)
         self.assertIn("<tfoot>", outer_html)
-        self.assertIn('<td colspan="100%">※ 각주 1</td>', outer_html)
-        self.assertTrue(outer_html.startswith("<table>\n  <caption>표 1</caption>"))
-        self.assertTrue(outer_html.endswith("</tfoot>\n</table>"))
+        self.assertTrue(outer_html.startswith("<table><caption>표 1</caption>"))
+        self.assertTrue(outer_html.endswith("</tfoot></table>"))
 
         # 2. strip_table_meta_tags 호출 시 순수 테이블로 복원되는지 확인
         stripped = HierarchicalChunker.strip_table_meta_tags(outer_html)

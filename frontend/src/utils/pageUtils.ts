@@ -409,6 +409,14 @@ export function reconstructCompositeHtml(
         parts.push(`<div class="markdown-table-fallback p-2 rounded bg-slate-100 dark:bg-slate-900">${escaped}</div>`);
       }
     } else {
+      // 마크다운 내 표 제목(**[표 제목: ...]**) 및 각주(**[표 각주: ...]**)는
+      // tableHtmls(buildOuterTableHtml)의 <caption> 및 <tfoot>으로 이미 포함되므로 별도 <p> 태그 생성 제외
+      if (
+        /^\*\*\[표\s*(?:제목)?:\s*.*\]\*\*$/i.test(block) ||
+        /^\*\*\[표\s*각주:\s*.*\]\*\*$/i.test(block)
+      ) {
+        continue;
+      }
       const escaped = escapeHtml(block).replace(/\n/g, '<br/>');
       parts.push(`<p>${escaped}</p>`);
     }

@@ -28,6 +28,7 @@ import {
   gridToHtmlTable,
   gridToMarkdownTable,
   hasMarkdownTable,
+  syncTableMarkdown,
 } from '../utils/tableChunkUtils';
 import {
   getChunkKind,
@@ -185,8 +186,8 @@ export const AddChildModal: React.FC<AddChildModalProps> = ({
     footnote?: string;
   }) => {
     setRawHtml(data.html);
-    if (data.caption) setTableCaption(data.caption);
-    if (data.footnote) setTableFootnote(data.footnote);
+    if (data.caption !== undefined) setTableCaption(data.caption);
+    if (data.footnote !== undefined) setTableFootnote(data.footnote);
 
     const existingText = text.trim();
     const hasExistingTable = hasMarkdownTable(existingText);
@@ -195,7 +196,7 @@ export const AddChildModal: React.FC<AddChildModalProps> = ({
     } else if (!hasExistingTable) {
       setText(`${existingText}\n\n${data.markdown}`);
     } else {
-      setText(data.markdown);
+      setText(syncTableMarkdown(existingText, 0, data.markdown, data.caption, data.footnote));
     }
     setIsTableEditorOpen(false);
     if (error) setError('');

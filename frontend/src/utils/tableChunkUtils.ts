@@ -714,6 +714,218 @@ export function addTableToChunk(
   };
 }
 
+// 표 제목 및 각주 표준 정규식
+export const RE_TABLE_TITLE = /^(?:\*\*\[표\s*(?:제목)?:\s*|\[\s*표(?:\s*[\d\.\-]+)?\s*[\:\.\-\]]|【\s*표\s*】|표\s*\d+[\.\:\-]|Table\s*\d+[\.\:\-])/i;
+export const RE_TABLE_FOOTNOTE = /^(?:\*\*\[표\s*각주:\s*|(?:※|\(?주\)?\s*[:\)]|출처\s*[:\)]|참고\s*[:\)]|\*|\#)\s*)+/i;
+
+/**
+ * 표 제목 문자열을 표준 **[표 제목: ...]** 포맷으로 정규화합니다.
+ */
+export function formatTableTitle(caption?: string): string {
+  const clean = (caption || '').trim();
+  if (!clean) return '';
+  const m = clean.match(/^\*\*\[표\s*(?:제목)?:\s*(.+?)\]\*\*$/i);
+  const val = m ? m[1].trim() : clean;
+  return `**[표 제목: ${val}]**`;
+}
+
+/**
+ * 표 각주 문자열을 표준 **[표 각주: ...]** 포맷으로 정규화합니다.
+ */
+export function formatTableFootnote(footnote?: string): string {
+  const clean = (footnote || '').trim();
+  if (!clean) return '';
+  const m = clean.match(/^\*\*\[표\s*각주:\s*(.+?)\]\*\*$/i);
+  const val = m ? m[1].trim() : clean;
+  return `**[표 각주: ${val}]**`;
+}
+
+/**
+ * 마크다운 텍스트 내 특정 표의 직전 블록에서 기존 표 제목(Caption)을 추출합니다.
+ */
+export function extractTableCaptionFromMarkdown(text: string, tableIndex = 0): string | undefined {
+  if (!text) return undefined;
+  const blocks = parseTextBlocks(text);
+  let tblCount = 0;
+  let targetIdx = -1;
+
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].type === 'table') {
+      if (tblCount === tableIndex) {
+        targetIdx = i;
+        break;
+      }
+      tblCount++;
+    }
+  }
+
+  if (targetIdx === -1) return undefined;
+
+  if (targetIdx > 0 && blocks[targetIdx - 1].type === 'paragraph') {
+    const lines = blocks[targetIdx - 1].text.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length > 0) {
+      const lastLine = lines[lines.length - 1];
+      const matchStd = lastLine.match(/^\*\*\[표\s*(?:제목)?:\s*(.+?)\]\*\*$/i);
+      if (matchStd) return matchStd[1].trim();
+      const matchBracket = lastLine.match(/^\[\s*표(?:\s*[\d\.\-]+)?\s*[\:\.\-\]]\s*(.+)$/i);
+      if (matchBracket) return matchBracket[1].trim();
+      const matchK = lastLine.match(/^【\s*표\s*】\s*(.+)$/i);
+      if (matchK) return matchK[1].trim();
+      const matchNum = lastLine.match(/^(?:표|Table)\s*\d+[\.\:\-]\s*(.+)$/i);
+      if (matchNum) return matchNum[1].trim();
+      if (RE_TABLE_TITLE.test(lastLine)) {
+        return lastLine;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 마크다운 텍스트 내 특정 표의 직후 블록에서 기존 표 각주(Footnote)를 추출합니다.
+ */
+export function extractTableFootnoteFromMarkdown(text: string, tableIndex = 0): string | undefined {
+  if (!text) return undefined;
+  const blocks = parseTextBlocks(text);
+  let tblCount = 0;
+  let targetIdx = -1;
+
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].type === 'table') {
+      if (tblCount === tableIndex) {
+        targetIdx = i;
+        break;
+      }
+      tblCount++;
+    }
+  }
+
+  if (targetIdx === -1) return undefined;
+
+  if (targetIdx < blocks.length - 1 && blocks[targetIdx + 1].type === 'paragraph') {
+    const lines = blocks[targetIdx + 1].text.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length > 0) {
+      const firstLine = lines[0];
+      const matchStd = firstLine.match(/^\*\*\[표\s*각주:\s*(.+?)\]\*\*$/i);
+      if (matchStd) return matchStd[1].trim();
+      if (RE_TABLE_FOOTNOTE.test(firstLine)) {
+        return firstLine;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 청크 본문 마크다운에서 특정 인덱스의 표와 표 제목/각주를 안전하게 검색 및 동기화합니다.
+ * - 마크다운 텍스트를 검색하여 표 제목/각주가 없으면 추가합니다.
+ * - 이미 존재하는 경우 새 내용으로 치환하여 중복 누적을 방지합니다.
+ * - 사용자가 제목/각주를 비운 경우 기존 태그를 깨끗이 제거합니다.
+ */
+export function syncTableMarkdown(
+  text: string,
+  tableIndex: number,
+  newTableMd: string,
+  caption?: string,
+  footnote?: string
+): string {
+  const formattedTitle = formatTableTitle(caption);
+  const formattedFootnote = formatTableFootnote(footnote);
+
+  const trimmedText = (text || '').trim();
+  const blocks = parseTextBlocks(trimmedText);
+
+  let tblCount = 0;
+  let targetIdx = -1;
+
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].type === 'table') {
+      if (tblCount === tableIndex) {
+        targetIdx = i;
+        break;
+      }
+      tblCount++;
+    }
+  }
+
+  // 본문에 대상 표가 없는 경우 (새 표 추가 또는 빈 본문)
+  if (targetIdx === -1) {
+    const tableParts = [formattedTitle, newTableMd, formattedFootnote].filter(Boolean);
+    const tableBlock = tableParts.join('\n\n');
+    if (!trimmedText) return tableBlock;
+    return `${trimmedText}\n\n${tableBlock}`;
+  }
+
+  // 1. 선행 블록 검사 및 표 제목 동기화
+  let titleHandled = false;
+  if (targetIdx > 0 && blocks[targetIdx - 1].type === 'paragraph') {
+    const prevBlock = blocks[targetIdx - 1];
+    const lines = prevBlock.text.split('\n');
+    let lastNonEmpty = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim()) {
+        lastNonEmpty = i;
+        break;
+      }
+    }
+
+    if (lastNonEmpty >= 0 && RE_TABLE_TITLE.test(lines[lastNonEmpty].trim())) {
+      // 기존 표 제목 라인 발견 -> 치환 또는 제거
+      if (formattedTitle) {
+        lines[lastNonEmpty] = formattedTitle;
+      } else {
+        lines.splice(lastNonEmpty, 1);
+      }
+      prevBlock.text = lines.join('\n').trim();
+      titleHandled = true;
+    }
+  }
+
+  // 2. 후행 블록 검사 및 표 각주 동기화
+  let footnoteHandled = false;
+  if (targetIdx < blocks.length - 1 && blocks[targetIdx + 1].type === 'paragraph') {
+    const nextBlock = blocks[targetIdx + 1];
+    const lines = nextBlock.text.split('\n');
+    let firstNonEmpty = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim()) {
+        firstNonEmpty = i;
+        break;
+      }
+    }
+
+    if (firstNonEmpty >= 0 && RE_TABLE_FOOTNOTE.test(lines[firstNonEmpty].trim())) {
+      // 기존 표 각주 라인 발견 -> 치환 또는 제거
+      if (formattedFootnote) {
+        lines[firstNonEmpty] = formattedFootnote;
+      } else {
+        lines.splice(firstNonEmpty, 1);
+      }
+      nextBlock.text = lines.join('\n').trim();
+      footnoteHandled = true;
+    }
+  }
+
+  // 3. 표 본문 교체 및 미처리된 제목/각주를 표 블록에 결합
+  const tableParts: string[] = [];
+  if (!titleHandled && formattedTitle) {
+    tableParts.push(formattedTitle);
+  }
+  tableParts.push(newTableMd);
+  if (!footnoteHandled && formattedFootnote) {
+    tableParts.push(formattedFootnote);
+  }
+
+  blocks[targetIdx].text = tableParts.join('\n\n');
+
+  // 빈 블록 정리 후 재결합
+  const finalBlocks = blocks
+    .map((b) => b.text.trim())
+    .filter(Boolean);
+
+  return finalBlocks.join('\n\n');
+}
+
 /**
  * 청크 내 특정 인덱스의 표 데이터를 수정(셀 편집, 행/열 편집, 병합 반영)하고
  * 청크의 text, tables, raw_html을 원자적으로 삼중 동기화합니다.
@@ -727,16 +939,18 @@ export function updateTableInChunk(
 ): ChildChunk {
   const newHtml = gridToHtmlTable(grid);
   const newMd = gridToMarkdownTable(grid);
+  const trimmedCap = caption?.trim() || undefined;
+  const trimmedFn = footnote?.trim() || undefined;
 
   const currentTables: EmbeddedTableItem[] = [
     ...(chunk.tables || chunk.metadata?.tables || []),
   ];
 
-  if (currentTables.length === 0 && chunk.raw_html) {
+  if (currentTables.length === 0) {
     currentTables.push({
       table_index: 0,
-      caption,
-      footnote,
+      caption: trimmedCap,
+      footnote: trimmedFn,
       raw_html: newHtml,
       token_estimate: estimateKoreanTokens(newMd),
       page_number: chunk.page_number,
@@ -744,34 +958,30 @@ export function updateTableInChunk(
   } else if (tableIndex >= 0 && tableIndex < currentTables.length) {
     currentTables[tableIndex] = {
       ...currentTables[tableIndex],
-      caption,
-      footnote,
+      caption: trimmedCap,
+      footnote: trimmedFn,
       raw_html: newHtml,
       token_estimate: estimateKoreanTokens(newMd),
     };
+  } else {
+    currentTables.push({
+      table_index: currentTables.length,
+      caption: trimmedCap,
+      footnote: trimmedFn,
+      raw_html: newHtml,
+      token_estimate: estimateKoreanTokens(newMd),
+      page_number: chunk.page_number,
+    });
   }
 
-  // 본문 text 내의 해당 표 마크다운 블록 교체
-  const textBlocks = parseTextBlocks(chunk.text || '');
-  let tblCount = 0;
-  let replaced = false;
-
-  const newBlocks = textBlocks.map((block) => {
-    if (block.type === 'table') {
-      if (tblCount === tableIndex) {
-        replaced = true;
-        tblCount++;
-        return newMd;
-      }
-      tblCount++;
-    }
-    return block.text;
-  });
-
-  let updatedText = newBlocks.join('\n\n');
-  if (!replaced) {
-    updatedText = `${chunk.text || ''}\n\n${newMd}`.trim();
-  }
+  // 본문 text 내의 해당 표 마크다운 블록 및 제목/각주 동기화 (검색 후 없으면 추가, 있으면 갱신)
+  const updatedText = syncTableMarkdown(
+    chunk.text || '',
+    tableIndex,
+    newMd,
+    trimmedCap,
+    trimmedFn
+  );
 
   // raw_html 조립: 복합 청크는 reconstructCompositeHtml을 통해 문단과 표를 순서대로 결합
   let updatedRawHtml: string;
@@ -789,20 +999,27 @@ export function updateTableInChunk(
     for (const t of currentTables) {
       if (t.raw_html) htmlParts.push(buildOuterTableHtml(t.raw_html, t.caption, t.footnote));
     }
-    updatedRawHtml = htmlParts.join('\n\n') || buildOuterTableHtml(newHtml, caption, footnote);
+    updatedRawHtml = htmlParts.join('\n\n') || buildOuterTableHtml(newHtml, trimmedCap, trimmedFn);
   }
+
+  const updatedTokenEstimate = estimateKoreanTokens(updatedText);
 
   return {
     ...chunk,
     tables: currentTables,
     raw_html: updatedRawHtml,
-    table_caption: undefined,
-    table_footnote: undefined,
+    table_caption: currentTables.length === 1 ? trimmedCap : undefined,
+    table_footnote: currentTables.length === 1 ? trimmedFn : undefined,
     text: updatedText,
+    token_estimate: updatedTokenEstimate,
     is_edited: true,
     metadata: {
       ...(chunk.metadata || {}),
       tables: currentTables,
+      token_estimate: updatedTokenEstimate,
+      char_length: updatedText.length,
+      table_caption: currentTables.length === 1 ? trimmedCap : undefined,
+      table_footnote: currentTables.length === 1 ? trimmedFn : undefined,
     },
   };
 }

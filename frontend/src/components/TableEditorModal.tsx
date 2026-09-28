@@ -21,6 +21,10 @@ import {
   gridToMarkdownTable,
   parseTsvToGrid,
   createDefaultTableGrid,
+  formatTableTitle,
+  formatTableFootnote,
+  extractTableCaptionFromMarkdown,
+  extractTableFootnoteFromMarkdown,
 } from '../utils/tableChunkUtils';
 
 interface TableEditorModalProps {
@@ -61,17 +65,27 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
   });
 
   const [caption, setCaption] = useState<string>(() => {
-    if (initialCaption !== undefined) return initialCaption;
+    if (initialCaption !== undefined && initialCaption !== '') return initialCaption;
     if (initialHtml && initialHtml.includes('<table')) {
-      return parseHtmlTableToGrid(initialHtml).caption || '';
+      const parsedCap = parseHtmlTableToGrid(initialHtml).caption;
+      if (parsedCap) return parsedCap;
+    }
+    if (initialMarkdown) {
+      const extracted = extractTableCaptionFromMarkdown(initialMarkdown, tableIndex ?? 0);
+      if (extracted) return extracted;
     }
     return '';
   });
 
   const [footnote, setFootnote] = useState<string>(() => {
-    if (initialFootnote !== undefined) return initialFootnote;
+    if (initialFootnote !== undefined && initialFootnote !== '') return initialFootnote;
     if (initialHtml && initialHtml.includes('<table')) {
-      return parseHtmlTableToGrid(initialHtml).footnote || '';
+      const parsedFn = parseHtmlTableToGrid(initialHtml).footnote;
+      if (parsedFn) return parsedFn;
+    }
+    if (initialMarkdown) {
+      const extracted = extractTableFootnoteFromMarkdown(initialMarkdown, tableIndex ?? 0);
+      if (extracted) return extracted;
     }
     return '';
   });
@@ -311,22 +325,32 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
   // 저장
   const handleSave = () => {
     const html = gridToHtmlTable(grid);
-    const markdown = gridToMarkdownTable(grid);
+    const rawMd = gridToMarkdownTable(grid);
+    const trimmedCap = caption.trim() || undefined;
+    const trimmedFn = footnote.trim() || undefined;
+    const fullMd = [
+      formatTableTitle(trimmedCap),
+      rawMd,
+      formatTableFootnote(trimmedFn),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
     onSave({
       grid,
       html,
-      markdown,
-      caption: caption.trim() || undefined,
-      footnote: footnote.trim() || undefined,
+      markdown: fullMd,
+      caption: trimmedCap,
+      footnote: trimmedFn,
     });
     onClose();
   };
 
   const previewHtml = gridToHtmlTable(grid);
   const previewMd = [
-    caption.trim() ? `**[표 제목: ${caption.trim()}]**` : '',
+    formatTableTitle(caption),
     gridToMarkdownTable(grid),
-    footnote.trim() ? `**[표 각주: ${footnote.trim()}]**` : '',
+    formatTableFootnote(footnote),
   ]
     .filter(Boolean)
     .join('\n\n');

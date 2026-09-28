@@ -70,7 +70,6 @@ import {
   RESERVED_METADATA_KEYS,
   computeTableMetadata,
   reconstructCompositeHtml,
-  buildOuterTableHtml,
 } from '../utils/pageUtils';
 import {
   estimateKoreanTokens,
@@ -999,68 +998,6 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     setTimeout(() => setMetaNotice(null), 3000);
   };
 
-  // Update caption or footnote of a specific table inside a chunk (both atomic and composite)
-  const handleTableItemFieldChange = (
-    tableIndex: number,
-    field: 'caption' | 'footnote',
-    value: string
-  ) => {
-    if (!activeChunk) return;
-    let currentTables: EmbeddedTableItem[] = [
-      ...(activeChunk.tables || activeChunk.metadata?.tables || []),
-    ];
-    if (currentTables.length === 0) {
-      currentTables = [{
-        table_index: 0,
-        table_id: `${activeChunk.chunk_id}_t1`,
-        raw_html: activeChunk.raw_html || '',
-        caption: '',
-        footnote: '',
-      }];
-    }
-    if (tableIndex < 0 || tableIndex >= currentTables.length) return;
-
-    currentTables[tableIndex] = {
-      ...currentTables[tableIndex],
-      [field]: value,
-    };
-
-    const kind = getChunkKind(activeChunk);
-    let updatedRawHtml = activeChunk.raw_html;
-    if (kind === 'composite') {
-      updatedRawHtml = reconstructCompositeHtml(
-        { ...activeChunk, tables: currentTables },
-        true
-      );
-    } else {
-      updatedRawHtml = buildOuterTableHtml(
-        currentTables[0]?.raw_html || activeChunk.raw_html || '',
-        currentTables[0]?.caption,
-        currentTables[0]?.footnote
-      );
-    }
-
-    const updated: ChildChunk = {
-      ...activeChunk,
-      tables: currentTables,
-      raw_html: updatedRawHtml,
-      table_caption: undefined,
-      table_footnote: undefined,
-      is_edited: true,
-      metadata: {
-        ...(activeChunk.metadata || {}),
-        tables: currentTables,
-      },
-    };
-    if (updated.metadata) {
-      delete updated.metadata.table_caption;
-      delete updated.metadata.table_footnote;
-    }
-
-    onUpdateChunk(updated, true);
-  };
-
-  const handleCompositeTableFieldChange = handleTableItemFieldChange;
 
   // Open table editor modal
   const handleOpenTableEditor = (
@@ -3417,9 +3354,9 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenTableEditor(activeChunk, 0, activeChunk.raw_html, activeTableList[0]?.caption, activeTableList[0]?.footnote)}
+                                  onClick={() => handleOpenTableEditor(activeChunk, 0, activeChunk.raw_html, activeTableList[0]?.caption || activeChunk.table_caption, activeTableList[0]?.footnote || activeChunk.table_footnote)}
                                   className="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                                  title="표 셀 편집 및 가로/세로 셀 병합 창 열기"
+                                  title="표 제목, 각주, 셀 데이터 및 가로/세로 셀 병합 창 열기"
                                 >
                                   <Edit2 className="w-2.5 h-2.5" />
                                   <span>내용/병합 편집</span>
@@ -3445,28 +3382,32 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 제목 (Caption)</label>
-                                <input
-                                  type="text"
-                                  value={activeTableList[0]?.caption || ''}
-                                  onChange={(e) => handleTableItemFieldChange(0, 'caption', e.target.value)}
-                                  placeholder="예: [표 1] 세부기준"
-                                  className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">표 각주 (Footnote)</label>
-                                <input
-                                  type="text"
-                                  value={activeTableList[0]?.footnote || ''}
-                                  onChange={(e) => handleTableItemFieldChange(0, 'footnote', e.target.value)}
-                                  placeholder="예: ※ 기준치 초과 시 재검사"
-                                  className="w-full text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                                />
-                              </div>
-                            </div>
+                            {(() => {
+                              const singleCaption = activeTableList[0]?.caption || activeChunk.table_caption || activeChunk.metadata?.table_caption;
+                              const singleFootnote = activeTableList[0]?.footnote || activeChunk.table_footnote || activeChunk.metadata?.table_footnote;
+                              return (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
+                                    <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                      <span className="font-semibold text-slate-700 dark:text-slate-300">표 제목 (Caption)</span>
+                                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">조회 전용</span>
+                                    </div>
+                                    <div className="text-xs text-slate-800 dark:text-slate-200 break-words" title={singleCaption || ''}>
+                                      {singleCaption || <span className="text-slate-400 dark:text-slate-500 italic">설정된 제목 없음</span>}
+                                    </div>
+                                  </div>
+                                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
+                                    <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                      <span className="font-semibold text-slate-700 dark:text-slate-300">표 각주 (Footnote)</span>
+                                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">조회 전용</span>
+                                    </div>
+                                    <div className="text-xs text-slate-800 dark:text-slate-200 break-words" title={singleFootnote || ''}>
+                                      {singleFootnote || <span className="text-slate-400 dark:text-slate-500 italic">설정된 각주 없음</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
 
                             {/* 단일 표 실시간 렌더링 컨테이너 */}
                             <div className="pt-2 border-t border-indigo-200/50 dark:border-indigo-900/50">
@@ -3504,8 +3445,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                   <Plus className="w-3 h-3 text-indigo-500" />
                                   <span>표 추가</span>
                                 </button>
-                                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
-                                  수정 시 상위 메타 자동 반영
+                                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">
+                                  제목·각주는 [내용/병합 편집]에서 수정
                                 </span>
                               </div>
                             </div>
@@ -3535,7 +3476,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                         type="button"
                                         onClick={() => handleOpenTableEditor(activeChunk, idx, tbl.raw_html, tbl.caption, tbl.footnote)}
                                         className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition"
-                                        title="표 셀 편집 및 가로/세로 셀 병합 창 열기"
+                                        title="표 제목, 각주, 셀 데이터 및 가로/세로 셀 병합 창 열기"
                                       >
                                         <Edit2 className="w-2.5 h-2.5" />
                                         <span>내용/병합 편집</span>
@@ -3552,29 +3493,23 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                    <div>
-                                      <label className="block text-[10px] font-medium text-slate-600 dark:text-slate-400 mb-0.5">
-                                        표 {idx + 1} 제목 (Caption)
-                                      </label>
-                                      <input
-                                        type="text"
-                                        value={tbl.caption || ''}
-                                        onChange={(e) => handleCompositeTableFieldChange(idx, 'caption', e.target.value)}
-                                        placeholder={`예: [표 ${idx + 1}] 세부 내역`}
-                                        className="w-full text-xs bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-md px-2.5 py-1 text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden transition"
-                                      />
+                                    <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800">
+                                      <div className="flex items-center justify-between text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-0.5">
+                                        <span className="font-semibold text-slate-600 dark:text-slate-300">표 {idx + 1} 제목 (Caption)</span>
+                                        <span className="text-[9px] text-slate-400 dark:text-slate-500 font-normal">조회 전용</span>
+                                      </div>
+                                      <div className="text-xs text-slate-800 dark:text-slate-200 break-words" title={tbl.caption || ''}>
+                                        {tbl.caption || <span className="text-slate-400 dark:text-slate-500 italic">설정된 제목 없음</span>}
+                                      </div>
                                     </div>
-                                    <div>
-                                      <label className="block text-[10px] font-medium text-slate-600 dark:text-slate-400 mb-0.5">
-                                        표 {idx + 1} 각주 (Footnote)
-                                      </label>
-                                      <input
-                                        type="text"
-                                        value={tbl.footnote || ''}
-                                        onChange={(e) => handleCompositeTableFieldChange(idx, 'footnote', e.target.value)}
-                                        placeholder="예: ※ 기준치 초과 시 재검사"
-                                        className="w-full text-xs bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-md px-2.5 py-1 text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden transition"
-                                      />
+                                    <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800">
+                                      <div className="flex items-center justify-between text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-0.5">
+                                        <span className="font-semibold text-slate-600 dark:text-slate-300">표 {idx + 1} 각주 (Footnote)</span>
+                                        <span className="text-[9px] text-slate-400 dark:text-slate-500 font-normal">조회 전용</span>
+                                      </div>
+                                      <div className="text-xs text-slate-800 dark:text-slate-200 break-words" title={tbl.footnote || ''}>
+                                        {tbl.footnote || <span className="text-slate-400 dark:text-slate-500 italic">설정된 각주 없음</span>}
+                                      </div>
                                     </div>
                                   </div>
 

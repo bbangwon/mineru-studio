@@ -1,5 +1,7 @@
 import type { ChildChunk, EmbeddedTableItem } from '../types';
 import { estimateKoreanTokens } from './idUtils';
+import { getChunkKind } from './chunkKindUtils';
+import { reconstructCompositeHtml } from './pageUtils';
 
 export interface TextBlock {
   type: 'paragraph' | 'table';
@@ -457,30 +459,25 @@ export function parseHtmlTableToGrid(html: string): {
 }
 
 /**
- * TableGrid를 표준 HTML <table> 문자열로 직렬화합니다.
- * 저장 시 불필요한 style/class 및 불필요한 개행(\n) 없이 순수 시맨틱 태그(colspan, rowspan 포함)의 컴팩트한 인라인 HTML로 출력합니다.
+ * TableGrid를 MinerU 파싱 규격에 부합하는 표준 HTML <table> 문자열로 직렬화합니다.
+ * caption, footnote는 tables 객체의 독립 필드로 관리되므로 raw_html에서 제외하며,
+ * 불필요한 tbody, tfoot, th 없이 <tr>과 <td> 태그만으로 순수하고 컴팩트하게 직렬화합니다.
+ * (호환성을 위해 _caption, _footnote 인자는 선택적 파라미터로 유지하되 HTML에는 주입하지 않음)
  */
 export function gridToHtmlTable(
   grid: TableGrid,
-  caption?: string,
-  footnote?: string
+  _caption?: string,
+  _footnote?: string
 ): string {
   if (!grid || grid.length === 0) return '';
 
   let html = '<table>';
-
-  if (caption && caption.trim()) {
-    html += `<caption>${caption.trim()}</caption>`;
-  }
-
-  html += '<tbody>';
   for (let r = 0; r < grid.length; r++) {
     html += '<tr>';
     for (let c = 0; c < grid[r].length; c++) {
       const cell = grid[r][c];
       if (cell.isMergedHidden) continue; // 병합으로 덮인 셀은 렌더링하지 않음
 
-      const tag = r === 0 ? 'th' : 'td';
       const csAttr = cell.colSpan && cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : '';
       const rsAttr = cell.rowSpan && cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : '';
       const escapedText = (cell.text || '')
@@ -489,16 +486,10 @@ export function gridToHtmlTable(
         .replace(/>/g, '&gt;')
         .replace(/\n/g, '<br/>');
 
-      html += `<${tag}${csAttr}${rsAttr}>${escapedText}</${tag}>`;
+      html += `<td${csAttr}${rsAttr}>${escapedText}</td>`;
     }
     html += '</tr>';
   }
-  html += '</tbody>';
-
-  if (footnote && footnote.trim()) {
-    html += `<tfoot><tr><td colspan="${grid[0]?.length || 1}">${footnote.trim()}</td></tr></tfoot>`;
-  }
-
   html += '</table>';
   return html;
 }
@@ -633,11 +624,13 @@ export function deleteTableFromChunk(chunk: ChildChunk, tableIndex: number): Chi
   // raw_html 조립
   let newRawHtml: string | undefined;
   if (reindexedTables.length > 0) {
-    const htmlParts: string[] = [];
-    for (const t of reindexedTables) {
-      if (t.raw_html) htmlParts.push(t.raw_html);
-    }
-    newRawHtml = htmlParts.join('\n\n');
+    const tempChunk = {
+      ...chunk,
+      tables: reindexedTables,
+      text: remainingText,
+      raw_html: '',
+    };
+    newRawHtml = reconstructCompositeHtml(tempChunk, true);
   }
 
   return {
@@ -665,7 +658,7 @@ export function addTableToChunk(
   footnote?: string
 ): ChildChunk {
   const grid = templateGrid || createDefaultTableGrid(3, 3);
-  const tableHtml = gridToHtmlTable(grid, caption, footnote);
+  const tableHtml = gridToHtmlTable(grid);
   const tableMd = gridToMarkdownTable(grid);
 
   const currentTables: EmbeddedTableItem[] = [
@@ -688,12 +681,18 @@ export function addTableToChunk(
   const separator = chunk.text && chunk.text.trim() ? '\n\n' : '';
   const updatedText = `${chunk.text || ''}${separator}${tableMd}`;
 
-  // raw_html 끝에 결합
-  const rawSeparator = chunk.raw_html && chunk.raw_html.trim() ? '\n\n' : '';
-  const updatedRawHtml = `${chunk.raw_html || ''}${rawSeparator}${tableHtml}`;
+  // raw_html 조립: 복합 청크(문단+표)는 완성형 HTML로 재결합
+  const tempChunk = {
+    ...chunk,
+    tables: updatedTables,
+    text: updatedText,
+    raw_html: '',
+  };
+  const updatedRawHtml = reconstructCompositeHtml(tempChunk, true);
 
   return {
     ...chunk,
+    chunk_type: 'composite',
     tables: updatedTables,
     raw_html: updatedRawHtml,
     table_caption: undefined,
@@ -703,6 +702,9 @@ export function addTableToChunk(
     metadata: {
       ...(chunk.metadata || {}),
       tables: updatedTables,
+      type: 'composite',
+      has_tables: true,
+      table_count: updatedTables.length,
     },
   };
 }
@@ -718,7 +720,7 @@ export function updateTableInChunk(
   caption?: string,
   footnote?: string
 ): ChildChunk {
-  const newHtml = gridToHtmlTable(grid, caption, footnote);
+  const newHtml = gridToHtmlTable(grid);
   const newMd = gridToMarkdownTable(grid);
 
   const currentTables: EmbeddedTableItem[] = [
@@ -766,12 +768,24 @@ export function updateTableInChunk(
     updatedText = `${chunk.text || ''}\n\n${newMd}`.trim();
   }
 
-  // raw_html 조립
-  const htmlParts: string[] = [];
-  for (const t of currentTables) {
-    if (t.raw_html) htmlParts.push(t.raw_html);
+  // raw_html 조립: 복합 청크는 reconstructCompositeHtml을 통해 문단과 표를 순서대로 결합
+  let updatedRawHtml: string;
+  const kind = getChunkKind(chunk);
+  if (kind === 'composite' || chunk.chunk_type === 'composite') {
+    const tempChunk = {
+      ...chunk,
+      tables: currentTables,
+      text: updatedText,
+      raw_html: '',
+    };
+    updatedRawHtml = reconstructCompositeHtml(tempChunk, true);
+  } else {
+    const htmlParts: string[] = [];
+    for (const t of currentTables) {
+      if (t.raw_html) htmlParts.push(t.raw_html);
+    }
+    updatedRawHtml = htmlParts.join('\n\n') || newHtml;
   }
-  const updatedRawHtml = htmlParts.join('\n\n');
 
   return {
     ...chunk,

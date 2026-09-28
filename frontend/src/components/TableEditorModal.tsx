@@ -310,7 +310,7 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
 
   // 저장
   const handleSave = () => {
-    const html = gridToHtmlTable(grid, caption, footnote);
+    const html = gridToHtmlTable(grid);
     const markdown = gridToMarkdownTable(grid);
     onSave({
       grid,
@@ -322,8 +322,14 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
     onClose();
   };
 
-  const previewHtml = gridToHtmlTable(grid, caption, footnote);
-  const previewMd = gridToMarkdownTable(grid);
+  const previewHtml = gridToHtmlTable(grid);
+  const previewMd = [
+    caption.trim() ? `**[표 제목: ${caption.trim()}]**` : '',
+    gridToMarkdownTable(grid),
+    footnote.trim() ? `**[표 각주: ${footnote.trim()}]**` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   const selectedCellData = selectedCell ? grid[selectedCell.r]?.[selectedCell.c] : null;
 
   return (
@@ -628,10 +634,20 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
                   <Eye className="w-3.5 h-3.5" />
                   <span>실시간 HTML 렌더링 결과 (브라우저/문서 뷰어 출력형태)</span>
                 </div>
+                {caption.trim() && (
+                  <div className="font-bold text-xs text-slate-800 dark:text-slate-200 mb-1.5">
+                    {caption.trim()}
+                  </div>
+                )}
                 <div
                   className="prose-custom text-xs"
                   dangerouslySetInnerHTML={{ __html: previewHtml }}
                 />
+                {footnote.trim() && (
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 italic mt-1.5">
+                    {footnote.trim()}
+                  </div>
+                )}
               </div>
 
               <div className="bg-slate-900 text-slate-200 rounded-xl border border-slate-800 p-4 font-mono text-xs shadow-xs space-y-2">

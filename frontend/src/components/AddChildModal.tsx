@@ -206,7 +206,7 @@ export const AddChildModal: React.FC<AddChildModalProps> = ({
     if (!tsvText.trim()) return;
     try {
       const grid = parseTsvToGrid(tsvText);
-      const html = gridToHtmlTable(grid, tableCaption, tableFootnote);
+      const html = gridToHtmlTable(grid);
       const md = gridToMarkdownTable(grid);
 
       setRawHtml(html);

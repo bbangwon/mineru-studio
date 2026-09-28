@@ -13,7 +13,9 @@
   padding: 0.4rem 0.65rem;
   text-align: left;
 }
-.prose-custom th {
+.prose-custom th,
+.prose-custom table > tr:first-child > td,
+.prose-custom table > tbody > tr:first-child > td {
   background-color: #f1f5f9;
   font-weight: 600;
   color: #334155;
@@ -47,7 +49,9 @@
 .dark .prose-custom th, .dark .prose-custom td {
   border-color: #334155;
 }
-.dark .prose-custom th {
+.dark .prose-custom th,
+.dark .prose-custom table > tr:first-child > td,
+.dark .prose-custom table > tbody > tr:first-child > td {
   background-color: #1e293b;
   color: #cbd5e1;
 }

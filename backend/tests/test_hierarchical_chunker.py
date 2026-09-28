@@ -1,6 +1,6 @@
 import unittest
 import json
-from backend.app.services.hierarchical_chunker import HierarchicalChunker
+from backend.app.services.hierarchical_chunker import HierarchicalChunker, _HTMLTableExtractor
 
 
 class TestHierarchicalChunker(unittest.TestCase):
@@ -1620,6 +1620,157 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertIn("| 1분기 | 50만 |", comp_chunk["text"])
         self.assertIn("**[표 각주: 신청자에 한함]**", comp_chunk["text"])
         self.assertIn("위 기준에 따라 차등 지급됩니다.", comp_chunk["text"])
+
+
+    def test_build_and_strip_outer_table_html(self):
+        """build_outer_table_html과 strip_table_meta_tags의 동작 및 멱등성 검증"""
+        base_html = "<table><tr><td>1</td><td>2</td></tr></table>"
+        outer_html = HierarchicalChunker.build_outer_table_html(base_html, caption="표 1", footnote="※ 각주 1")
+
+        # 1. <caption>과 <tfoot>이 올바르게 주입되었는지 확인
+        self.assertIn("<caption>표 1</caption>", outer_html)
+        self.assertIn("<tfoot>", outer_html)
+        self.assertIn('<td colspan="100%">※ 각주 1</td>', outer_html)
+        self.assertTrue(outer_html.startswith("<table>\n  <caption>표 1</caption>"))
+        self.assertTrue(outer_html.endswith("</tfoot>\n</table>"))
+
+        # 2. strip_table_meta_tags 호출 시 순수 테이블로 복원되는지 확인
+        stripped = HierarchicalChunker.strip_table_meta_tags(outer_html)
+        self.assertEqual(stripped, base_html)
+
+        # 3. 갱신 호출 시 중복 없이 새로운 값으로 대체되는지 확인
+        updated_outer = HierarchicalChunker.build_outer_table_html(outer_html, caption="새 제목", footnote="새 각주")
+        self.assertIn("<caption>새 제목</caption>", updated_outer)
+        self.assertNotIn("표 1", updated_outer)
+        self.assertIn('<td colspan="100%">새 각주</td>', updated_outer)
+        self.assertNotIn("※ 각주 1", updated_outer)
+        self.assertEqual(updated_outer.count("<caption>"), 1)
+        self.assertEqual(updated_outer.count("<tfoot>"), 1)
+
+    def test_outer_vs_inner_table_raw_html_separation(self):
+        """단독 표 청크에서 chunk.tables[0].raw_html은 순수 HTML, chunk.raw_html은 caption/tfoot 포함 HTML인지 검증"""
+        chunker = HierarchicalChunker(doc_id="single_table_test")
+        sample = [
+            {
+                "type": "table",
+                "content": {
+                    "html": "<table><tr><th>항목</th><th>수치</th></tr><tr><td>A</td><td>100</td></tr></table>",
+                    "table_caption": [{"type": "text", "content": "매출 지표"}],
+                    "table_footnote": [{"type": "text", "content": "단위: 억원"}]
+                },
+                "page_idx": 0
+            }
+        ]
+        res = chunker.chunk_content_list(sample, doc_title="재무보고서")
+        tbl_chunk = res["child_chunks"][0]
+
+        self.assertEqual(tbl_chunk["chunk_type"], "table")
+        # 안쪽 raw_html: 순수 테이블 HTML (caption/tfoot 없음)
+        inner_html = tbl_chunk["tables"][0]["raw_html"]
+        self.assertNotIn("<caption>", inner_html)
+        self.assertNotIn("<tfoot>", inner_html)
+        self.assertIn("<th>항목</th>", inner_html)
+
+        # 바깥쪽 raw_html: HTML5 caption 및 tfoot 포함
+        outer_html = tbl_chunk["raw_html"]
+        self.assertIn("<caption>매출 지표</caption>", outer_html)
+        self.assertIn("<tfoot>", outer_html)
+        self.assertIn("단위: 억원", outer_html)
+
+    def test_composite_chunk_outer_raw_html_includes_caption_and_tfoot(self):
+        """복합 청크의 바깥쪽 raw_html에는 문단과 표의 caption/tfoot이 올바르게 통합 결합되는지 검증"""
+        chunker = HierarchicalChunker(doc_id="comp_table_test")
+        sample = [
+            {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "상세 내역 안내입니다."}]}, "page_idx": 0},
+            {
+                "type": "table",
+                "content": {
+                    "html": "<table><tr><td>값</td></tr></table>",
+                    "table_caption": [{"type": "text", "content": "부속 표"}],
+                    "table_footnote": [{"type": "text", "content": "참조 주석"}]
+                },
+                "page_idx": 0
+            }
+        ]
+        res = chunker.chunk_content_list(sample, doc_title="안내서", strategy="general")
+        comp_chunk = res["child_chunks"][0]
+
+        self.assertEqual(comp_chunk["chunk_type"], "composite")
+        # 안쪽 raw_html: 순수
+        self.assertNotIn("<caption>", comp_chunk["tables"][0]["raw_html"])
+        self.assertNotIn("<tfoot>", comp_chunk["tables"][0]["raw_html"])
+
+        # 바깥쪽 raw_html: 문단 + caption + tfoot
+        outer_html = comp_chunk["raw_html"]
+        self.assertIn("<p>상세 내역 안내입니다.</p>", outer_html)
+        self.assertIn("<caption>부속 표</caption>", outer_html)
+        self.assertIn("<tfoot>", outer_html)
+        self.assertIn("참조 주석", outer_html)
+
+    def test_rag_jsonl_export_outer_vs_inner_html(self):
+        """export_to_jsonl 실행 시 record.tables[0].raw_html과 record.raw_html의 분리 및 완전성 검증"""
+        chunker = HierarchicalChunker(doc_id="jsonl_table_test")
+        sample_etl = {
+            "metadata": {"doc_id": "jsonl_table_test", "doc_title": "JSONL 테스트 문서"},
+            "parent_sections": [{"id": "s01", "title": "섹션 1", "level": 1}],
+            "parent_chunks": [{"id": "p001", "parent_chunk_id": "p001", "section_id": "s01", "text": "부모 텍스트"}],
+            "child_chunks": [
+                {
+                    "chunk_id": "c0001",
+                    "parent_chunk_id": "p001",
+                    "section_id": "s01",
+                    "chunk_type": "table",
+                    "text": "**[표 제목: 시험 성적]**\n| 과목 | 점수 |\n| --- | --- |\n| 수학 | 90 |\n**[표 각주: 만점 100점]**",
+                    "raw_html": "<table><tr><td>수학</td><td>90</td></tr></table>",
+                    "table_caption": "시험 성적",
+                    "table_footnote": "만점 100점",
+                    "page_number": 1,
+                    "tables": [
+                        {
+                            "table_id": "c0001_t1",
+                            "caption": "시험 성적",
+                            "footnote": "만점 100점",
+                            "raw_html": "<table><tr><td>수학</td><td>90</td></tr></table>",
+                        }
+                    ],
+                    "metadata": {"has_tables": True},
+                }
+            ],
+        }
+
+        jsonl = chunker.export_to_jsonl(sample_etl)
+        rec = json.loads(jsonl.strip().splitlines()[0])
+
+        # 1. record.tables[0].raw_html은 순수 테이블
+        inner = rec["tables"][0]["raw_html"]
+        self.assertNotIn("<caption>", inner)
+        self.assertNotIn("<tfoot>", inner)
+        self.assertIn("<td>수학</td>", inner)
+
+        # 2. record.raw_html은 완성형 바깥쪽 HTML
+        outer = rec["raw_html"]
+        self.assertIn("<caption>시험 성적</caption>", outer)
+        self.assertIn("<tfoot>", outer)
+        self.assertIn("만점 100점", outer)
+
+    def test_html_table_extractor_ignores_tfoot_and_caption(self):
+        """_HTMLTableExtractor가 tfoot과 caption을 일반 데이터 행으로 파싱하지 않는지 검증"""
+        html_content = """
+        <table>
+          <caption>표 제목</caption>
+          <tr><th>항목</th><th>값</th></tr>
+          <tr><td>A</td><td>1</td></tr>
+          <tfoot>
+            <tr><td colspan="100%">각주 설명문</td></tr>
+          </tfoot>
+        </table>
+        """
+        parser = _HTMLTableExtractor()
+        parser.feed(html_content)
+        # 행 수는 헤더 1행 + 데이터 1행 = 2행이어야 함 (tfoot은 제외)
+        self.assertEqual(len(parser.rows), 2)
+        self.assertEqual(parser.rows[0], ["항목", "값"])
+        self.assertEqual(parser.rows[1], ["A", "1"])
 
 
 if __name__ == "__main__":

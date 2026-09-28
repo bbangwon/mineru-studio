@@ -316,9 +316,53 @@ function escapeHtml(text: string): string {
 }
 
 /**
+ * table HTML에서 <caption> 및 <tfoot>/<footnote> 태그를 제거하여 순수 테이블 본체만 반환합니다.
+ */
+export function stripTableMetaTags(rawHtml: string): string {
+  if (!rawHtml || !/<table\b/i.test(rawHtml)) return rawHtml || '';
+  let res = rawHtml;
+  res = res.replace(/\s*<caption\b[\s\S]*?<\/caption>\s*/gi, '');
+  res = res.replace(/\s*<tfoot\b[\s\S]*?<\/tfoot>\s*/gi, '');
+  res = res.replace(/\s*<footnote\b[\s\S]*?<\/footnote>\s*/gi, '');
+  return res;
+}
+
+/**
+ * 순수 table HTML(안쪽 raw_html)에 HTML5 표준인 <caption>과 <tfoot>(footnote) 태그를
+ * 주입하여 청크 최상위(바깥쪽) 및 RAG 검색용 완성형 table HTML을 생성합니다.
+ */
+export function buildOuterTableHtml(
+  rawHtml: string,
+  caption?: string,
+  footnote?: string
+): string {
+  if (!rawHtml || !/<table\b/i.test(rawHtml)) return rawHtml || '';
+
+  let res = stripTableMetaTags(rawHtml);
+  const capText = (caption || '').trim();
+  const fnText = (footnote || '').trim();
+
+  if (capText) {
+    const captionTag = `\n  <caption>${escapeHtml(capText)}</caption>`;
+    res = res.replace(/(<table\b[^>]*>)/i, `$1${captionTag}`);
+  }
+
+  if (fnText) {
+    const tfootTag = `\n  <tfoot>\n    <tr><td colspan="100%">${escapeHtml(fnText)}</td></tr>\n  </tfoot>\n`;
+    const lastCloseIndex = res.toLowerCase().lastIndexOf('</table>');
+    if (lastCloseIndex !== -1) {
+      res = res.slice(0, lastCloseIndex) + tfootTag + res.slice(lastCloseIndex);
+    }
+  }
+
+  return res;
+}
+
+/**
  * 복합(composite) 청크의 raw_html에 문단 태그(<p>)가 누락되어 있거나 표만 존재하는 경우,
  * chunk.text(마크다운 본문)와 chunk.tables(표 HTML)를 매칭하여
  * 원본 문서 순서(문단 + 표 + 문단 + 표 ...) 그대로 복원된 통합 HTML 문자열을 생성합니다.
+ * 각 표는 HTML5 표준 <caption> 및 <tfoot>(footnote) 태그가 바깥쪽 raw_html에 반영됩니다.
  */
 export function reconstructCompositeHtml(
   chunk: Pick<ChildChunk, 'raw_html' | 'text' | 'tables' | 'metadata' | 'chunk_type'>,
@@ -331,7 +375,9 @@ export function reconstructCompositeHtml(
   }
 
   const tables: EmbeddedTableItem[] = chunk.tables || chunk.metadata?.tables || [];
-  let tableHtmls = tables.map((t) => t.raw_html).filter(Boolean) as string[];
+  let tableHtmls = tables
+    .map((t) => buildOuterTableHtml(t.raw_html || '', t.caption, t.footnote))
+    .filter(Boolean) as string[];
   if (tableHtmls.length === 0 && raw) {
     const matched = raw.match(/<table\b[\s\S]*?<\/table>/gi);
     if (matched) {
@@ -381,7 +427,7 @@ export function reconstructCompositeHtml(
 /**
  * composite 청크의 raw_html에 문단 태그가 누락된 경우,
  * reconstructCompositeHtml을 이용해 raw_html을 완성형으로 복원합니다.
- * 단독 표(table) 청크가 <p> 태그로 오염된 경우 tables[0].raw_html로 자가 복구합니다.
+ * 단독 표(table) 청크가 <p> 태그로 오염된 경우 순수 tables[0].raw_html에 caption/footnote를 결합하여 복구합니다.
  */
 export function healCompositeChunk(chunk: ChildChunk): ChildChunk {
   const kind = getChunkKind(chunk);
@@ -392,7 +438,11 @@ export function healCompositeChunk(chunk: ChildChunk): ChildChunk {
       if (cleanHtml && chunk.raw_html && /<p\b|<div\b|<span\b/i.test(chunk.raw_html)) {
         return {
           ...chunk,
-          raw_html: cleanHtml,
+          raw_html: buildOuterTableHtml(
+            cleanHtml,
+            tables[0]?.caption || chunk.table_caption,
+            tables[0]?.footnote || chunk.table_footnote
+          ),
         };
       }
     }

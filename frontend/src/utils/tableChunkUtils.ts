@@ -1,7 +1,9 @@
 import type { ChildChunk, EmbeddedTableItem } from '../types';
 import { estimateKoreanTokens } from './idUtils';
 import { getChunkKind } from './chunkKindUtils';
-import { reconstructCompositeHtml } from './pageUtils';
+import { reconstructCompositeHtml, stripTableMetaTags, buildOuterTableHtml } from './pageUtils';
+
+export { stripTableMetaTags, buildOuterTableHtml };
 
 export interface TextBlock {
   type: 'paragraph' | 'table';
@@ -242,15 +244,18 @@ export function deriveChunkTypeAndTables(
         ? [{
             table_index: 0,
             table_id: originalChunk ? `${originalChunk.chunk_id}_t1` : undefined,
-            raw_html: matchedHtml,
+            raw_html: stripTableMetaTags(matchedHtml),
             caption: originalChunk?.tables?.[0]?.caption || originalChunk?.table_caption,
             footnote: originalChunk?.tables?.[0]?.footnote || originalChunk?.table_footnote,
           }]
         : undefined);
 
+  const tblCap = derivedTables?.[0]?.caption || originalChunk?.table_caption;
+  const tblFn = derivedTables?.[0]?.footnote || originalChunk?.table_footnote;
+
   return {
     tables: derivedTables,
-    raw_html: matchedHtml || undefined,
+    raw_html: matchedHtml ? buildOuterTableHtml(matchedHtml, tblCap, tblFn) : undefined,
     table_caption: undefined,
     table_footnote: undefined,
   };
@@ -293,7 +298,7 @@ export function mergeChunkAssets(selectedChunks: ChildChunk[]): {
         table_index: allTables.length,
         caption: chunk.table_caption,
         footnote: chunk.table_footnote,
-        raw_html: chunk.raw_html,
+        raw_html: stripTableMetaTags(chunk.raw_html),
         token_estimate: chunk.token_estimate || estimateKoreanTokens(chunk.text),
         page_number: chunk.page_number,
         page_end: chunk.page_end,
@@ -782,9 +787,9 @@ export function updateTableInChunk(
   } else {
     const htmlParts: string[] = [];
     for (const t of currentTables) {
-      if (t.raw_html) htmlParts.push(t.raw_html);
+      if (t.raw_html) htmlParts.push(buildOuterTableHtml(t.raw_html, t.caption, t.footnote));
     }
-    updatedRawHtml = htmlParts.join('\n\n') || newHtml;
+    updatedRawHtml = htmlParts.join('\n\n') || buildOuterTableHtml(newHtml, caption, footnote);
   }
 
   return {

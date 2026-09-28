@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Code2, X, Copy, Check } from 'lucide-react';
 import type { ChildChunk, ParentSection, ParentChunk } from '../types';
-import { getChunkPageList, reconstructCompositeHtml } from '../utils/pageUtils';
+import { getChunkPageList, reconstructCompositeHtml, stripTableMetaTags, buildOuterTableHtml } from '../utils/pageUtils';
 import { getChunkKind } from '../utils/chunkKindUtils';
 
 interface JsonlModalProps {
@@ -48,7 +48,7 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
     table_id: t.table_id || `${chunk.chunk_id}_t${idx + 1}`,
     caption: t.caption || chunk.table_caption || '',
     footnote: t.footnote || chunk.table_footnote || '',
-    raw_html: t.raw_html || chunk.raw_html || '',
+    raw_html: stripTableMetaTags(t.raw_html || chunk.raw_html || ''),
   }));
 
   if (chunkKind === 'table' && cleanTables.length === 0 && chunk.raw_html) {
@@ -56,7 +56,7 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
       table_id: `${chunk.chunk_id}_t1`,
       caption: chunk.table_caption || '',
       footnote: chunk.table_footnote || '',
-      raw_html: chunk.raw_html,
+      raw_html: stripTableMetaTags(chunk.raw_html),
     });
   }
 
@@ -102,8 +102,14 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
   }
   const effectiveRawHtml =
     chunkKind === 'composite'
-      ? reconstructCompositeHtml(chunk)
-      : chunk.raw_html;
+      ? reconstructCompositeHtml(chunk, true)
+      : (chunkKind === 'table' || (chunk.raw_html && /<table/i.test(chunk.raw_html)))
+        ? buildOuterTableHtml(
+            cleanTables[0]?.raw_html || chunk.raw_html || '',
+            cleanTables[0]?.caption || chunk.table_caption,
+            cleanTables[0]?.footnote || chunk.table_footnote
+          )
+        : chunk.raw_html;
 
   if (effectiveRawHtml) {
     record.raw_html = effectiveRawHtml;

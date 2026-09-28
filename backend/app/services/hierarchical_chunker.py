@@ -15,26 +15,39 @@ class _HTMLTableExtractor(HTMLParser):
         self.current_row: List[str] = []
         self.current_cell: List[str] = []
         self.in_cell = False
+        self.in_tfoot = False
+        self.in_caption = False
 
     def handle_starttag(self, tag: str, attrs: Any):
-        if tag in ("td", "th"):
-            self.in_cell = True
-            self.current_cell = []
-        elif tag == "tr":
-            self.current_row = []
+        if tag == "tfoot":
+            self.in_tfoot = True
+        elif tag == "caption":
+            self.in_caption = True
+        elif not self.in_tfoot and not self.in_caption:
+            if tag in ("td", "th"):
+                self.in_cell = True
+                self.current_cell = []
+            elif tag == "tr":
+                self.current_row = []
 
     def handle_endtag(self, tag: str):
-        if tag in ("td", "th"):
-            self.in_cell = False
-            cell_text = " ".join("".join(self.current_cell).split())
-            self.current_row.append(cell_text)
-        elif tag == "tr":
-            if self.current_row:
-                self.rows.append(self.current_row)
+        if tag == "tfoot":
+            self.in_tfoot = False
+        elif tag == "caption":
+            self.in_caption = False
+        elif not self.in_tfoot and not self.in_caption:
+            if tag in ("td", "th"):
+                self.in_cell = False
+                cell_text = " ".join("".join(self.current_cell).split())
+                self.current_row.append(cell_text)
+            elif tag == "tr":
+                if self.current_row:
+                    self.rows.append(self.current_row)
 
     def handle_data(self, data: str):
-        if self.in_cell:
+        if self.in_cell and not self.in_tfoot and not self.in_caption:
             self.current_cell.append(data)
+
 
 
 class HierarchicalChunker:
@@ -442,18 +455,69 @@ class HierarchicalChunker:
         return f"<p>{escaped}</p>"
 
     @classmethod
+    def strip_table_meta_tags(cls, html_str: str) -> str:
+        """table HTML에서 <caption> 및 <tfoot>/<footnote> 태그를 제거하여 순수 테이블 본체만 반환합니다."""
+        if not html_str or not re.search(r"<table\b", html_str, re.I):
+            return html_str or ""
+        res = html_str
+        if re.search(r"<caption\b", res, re.I):
+            res = re.sub(r"\s*<caption\b[\s\S]*?</caption>\s*", "", res, flags=re.I)
+        if re.search(r"<(?:tfoot|footnote)\b", res, re.I):
+            res = re.sub(r"\s*<tfoot\b[\s\S]*?</tfoot>\s*", "", res, flags=re.I)
+            res = re.sub(r"\s*<footnote\b[\s\S]*?</footnote>\s*", "", res, flags=re.I)
+        return res
+
+    @classmethod
+    def build_outer_table_html(cls, raw_html: str, caption: str = "", footnote: str = "") -> str:
+        """
+        순수 table HTML(안쪽 raw_html)에 HTML5 표준인 <caption>과 <tfoot>(footnote) 태그를
+        주입하여 청크 최상위(바깥쪽) 및 RAG 검색용 완성형 table HTML을 생성합니다.
+        - caption: <table...> 태그 직후에 <caption>...</caption> 삽입
+        - footnote: </table> 직전에 <tfoot><tr><td colspan="100%">...</td></tr></tfoot> 삽입
+        - 기존에 이미 <caption>이나 <tfoot>이 존재하는 경우 중복 주입을 방지하고 깔끔히 갱신합니다.
+        """
+        if not raw_html or not re.search(r"<table\b", raw_html, re.I):
+            return raw_html or ""
+
+        res = cls.strip_table_meta_tags(raw_html)
+        cap_text = (caption or "").strip()
+        fn_text = (footnote or "").strip()
+
+        if cap_text:
+            escaped_cap = html.escape(cap_text)
+            caption_tag = f"\n  <caption>{escaped_cap}</caption>"
+            m = re.search(r"<table\b[^>]*>", res, re.I)
+            if m:
+                idx = m.end()
+                res = res[:idx] + caption_tag + res[idx:]
+
+        if fn_text:
+            escaped_fn = html.escape(fn_text)
+            tfoot_tag = f"\n  <tfoot>\n    <tr><td colspan=\"100%\">{escaped_fn}</td></tr>\n  </tfoot>\n"
+            m = list(re.finditer(r"</table>", res, re.I))
+            if m:
+                idx = m[-1].start()
+                res = res[:idx] + tfoot_tag + res[idx:]
+
+        return res
+
+    @classmethod
     def reconstruct_composite_raw_html(cls, chunk: Dict[str, Any], force: bool = False) -> str:
         """
         복합(composite) 청크의 raw_html에 문단 태그(<p>)가 누락된 구버전 데이터인 경우,
         chunk['text'](마크다운 본문)와 표 정보(tables 또는 raw_html)를 결합하여
         원본 문서 순서(문단 + 표 + 문단 + 표 ...) 그대로 복원된 완성형 HTML을 반환합니다.
+        각 표에는 HTML5 표준 <caption> 및 <tfoot>(footnote) 태그가 바깥쪽 raw_html에 결합됩니다.
         """
         raw_html = chunk.get("raw_html") or ""
         if not force and raw_html and re.search(r"<(?:p|div|span)\b", raw_html, re.I):
             return raw_html
 
         tables = chunk.get("tables") or (chunk.get("metadata", {}).get("tables") if isinstance(chunk.get("metadata"), dict) else []) or []
-        table_htmls = [t.get("raw_html", "") for t in tables if t.get("raw_html")]
+        table_htmls = [
+            cls.build_outer_table_html(t.get("raw_html", ""), t.get("caption", ""), t.get("footnote", ""))
+            for t in tables if t.get("raw_html")
+        ]
         if not table_htmls and raw_html:
             table_htmls = re.findall(r"(<table\b[\s\S]*?</table>)", raw_html, re.I)
 
@@ -1242,11 +1306,11 @@ class HierarchicalChunker:
                     is_table = True
                     is_atomic_table = True
                     single_t = current_tables[0]
-                    combined_raw_html = single_t.get("raw_html", "")
                     tbl_caption = extracted_caption
                     tbl_footnote = extracted_footnote
                     single_t["caption"] = tbl_caption or ""
                     single_t["footnote"] = tbl_footnote or ""
+                    combined_raw_html = self.build_outer_table_html(single_t.get("raw_html", ""), tbl_caption or "", tbl_footnote or "")
                     meta["type"] = "table"
                     meta["has_tables"] = True
                     meta["table_count"] = 1
@@ -1364,7 +1428,7 @@ class HierarchicalChunker:
                         current_breadcrumbs = list(breadcrumbs)
 
                     current_text_units.append(md_table)
-                    current_html_units.append(raw_html)
+                    current_html_units.append(self.build_outer_table_html(raw_html, caption, footnote))
                     current_tokens += tbl_tokens
                     current_tables.append({
                         "table_index": len(current_tables),
@@ -1432,10 +1496,21 @@ class HierarchicalChunker:
                     "section_id": sec_id,
                     "chunk_type": "table",
                     "text": search_text,
-                    "raw_html": raw_html,
+                    "raw_html": self.build_outer_table_html(raw_html, caption, footnote),
                     "table_caption": caption,
                     "table_footnote": footnote,
                     "table_type": table_type,
+                    "tables": [{
+                        "table_index": 0,
+                        "caption": caption,
+                        "footnote": footnote,
+                        "raw_html": raw_html,
+                        "table_type": table_type,
+                        "page_number": tbl_start_p,
+                        "page_end": tbl_end_p,
+                        "row_count": row_count,
+                        "token_estimate": tbl_tokens,
+                    }],
                     "token_estimate": tbl_tokens,
                     "page_number": tbl_start_p,
                     "page_end": tbl_end_p,
@@ -1771,13 +1846,14 @@ class HierarchicalChunker:
             meta["table_count"] = table_count
 
             # tables 항목 정제: table_type 제거 및 필수 속성(table_id, caption, footnote, raw_html)만 보존
+            # 안쪽 raw_html은 순수 <table> 본체만 유지 (strip_table_meta_tags)
             clean_tables = []
             for idx, t in enumerate(chunk_tables):
                 clean_tables.append({
                     "table_id": t.get("table_id") or f"{cid}_t{idx + 1}",
                     "caption": t.get("caption") or chunk.get("table_caption") or "",
                     "footnote": t.get("footnote") or chunk.get("table_footnote") or "",
-                    "raw_html": t.get("raw_html") or chunk.get("raw_html") or "",
+                    "raw_html": self.strip_table_meta_tags(t.get("raw_html") or chunk.get("raw_html") or ""),
                 })
 
             # 단독 표(table)인데 chunk_tables가 비어있는 레거시 청크의 경우 자체 raw_html 기반 생성
@@ -1786,7 +1862,7 @@ class HierarchicalChunker:
                     "table_id": f"{cid}_t1",
                     "caption": chunk.get("table_caption") or "",
                     "footnote": chunk.get("table_footnote") or "",
-                    "raw_html": chunk.get("raw_html") or "",
+                    "raw_html": self.strip_table_meta_tags(chunk.get("raw_html") or ""),
                 })
 
             parent_text = parent.get("text", "")
@@ -1817,8 +1893,15 @@ class HierarchicalChunker:
                 record["page_end"] = end_page
             if has_tables and clean_tables:
                 record["tables"] = clean_tables
+
+            # 바깥쪽 raw_html: 단독 표 및 복합 표 청크 모두 HTML5 caption 및 tfoot(footnote) 주입
             if c_type == "composite":
-                raw_val = self.reconstruct_composite_raw_html(chunk) or chunk.get("raw_html", "")
+                raw_val = self.reconstruct_composite_raw_html(chunk, force=True) or chunk.get("raw_html", "")
+            elif c_type == "table":
+                cap = chunk.get("table_caption") or (clean_tables[0].get("caption") if clean_tables else "")
+                fn = chunk.get("table_footnote") or (clean_tables[0].get("footnote") if clean_tables else "")
+                table_base_html = (clean_tables[0].get("raw_html") if clean_tables else "") or chunk.get("raw_html", "")
+                raw_val = self.build_outer_table_html(table_base_html, cap, fn)
             else:
                 raw_val = chunk.get("raw_html", "")
 

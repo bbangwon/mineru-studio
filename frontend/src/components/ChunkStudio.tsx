@@ -70,6 +70,7 @@ import {
   RESERVED_METADATA_KEYS,
   computeTableMetadata,
   reconstructCompositeHtml,
+  buildOuterTableHtml,
 } from '../utils/pageUtils';
 import {
   estimateKoreanTokens,
@@ -1024,9 +1025,25 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       [field]: value,
     };
 
+    const kind = getChunkKind(activeChunk);
+    let updatedRawHtml = activeChunk.raw_html;
+    if (kind === 'composite') {
+      updatedRawHtml = reconstructCompositeHtml(
+        { ...activeChunk, tables: currentTables },
+        true
+      );
+    } else {
+      updatedRawHtml = buildOuterTableHtml(
+        currentTables[0]?.raw_html || activeChunk.raw_html || '',
+        currentTables[0]?.caption,
+        currentTables[0]?.footnote
+      );
+    }
+
     const updated: ChildChunk = {
       ...activeChunk,
       tables: currentTables,
+      raw_html: updatedRawHtml,
       table_caption: undefined,
       table_footnote: undefined,
       is_edited: true,

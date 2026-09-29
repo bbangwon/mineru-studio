@@ -10,8 +10,13 @@ import {
   FolderTree,
   FileText,
   Copy,
+  ListPlus,
 } from 'lucide-react';
-import { RESERVED_METADATA_KEYS } from '../utils/pageUtils';
+import {
+  RESERVED_METADATA_KEYS,
+  parseCustomMetaValue,
+  type MetadataMergeStrategy,
+} from '../utils/pageUtils';
 
 interface BulkMetadataModalProps {
   isOpen: boolean;
@@ -27,6 +32,8 @@ interface BulkMetadataModalProps {
     mode: 'add_tag' | 'apply_batch' | 'delete_tag';
     key?: string;
     value?: any;
+    valueType?: 'text' | 'array';
+    mergeStrategy?: MetadataMergeStrategy;
     tags?: Record<string, any>;
     scope: 'all' | 'section';
     sectionId?: string;
@@ -45,6 +52,8 @@ const PRESET_KEYS = [
   'source',
   'version',
   'author',
+  'keywords',
+  'target_audience',
 ];
 
 export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
@@ -61,6 +70,8 @@ export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabMode>('add');
   const [scope, setScope] = useState<'all' | 'section'>('all');
+  const [valueType, setValueType] = useState<'text' | 'array'>('text');
+  const [mergeStrategy, setMergeStrategy] = useState<MetadataMergeStrategy>('append');
   const [overwrite, setOverwrite] = useState(true);
 
   // Tab 1: Single Tag Add State
@@ -102,13 +113,17 @@ export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
     }
     setKeyError(null);
 
+    const parsedValue = parseCustomMetaValue(tagValue, valueType);
+
     onApply({
       mode: 'add_tag',
       key: trimmedKey,
-      value: tagValue.trim(),
+      value: parsedValue,
+      valueType,
+      mergeStrategy,
+      overwrite: mergeStrategy === 'overwrite',
       scope,
       sectionId: currentSectionId,
-      overwrite,
     });
     onClose();
   };
@@ -119,7 +134,8 @@ export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
     const tagsToApply: Record<string, any> = {};
     for (const k of selectedPropagateKeys) {
       if (k in activeChunkMetadata) {
-        tagsToApply[k] = activeChunkMetadata[k];
+        const val = activeChunkMetadata[k];
+        tagsToApply[k] = Array.isArray(val) ? [...val] : val;
       }
     }
 
@@ -128,6 +144,7 @@ export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
       tags: tagsToApply,
       scope,
       sectionId: currentSectionId,
+      mergeStrategy: overwrite ? 'overwrite' : 'skip',
       overwrite,
     });
     onClose();
@@ -319,54 +336,212 @@ export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
                 </div>
               </div>
 
-              {/* Key & Value Inputs */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Value Type Selector */}
+              <div className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-950/50 rounded-xl border border-slate-200 dark:border-slate-800">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    메타데이터 키 (Key) <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={tagKey}
-                    onChange={(e) => {
-                      setTagKey(e.target.value);
-                      setKeyError(null);
-                    }}
-                    placeholder="예: doc_category"
-                    className="w-full text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-mono"
-                  />
-                  {keyError && (
-                    <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" />
-                      {keyError}
-                    </p>
-                  )}
+                  <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                    값 데이터 타입 (Value Type)
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {valueType === 'text'
+                      ? '단일 문자열로 저장합니다 (예: 인사규정)'
+                      : '쉼표(,)로 구분된 문자열 배열(string[])로 저장합니다'}
+                  </div>
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    메타데이터 값 (Value)
-                  </label>
-                  <input
-                    type="text"
-                    value={tagValue}
-                    onChange={(e) => setTagValue(e.target.value)}
-                    placeholder="예: 인사규정"
-                    className="w-full text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                  />
+                <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 bg-white dark:bg-slate-900 text-xs shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setValueType('text');
+                      setMergeStrategy('overwrite');
+                    }}
+                    className={`px-3 py-1 rounded-md font-medium transition cursor-pointer ${
+                      valueType === 'text'
+                        ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    단일 텍스트
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setValueType('array');
+                      setMergeStrategy('append');
+                    }}
+                    className={`px-3 py-1 rounded-md font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                      valueType === 'array'
+                        ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    <ListPlus className="w-3.5 h-3.5" />
+                    <span>태그 목록 (Array)</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Overwrite Checkbox */}
-              <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={overwrite}
-                  onChange={(e) => setOverwrite(e.target.checked)}
-                  className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                />
-                <span>기존 청크에 동일한 키가 있는 경우 새 값으로 덮어쓰기</span>
-              </label>
+              {/* Key & Value Inputs */}
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      메타데이터 키 (Key) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={tagKey}
+                      onChange={(e) => {
+                        setTagKey(e.target.value);
+                        setKeyError(null);
+                      }}
+                      placeholder={valueType === 'array' ? '예: keywords' : '예: doc_category'}
+                      className="w-full text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-mono"
+                    />
+                    {keyError && (
+                      <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        {keyError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      {valueType === 'array' ? '태그 목록 값 (Value)' : '메타데이터 값 (Value)'}
+                    </label>
+                    <input
+                      type="text"
+                      value={tagValue}
+                      onChange={(e) => setTagValue(e.target.value)}
+                      placeholder={
+                        valueType === 'array'
+                          ? '예: 근골격계, 판정지침, 산재보상 (쉼표 구분)'
+                          : '예: 인사규정'
+                      }
+                      className="w-full text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                {/* Array Live Preview Chips */}
+                {valueType === 'array' && (
+                  <div>
+                    {(() => {
+                      const parsed = parseCustomMetaValue(tagValue, 'array') as string[];
+                      if (parsed.length === 0) {
+                        return (
+                          <div className="text-[11px] text-slate-400 dark:text-slate-500 italic bg-slate-50 dark:bg-slate-950/40 p-2 rounded-lg border border-dashed border-slate-200 dark:border-slate-800">
+                            쉼표(,)로 태그를 구분하여 입력하면 등록될 태그 칩이 여기에 실시간으로 표시됩니다.
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="p-2.5 bg-indigo-50/60 dark:bg-indigo-950/40 rounded-xl border border-indigo-200/80 dark:border-indigo-800/80 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1">
+                              <span>파싱된 태그 목록</span>
+                              <span className="bg-indigo-200/70 dark:bg-indigo-800 text-indigo-900 dark:text-indigo-200 px-1.5 py-0.2 rounded-full font-mono text-[10px]">
+                                {parsed.length}개
+                              </span>
+                            </span>
+                            <span className="text-slate-500 dark:text-slate-400 text-[10px]">
+                              중복은 자동 제거되어 저장됩니다.
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {parsed.map((tag, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-flex items-center gap-1 text-xs bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700 px-2 py-0.5 rounded-md font-medium shadow-2xs font-mono"
+                              >
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {/* Conflict & Merge Strategy Selection */}
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  기존 청크에 동일 키가 있는 경우 처리 방식
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label
+                    className={`flex items-start gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition ${
+                      mergeStrategy === 'append'
+                        ? 'border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
+                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="mergeStrategy"
+                      checked={mergeStrategy === 'append'}
+                      onChange={() => setMergeStrategy('append')}
+                      className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="space-y-0.5">
+                      <div className="font-bold flex items-center gap-1">
+                        <span>배열 항목 병합</span>
+                        <span className="text-[10px] text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/60 px-1 rounded">추천</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                        기존 태그를 유지하면서 새 항목을 덧붙임
+                      </div>
+                    </div>
+                  </label>
+
+                  <label
+                    className={`flex items-start gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition ${
+                      mergeStrategy === 'overwrite'
+                        ? 'border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
+                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="mergeStrategy"
+                      checked={mergeStrategy === 'overwrite'}
+                      onChange={() => setMergeStrategy('overwrite')}
+                      className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="space-y-0.5">
+                      <div className="font-bold">전체 덮어쓰기</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                        기존 값을 무시하고 새 값으로 교체
+                      </div>
+                    </div>
+                  </label>
+
+                  <label
+                    className={`flex items-start gap-2 p-2.5 rounded-xl border text-xs cursor-pointer transition ${
+                      mergeStrategy === 'skip'
+                        ? 'border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 shadow-2xs'
+                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="mergeStrategy"
+                      checked={mergeStrategy === 'skip'}
+                      onChange={() => setMergeStrategy('skip')}
+                      className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="space-y-0.5">
+                      <div className="font-bold">건너뛰기</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                        해당 키가 없는 청크에만 새로 추가
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
 
               <div className="pt-3 flex justify-end gap-2">
                 <button
@@ -414,32 +589,55 @@ export const BulkMetadataModal: React.FC<BulkMetadataModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-200 dark:border-slate-800 rounded-xl p-2 bg-slate-50 dark:bg-slate-950/40">
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 border border-slate-200 dark:border-slate-800 rounded-xl p-2 bg-slate-50 dark:bg-slate-950/40">
                     {activeCustomEntries.map(([k, v]) => {
                       const isChecked = selectedPropagateKeys.includes(k);
+                      const isArrayVal = Array.isArray(v);
                       return (
                         <label
                           key={k}
                           onClick={() => togglePropagateKey(k)}
-                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition ${
+                          className={`flex items-start justify-between p-2.5 rounded-lg cursor-pointer transition ${
                             isChecked
-                              ? 'bg-indigo-50/80 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800'
+                              ? 'bg-indigo-50/80 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 shadow-2xs'
                               : 'bg-white dark:bg-slate-900 border border-transparent'
                           }`}
                         >
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-start gap-2.5 min-w-0">
                             <input
                               type="checkbox"
                               checked={isChecked}
                               onChange={() => {}}
-                              className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                              className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 shrink-0"
                             />
-                            <span className="text-xs font-mono font-bold text-indigo-700 dark:text-indigo-400">
-                              {k}:
-                            </span>
-                            <span className="text-xs text-slate-700 dark:text-slate-300">
-                              {String(v)}
-                            </span>
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-mono font-bold text-indigo-700 dark:text-indigo-400">
+                                  {k}
+                                </span>
+                                {isArrayVal && (
+                                  <span className="text-[10px] bg-indigo-100 dark:bg-indigo-900/70 text-indigo-800 dark:text-indigo-300 px-1.5 py-0.2 rounded font-mono font-semibold">
+                                    Array ({v.length}개)
+                                  </span>
+                                )}
+                              </div>
+                              {isArrayVal ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {v.map((item, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="text-[11px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-1.5 py-0.2 rounded text-slate-700 dark:text-slate-300 font-mono"
+                                    >
+                                      #{item}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-700 dark:text-slate-300 break-all">
+                                  {String(v)}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </label>
                       );

@@ -32,6 +32,7 @@ import {
   CheckSquare,
   Trash2,
   ListOrdered,
+  ListPlus,
   Loader2,
   Copy,
   ClipboardPaste,
@@ -70,6 +71,7 @@ import {
   RESERVED_METADATA_KEYS,
   computeTableMetadata,
   reconstructCompositeHtml,
+  parseCustomMetaValue,
 } from '../utils/pageUtils';
 import {
   estimateKoreanTokens,
@@ -145,6 +147,8 @@ interface ChunkStudioProps {
     mode: 'add_tag' | 'apply_batch' | 'delete_tag';
     key?: string;
     value?: any;
+    valueType?: 'text' | 'array';
+    mergeStrategy?: 'overwrite' | 'append' | 'skip';
     tags?: Record<string, any>;
     scope: 'all' | 'section';
     sectionId?: string;
@@ -241,6 +245,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   const [editorTab, setEditorTab] = useState<'text' | 'raw_html' | 'preview'>('text');
   const [newMetaKey, setNewMetaKey] = useState('');
   const [newMetaVal, setNewMetaVal] = useState('');
+  const [newMetaType, setNewMetaType] = useState<'text' | 'array'>('text');
   const [pageStartInput, setPageStartInput] = useState<string>('');
   const [pageEndInput, setPageEndInput] = useState<string>('');
 
@@ -274,6 +279,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   const [isImportMenuOpen, setIsImportMenuOpen] = useState(false);
   const [editingMetaKey, setEditingMetaKey] = useState<string | null>(null);
   const [editingMetaVal, setEditingMetaVal] = useState<string>('');
+  const [editingMetaType, setEditingMetaType] = useState<'text' | 'array'>('text');
 
   // Responsive Layout States for Mobile / Small Screens & Desktop Collapse
   const [mobileTab, setMobileTab] = useState<'tree' | 'list' | 'editor'>('list');
@@ -1087,9 +1093,11 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       return;
     }
     const currentMeta = activeChunk.metadata || {};
+    const parsedVal = parseCustomMetaValue(newMetaVal, newMetaType);
+
     const updatedMeta = {
       ...currentMeta,
-      [trimmedKey]: newMetaVal.trim(),
+      [trimmedKey]: parsedVal,
     };
     handleFieldChange('metadata', updatedMeta);
     setNewMetaKey('');
@@ -1108,19 +1116,43 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     }
   };
 
+  // Delete a single tag element from an array value
+  const handleDeleteMetaTagElement = (key: string, elementIndex: number) => {
+    if (!activeChunk || !activeChunk.metadata) return;
+    const currentMeta = activeChunk.metadata;
+    const currentVal = currentMeta[key];
+    if (!Array.isArray(currentVal)) return;
+
+    const nextArr = currentVal.filter((_, idx) => idx !== elementIndex);
+    const updatedMeta = { ...currentMeta };
+    if (nextArr.length === 0) {
+      delete updatedMeta[key];
+      setMetaNotice(`'${key}'의 모든 태그가 삭제되어 키가 제거되었습니다.`);
+    } else {
+      updatedMeta[key] = nextArr;
+      setMetaNotice(`'${key}' 태그가 삭제되었습니다.`);
+    }
+    setTimeout(() => setMetaNotice(null), 2000);
+    handleFieldChange('metadata', updatedMeta);
+  };
+
   // Start inline editing metadata tag value
   const handleStartEditMetaTag = (key: string, val: any) => {
     setEditingMetaKey(key);
-    setEditingMetaVal(String(val ?? ''));
+    const isArr = Array.isArray(val);
+    setEditingMetaType(isArr ? 'array' : 'text');
+    setEditingMetaVal(isArr ? val.join(', ') : String(val ?? ''));
   };
 
   // Save inline edited metadata tag value
   const handleSaveEditMetaTag = () => {
     if (!activeChunk || !editingMetaKey) return;
     const currentMeta = activeChunk.metadata || {};
+    const parsedVal = parseCustomMetaValue(editingMetaVal, editingMetaType);
+
     const updatedMeta = {
       ...currentMeta,
-      [editingMetaKey]: editingMetaVal.trim(),
+      [editingMetaKey]: parsedVal,
     };
     handleFieldChange('metadata', updatedMeta);
     setMetaNotice(`'${editingMetaKey}' 태그 값이 수정되었습니다.`);
@@ -1138,7 +1170,9 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   // Quick fill input form from existing tag
   const handleFillMetaForm = (key: string, val: any) => {
     setNewMetaKey(key);
-    setNewMetaVal(String(val ?? ''));
+    const isArr = Array.isArray(val);
+    setNewMetaType(isArr ? 'array' : 'text');
+    setNewMetaVal(isArr ? val.join(', ') : String(val ?? ''));
   };
 
   // Copy custom metadata (excluding page info)
@@ -1277,15 +1311,19 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   // Quick propagate single tag to all document chunks
   const handleQuickApplyToAll = (key: string, val: any) => {
     if (!onBulkUpdateMetadata) return;
+    const isArr = Array.isArray(val);
+    const displayVal = isArr ? val.join(', ') : String(val);
     if (
       window.confirm(
-        `'${key}: ${val}' 메타데이터를 문서 전체 청크(${childChunks.length}개)에 일괄 적용하시겠습니까?`
+        `'${key}: ${displayVal}' 메타데이터를 문서 전체 청크(${childChunks.length}개)에 일괄 적용하시겠습니까?`
       )
     ) {
       onBulkUpdateMetadata({
         mode: 'add_tag',
         key,
-        value: val,
+        value: isArr ? [...val] : val,
+        valueType: isArr ? 'array' : 'text',
+        mergeStrategy: isArr ? 'append' : 'overwrite',
         scope: 'all',
         overwrite: true,
       });
@@ -3911,6 +3949,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                       }
                       return customEntries.map(([key, val]) => {
                         const isEditingThis = editingMetaKey === key;
+                        const isArr = Array.isArray(val);
+
                         if (isEditingThis) {
                           return (
                             <span
@@ -3927,8 +3967,17 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                   if (e.key === 'Escape') handleCancelEditMetaTag();
                                 }}
                                 autoFocus
-                                className="bg-white dark:bg-slate-900 border border-indigo-400 dark:border-indigo-600 rounded px-1.5 py-0.5 text-xs text-slate-900 dark:text-slate-100 font-sans focus:outline-hidden focus:ring-1 focus:ring-indigo-500 w-32"
+                                placeholder={editingMetaType === 'array' ? '태그1, 태그2 (쉼표 구분)' : '값 입력'}
+                                className="bg-white dark:bg-slate-900 border border-indigo-400 dark:border-indigo-600 rounded px-1.5 py-0.5 text-xs text-slate-900 dark:text-slate-100 font-sans focus:outline-hidden focus:ring-1 focus:ring-indigo-500 w-36"
                               />
+                              <button
+                                type="button"
+                                onClick={() => setEditingMetaType((prev) => (prev === 'array' ? 'text' : 'array'))}
+                                className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-200/70 dark:bg-indigo-900 px-1 py-0.5 rounded cursor-pointer hover:bg-indigo-300"
+                                title="타입 전환 (텍스트 <-> 배열)"
+                              >
+                                {editingMetaType === 'array' ? '배열' : '텍스트'}
+                              </button>
                               <button
                                 type="button"
                                 onClick={handleSaveEditMetaTag}
@@ -3949,6 +3998,75 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                           );
                         }
 
+                        // Display Mode: Array vs Scalar
+                        if (isArr) {
+                          return (
+                            <span
+                              key={key}
+                              className="group inline-flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-indigo-200 dark:border-indigo-800/80 px-2 py-1 rounded-md shadow-2xs font-mono hover:border-indigo-400 dark:hover:border-indigo-600 transition"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleFillMetaForm(key, val)}
+                                title="클릭 시 하단 입력창에 채우기"
+                                className="font-semibold text-indigo-700 dark:text-indigo-400 hover:underline cursor-pointer"
+                              >
+                                {key}:
+                              </button>
+                              <div className="flex flex-wrap gap-1 items-center">
+                                {val.length === 0 ? (
+                                  <span className="text-[11px] text-slate-400 italic">빈 배열</span>
+                                ) : (
+                                  val.map((item: string, idx: number) => (
+                                    <span
+                                      key={idx}
+                                      className="inline-flex items-center gap-0.5 text-[11px] bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900 px-1.5 py-0.2 rounded font-sans"
+                                    >
+                                      <span>#{item}</span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteMetaTagElement(key, idx);
+                                        }}
+                                        className="text-indigo-400 hover:text-rose-500 rounded p-0.5 transition cursor-pointer"
+                                        title={`'${item}' 태그 삭제`}
+                                      >
+                                        <X className="w-2.5 h-2.5" />
+                                      </button>
+                                    </span>
+                                  ))
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditMetaTag(key, val)}
+                                className="text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer opacity-60 group-hover:opacity-100 transition"
+                                title="값 수정"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleQuickApplyToAll(key, val)}
+                                className="text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer ml-0.5 opacity-60 group-hover:opacity-100 transition"
+                                title="이 태그를 문서 전체 청크에 일괄 적용"
+                              >
+                                <Globe className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMetaTag(key)}
+                                className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer ml-0.5 opacity-60 group-hover:opacity-100 transition"
+                                title="키 전체 삭제"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          );
+                        }
+
+                        // Display Mode: Scalar (string, number, etc.)
                         return (
                           <span
                             key={key}
@@ -4008,8 +4126,42 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     );
 
                     return (
-                      <>
-                        <div className="flex items-center gap-2 pt-1">
+                      <div className="space-y-1.5 pt-1">
+                        {/* Type Toggle */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex rounded-md border border-slate-200 dark:border-slate-800 p-0.5 bg-slate-100 dark:bg-slate-900 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => setNewMetaType('text')}
+                              className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                                newMetaType === 'text'
+                                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs font-semibold'
+                                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                              }`}
+                            >
+                              단일 텍스트
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNewMetaType('array')}
+                              className={`px-2 py-0.5 rounded transition cursor-pointer flex items-center gap-1 ${
+                                newMetaType === 'array'
+                                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs font-semibold'
+                                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                              }`}
+                            >
+                              <ListPlus className="w-3 h-3" />
+                              <span>태그 목록 (배열)</span>
+                            </button>
+                          </div>
+                          {newMetaType === 'array' && (
+                            <span className="text-[10px] text-slate-400">
+                              쉼표(,)로 구분 입력
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
                           <input
                             type="text"
                             value={newMetaKey}
@@ -4017,8 +4169,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') handleAddMetaTag();
                             }}
-                            placeholder="Key (예: category)"
-                            className="w-1/3 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                            placeholder={newMetaType === 'array' ? 'Key (예: keywords)' : 'Key (예: category)'}
+                            className="w-1/3 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden font-mono"
                           />
                           <input
                             type="text"
@@ -4027,7 +4179,11 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') handleAddMetaTag();
                             }}
-                            placeholder="Value (예: safety_rules)"
+                            placeholder={
+                              newMetaType === 'array'
+                                ? 'Value (예: 산재보상, 근골격계 - 쉼표 구분)'
+                                : 'Value (예: safety_rules)'
+                            }
                             className="flex-1 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
                           />
                           <button
@@ -4054,10 +4210,26 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                             )}
                           </button>
                         </div>
+
+                        {/* Live Parsed Preview for Array */}
+                        {newMetaType === 'array' && newMetaVal.trim() && (
+                          <div className="flex flex-wrap gap-1 items-center px-1">
+                            <span className="text-[10px] text-slate-400">미리보기:</span>
+                            {(parseCustomMetaValue(newMetaVal, 'array') as string[]).map((t, idx) => (
+                              <span
+                                key={idx}
+                                className="bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] px-1.5 py-0.2 rounded font-mono"
+                              >
+                                #{t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
                         <div className="text-[10px] text-slate-400 dark:text-slate-500 pt-0.5">
                           ※ doc_title, page, table(표) 관련 속성은 시스템이 본문과 동기화하여 자동 관리하므로 커스텀 태그로 등록할 수 없습니다.
                         </div>
-                      </>
+                      </div>
                     );
                   })()}
                 </div>

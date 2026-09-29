@@ -795,6 +795,8 @@ export function App() {
     mode: 'add_tag' | 'apply_batch' | 'delete_tag';
     key?: string;
     value?: any;
+    valueType?: 'text' | 'array';
+    mergeStrategy?: 'overwrite' | 'append' | 'skip';
     tags?: Record<string, any>;
     scope: 'all' | 'section';
     sectionId?: string;
@@ -807,6 +809,8 @@ export function App() {
       mode: params.mode,
       key: params.key,
       value: params.value,
+      valueType: params.valueType,
+      mergeStrategy: params.mergeStrategy,
       tags: params.tags,
       scope: params.scope,
       sectionId: params.sectionId || selectedSectionId || undefined,
@@ -829,8 +833,11 @@ export function App() {
         `메타데이터 [${params.key}] 키가 ${affectedCount}개 청크에서 삭제되었습니다.`
       );
     } else if (params.mode === 'add_tag') {
+      const displayVal = Array.isArray(params.value)
+        ? params.value.join(', ')
+        : String(params.value ?? '');
       showToast(
-        `메타데이터 [${params.key}: ${params.value}]이(가) ${affectedCount}개 청크에 일괄 적용되었습니다.`
+        `메타데이터 [${params.key}: ${displayVal}]이(가) ${affectedCount}개 청크에 일괄 적용되었습니다.`
       );
     } else {
       showToast(

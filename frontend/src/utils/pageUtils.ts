@@ -211,11 +211,15 @@ export function mergeMetadataWithPage(
   return syncChunkPageMetadata(merged, pageNumber, pageEnd);
 }
 
+export type MetadataMergeStrategy = 'overwrite' | 'append' | 'skip';
+
 export interface BulkMetadataUpdateParams {
   chunks: ChildChunk[];
   mode: 'add_tag' | 'apply_batch' | 'delete_tag';
   key?: string;
   value?: any;
+  valueType?: 'text' | 'array';
+  mergeStrategy?: MetadataMergeStrategy;
   tags?: Record<string, any>;
   scope: 'all' | 'section';
   sectionId?: string;
@@ -228,11 +232,122 @@ export interface BulkMetadataUpdateResult {
 }
 
 /**
+ * 사용자 입력 문자열을 메타데이터 타입에 맞게 파싱합니다.
+ * array 타입의 경우 쉼표(,) 및 줄바꿈으로 분리하여 빈 문자열 및 중복을 제거한 string[]을 반환합니다.
+ */
+export function parseCustomMetaValue(raw: string, type: 'text' | 'array'): string | string[] {
+  if (type === 'text') {
+    return raw.trim();
+  }
+  const items = raw
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return Array.from(new Set(items));
+}
+
+/**
+ * 메타데이터 값을 화면 표시 또는 텍스트 입력창용 문자열로 변환합니다.
+ */
+export function formatCustomMetaValue(val: any): string {
+  if (val === null || val === undefined) return '';
+  if (Array.isArray(val)) return val.join(', ');
+  return String(val);
+}
+
+/**
+ * 두 메타데이터 값이 동일한지 비교합니다 (배열 비교 포함).
+ */
+export function areMetaValuesEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    return a.every((item, idx) => item === b[idx]);
+  }
+  return false;
+}
+
+/**
+ * 지정된 병합 전략(덮어쓰기, 병합, 건너뛰기)에 따라 메타데이터 값을 병합합니다.
+ */
+export function mergeCustomMetaValue(
+  existingVal: any,
+  incomingVal: any,
+  strategy: MetadataMergeStrategy = 'overwrite'
+): any {
+  if (existingVal === undefined) {
+    return Array.isArray(incomingVal) ? [...incomingVal] : incomingVal;
+  }
+
+  if (strategy === 'skip') {
+    return existingVal;
+  }
+
+  if (strategy === 'overwrite') {
+    return Array.isArray(incomingVal) ? [...incomingVal] : incomingVal;
+  }
+
+  // strategy === 'append'
+  if (Array.isArray(incomingVal)) {
+    if (Array.isArray(existingVal)) {
+      const set = new Set(existingVal);
+      const merged = [...existingVal];
+      for (const item of incomingVal) {
+        if (!set.has(item)) {
+          set.add(item);
+          merged.push(item);
+        }
+      }
+      return merged;
+    } else if (existingVal !== null && existingVal !== undefined && String(existingVal).trim() !== '') {
+      const existingStr = String(existingVal).trim();
+      const set = new Set([existingStr]);
+      const merged = [existingStr];
+      for (const item of incomingVal) {
+        if (!set.has(item)) {
+          set.add(item);
+          merged.push(item);
+        }
+      }
+      return merged;
+    }
+    return [...incomingVal];
+  }
+
+  // incomingVal is scalar (string/number/etc.)
+  if (Array.isArray(existingVal)) {
+    if (existingVal.includes(incomingVal)) {
+      return existingVal;
+    }
+    return [...existingVal, incomingVal];
+  }
+
+  if (existingVal !== incomingVal) {
+    return [existingVal, incomingVal];
+  }
+
+  return existingVal;
+}
+
+/**
  * 청크 목록에 커스텀 메타데이터를 일괄 추가/수정/삭제합니다.
  * 시스템 예약어(페이지 번호, 식별자 등)는 안전하게 보호됩니다.
  */
 export function applyBulkCustomMetadata(params: BulkMetadataUpdateParams): BulkMetadataUpdateResult {
-  const { chunks, mode, key, value, tags, scope, sectionId, overwrite = true } = params;
+  const {
+    chunks,
+    mode,
+    key,
+    value,
+    tags,
+    scope,
+    sectionId,
+    overwrite = true,
+    mergeStrategy: explicitStrategy,
+  } = params;
+
+  // 병합 전략 결정: 명시적 전략 우선, 없을 시 overwrite 불리언 플래그 참조
+  const strategy: MetadataMergeStrategy = explicitStrategy || (overwrite ? 'overwrite' : 'skip');
   let affectedCount = 0;
 
   const updatedChunks = chunks.map((chunk) => {
@@ -249,21 +364,25 @@ export function applyBulkCustomMetadata(params: BulkMetadataUpdateParams): BulkM
     if (mode === 'add_tag' && key) {
       const trimmedKey = key.trim();
       if (!trimmedKey || RESERVED_METADATA_KEYS.has(trimmedKey)) return chunk;
-      if (overwrite || !(trimmedKey in currentMeta)) {
-        if (currentMeta[trimmedKey] !== value) {
-          currentMeta[trimmedKey] = value;
-          changed = true;
-        }
+
+      const existingVal = currentMeta[trimmedKey];
+      const mergedVal = mergeCustomMetaValue(existingVal, value, strategy);
+
+      if (!areMetaValuesEqual(existingVal, mergedVal)) {
+        currentMeta[trimmedKey] = mergedVal;
+        changed = true;
       }
     } else if (mode === 'apply_batch' && tags) {
       for (const [rawK, rawV] of Object.entries(tags)) {
         const trimmedK = rawK.trim();
         if (!trimmedK || RESERVED_METADATA_KEYS.has(trimmedK)) continue;
-        if (overwrite || !(trimmedK in currentMeta)) {
-          if (currentMeta[trimmedK] !== rawV) {
-            currentMeta[trimmedK] = rawV;
-            changed = true;
-          }
+
+        const existingVal = currentMeta[trimmedK];
+        const mergedVal = mergeCustomMetaValue(existingVal, rawV, strategy);
+
+        if (!areMetaValuesEqual(existingVal, mergedVal)) {
+          currentMeta[trimmedK] = mergedVal;
+          changed = true;
         }
       }
     } else if (mode === 'delete_tag' && key) {

@@ -830,3 +830,102 @@ export function repairSoftWraps(text: string): string {
   return resultLines.join('\n');
 }
 
+/**
+ * 배열 내 항목의 위치를 대상 앞/뒤로 안전하게 재배치합니다.
+ */
+export function reorderArray<T>(
+  list: T[],
+  sourceIndex: number,
+  targetIndex: number,
+  position: 'before' | 'after'
+): T[] {
+  if (
+    sourceIndex === targetIndex ||
+    sourceIndex < 0 ||
+    targetIndex < 0 ||
+    sourceIndex >= list.length ||
+    targetIndex >= list.length
+  ) {
+    return list;
+  }
+  const result = [...list];
+  const [item] = result.splice(sourceIndex, 1);
+  const newTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+  const insertIndex = position === 'before' ? newTargetIndex : newTargetIndex + 1;
+  result.splice(insertIndex, 0, item);
+  return result;
+}
+
+/**
+ * 특정 섹션(ancestorId)의 하위 자손(descendant) 목록에 potentialChildId가 속해 있는지 검사합니다.
+ * (순환 참조 방지용)
+ */
+export function isDescendantSection(
+  sections: SectionNode[],
+  ancestorId: string,
+  potentialChildId: string
+): boolean {
+  if (!ancestorId || !potentialChildId || ancestorId === potentialChildId) {
+    return true; // 자기 자신도 이동 불가
+  }
+  const visited = new Set<string>();
+  let current: string | undefined = potentialChildId;
+
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const sec = sections.find((s) => s.id === current);
+    if (!sec || !sec.parent_section_id) break;
+    if (sec.parent_section_id === ancestorId) return true;
+    current = sec.parent_section_id;
+  }
+
+  return false;
+}
+
+/**
+ * 섹션을 이동할 때 해당 섹션에 종속된 모든 하위 서브트리 블록을 함께 유지하며
+ * 대상 섹션의 앞/뒤로 재배치합니다.
+ */
+export function reorderSectionsSubtree(
+  sections: SectionNode[],
+  sourceId: string,
+  targetId: string,
+  position: 'before' | 'after'
+): SectionNode[] {
+  if (sourceId === targetId) return sections;
+
+  // 1. sourceId의 모든 자손 섹션 수집
+  const getSubtreeIds = (rootId: string): Set<string> => {
+    const ids = new Set<string>([rootId]);
+    let added = true;
+    while (added) {
+      added = false;
+      for (const s of sections) {
+        if (s.parent_section_id && ids.has(s.parent_section_id) && !ids.has(s.id)) {
+          ids.add(s.id);
+          added = true;
+        }
+      }
+    }
+    return ids;
+  };
+
+  const sourceSubtreeIds = getSubtreeIds(sourceId);
+  // targetId가 source의 서브트리 내에 있다면 순환 오류이므로 원본 반환
+  if (sourceSubtreeIds.has(targetId)) return sections;
+
+  const sourceBlock = sections.filter((s) => sourceSubtreeIds.has(s.id));
+  const remaining = sections.filter((s) => !sourceSubtreeIds.has(s.id));
+
+  const targetIdx = remaining.findIndex((s) => s.id === targetId);
+  if (targetIdx === -1) return sections;
+
+  const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+  return [
+    ...remaining.slice(0, insertIdx),
+    ...sourceBlock,
+    ...remaining.slice(insertIdx),
+  ];
+}
+
+

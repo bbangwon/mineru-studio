@@ -44,8 +44,21 @@ import {
   CornerDownRight,
   CornerUpLeft,
   RefreshCw,
+  GripVertical,
 } from 'lucide-react';
-import type { ChildChunk, ParentSection, ParentChunk, LLMRefineResponse, SectionInsertPosition, ReparentChildChunkParams, EmbeddedTableItem, AddChildData } from '../types';
+import type {
+  ChildChunk,
+  ParentSection,
+  ParentChunk,
+  LLMRefineResponse,
+  SectionInsertPosition,
+  ReparentChildChunkParams,
+  EmbeddedTableItem,
+  AddChildData,
+  DragItemPayload,
+  DropTargetInfo,
+  DropPosition,
+} from '../types';
 import { ChunkSplitModal } from './ChunkSplitModal';
 import { ChunkMergeModal } from './ChunkMergeModal';
 import { AddSectionModal } from './AddSectionModal';
@@ -55,6 +68,7 @@ import { EditParentModal } from './EditParentModal';
 import { BulkMetadataModal } from './BulkMetadataModal';
 import { ReparentSectionModal } from './ReparentSectionModal';
 import { ReparentChildModal } from './ReparentChildModal';
+import { QuickReparentToSectionModal } from './QuickReparentToSectionModal';
 import { TableEditorModal } from './TableEditorModal';
 import {
   deleteTableFromChunk,
@@ -154,6 +168,12 @@ interface ChunkStudioProps {
     sectionId?: string;
     overwrite?: boolean;
   }) => void;
+  onReorderSections?: (sourceSectionId: string, targetSectionId: string, position: 'before' | 'after') => void;
+  onReparentSectionTo?: (sourceSectionId: string, targetParentSectionId: string | null) => void;
+  onReorderParents?: (sourceParentId: string, targetParentId: string, position: 'before' | 'after') => void;
+  onMoveParentToSection?: (sourceParentId: string, targetSectionId: string, targetParentId?: string, position?: 'before' | 'after') => void;
+  onReorderChildren?: (sourceChildId: string, targetChildId: string, position: 'before' | 'after') => void;
+  onMoveChildToParent?: (sourceChildId: string, targetParentId: string, targetChildId?: string, position?: 'before' | 'after') => void;
   isLoading: boolean;
 }
 
@@ -187,6 +207,12 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   onBatchCleanEmptyChunks,
   onReindexIds,
   onBulkUpdateMetadata,
+  onReorderSections,
+  onReparentSectionTo,
+  onReorderParents,
+  onMoveParentToSection,
+  onReorderChildren,
+  onMoveChildToParent,
   isLoading,
 }) => {
   // Modal states for Parent & Child CRUD
@@ -221,6 +247,114 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
 
   // Bulk Metadata Modal State
   const [isBulkMetaModalOpen, setIsBulkMetaModalOpen] = useState(false);
+
+  // Drag & Drop State
+  const [draggedItem, setDraggedItem] = useState<DragItemPayload | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<DropTargetInfo | null>(null);
+
+  // Quick Reparent to Section Modal State (Child -> Section 드롭 시 팝업)
+  const [quickReparentModal, setQuickReparentModal] = useState<{
+    isOpen: boolean;
+    childChunk: ChildChunk | null;
+    targetSection: ParentSection | null;
+  }>({
+    isOpen: false,
+    childChunk: null,
+    targetSection: null,
+  });
+
+  // DnD Helper: Calculate drop position based on mouse Y offset within target element
+  const calculateDropPosition = (
+    e: React.DragEvent<HTMLElement>,
+    allowInside: boolean
+  ): DropPosition => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relY = (e.clientY - rect.top) / rect.height;
+    if (allowInside) {
+      if (relY < 0.25) return 'before';
+      if (relY > 0.75) return 'after';
+      return 'inside';
+    }
+    return relY < 0.5 ? 'before' : 'after';
+  };
+
+  // DnD: Section Node Drop Handler
+  const handleSectionDrop = (
+    e: React.DragEvent<HTMLElement>,
+    targetSec: ParentSection,
+    position: DropPosition
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!draggedItem) return;
+
+    if (draggedItem.type === 'section') {
+      if (draggedItem.id === targetSec.id) return;
+      if (position === 'inside') {
+        onReparentSectionTo?.(draggedItem.id, targetSec.id);
+      } else {
+        onReorderSections?.(draggedItem.id, targetSec.id, position);
+      }
+    } else if (draggedItem.type === 'parent') {
+      onMoveParentToSection?.(draggedItem.id, targetSec.id);
+    } else if (draggedItem.type === 'child') {
+      const childObj = childChunks.find((c) => c.chunk_id === draggedItem.id);
+      if (childObj) {
+        setQuickReparentModal({
+          isOpen: true,
+          childChunk: childObj,
+          targetSection: targetSec,
+        });
+      }
+    }
+
+    setDraggedItem(null);
+    setDragOverTarget(null);
+  };
+
+  // DnD: Parent Node Drop Handler
+  const handleParentDrop = (
+    e: React.DragEvent<HTMLElement>,
+    targetParent: ParentChunk,
+    position: DropPosition
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!draggedItem) return;
+
+    const targetPid = targetParent.parent_chunk_id || targetParent.id || '';
+
+    if (draggedItem.type === 'parent') {
+      if (draggedItem.id === targetPid) return;
+      onReorderParents?.(draggedItem.id, targetPid, position === 'inside' ? 'after' : position);
+    } else if (draggedItem.type === 'child') {
+      onMoveChildToParent?.(draggedItem.id, targetPid);
+    }
+
+    setDraggedItem(null);
+    setDragOverTarget(null);
+  };
+
+  // DnD: Child Node Drop Handler
+  const handleChildDrop = (
+    e: React.DragEvent<HTMLElement>,
+    targetChild: ChildChunk,
+    position: DropPosition
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!draggedItem || draggedItem.type !== 'child') return;
+    if (draggedItem.id === targetChild.chunk_id) return;
+
+    onReorderChildren?.(
+      draggedItem.id,
+      targetChild.chunk_id,
+      position === 'inside' ? 'after' : position
+    );
+
+    setDraggedItem(null);
+    setDragOverTarget(null);
+  };
 
   // 1. Column 1 State (Hierarchy Tree)
   const [sectionSearch, setSectionSearch] = useState('');
@@ -535,6 +669,12 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     }
 
     const shortId = formatDisplayChunkId(chunk.chunk_id);
+    const isTarget = dragOverTarget?.id === chunk.chunk_id;
+    const dropIndicatorClass = isTarget
+      ? dragOverTarget.position === 'before'
+        ? 'border-t-2 border-indigo-500 shadow-xs'
+        : 'border-b-2 border-indigo-500 shadow-xs'
+      : '';
 
     return (
       <div
@@ -543,7 +683,24 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
           e.stopPropagation();
           handleSelectChildChunkFromTree(secId, chunk.chunk_id);
         }}
-        className={`group/child py-1 px-2 rounded-md cursor-pointer flex items-center justify-between text-[11px] transition select-none ${
+        onDragOver={(e) => {
+          if (!draggedItem || draggedItem.type !== 'child' || draggedItem.id === chunk.chunk_id) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const pos = calculateDropPosition(e, false);
+          setDragOverTarget({ type: 'child', id: chunk.chunk_id, position: pos });
+        }}
+        onDragLeave={() => {
+          if (dragOverTarget?.id === chunk.chunk_id) {
+            setDragOverTarget(null);
+          }
+        }}
+        onDrop={(e) => {
+          if (!draggedItem || draggedItem.type !== 'child') return;
+          const pos = calculateDropPosition(e, false);
+          handleChildDrop(e, chunk, pos);
+        }}
+        className={`group/child py-1 px-2 rounded-md cursor-pointer flex items-center justify-between text-[11px] transition select-none ${dropIndicatorClass} ${
           isChildSelected
             ? 'bg-indigo-600 text-white font-medium shadow-2xs ring-1 ring-indigo-500'
             : isIgnored
@@ -553,6 +710,33 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
         title={`${chunk.chunk_id} (p.${pageNum})\n${chunk.text?.slice(0, 200) || ''}`}
       >
         <div className="flex items-center gap-1.5 truncate min-w-0 pr-1">
+          <span
+            draggable
+            onDragStart={(e) => {
+              e.stopPropagation();
+              setDraggedItem({
+                type: 'child',
+                id: chunk.chunk_id,
+                parentId: chunk.parent_chunk_id || chunk.parent_id,
+                sectionId: secId,
+              });
+              e.dataTransfer.setData(
+                'application/json',
+                JSON.stringify({ type: 'child', id: chunk.chunk_id })
+              );
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            onDragEnd={() => {
+              setDraggedItem(null);
+              setDragOverTarget(null);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="cursor-grab active:cursor-grabbing text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 -ml-1 mr-0.5 p-0.5 opacity-0 group-hover/child:opacity-100 transition rounded hover:bg-black/5 dark:hover:bg-white/10 shrink-0"
+            title="드래그하여 같은 Parent 내 순서 변경 또는 다른 Parent/Section으로 이동"
+          >
+            <GripVertical className="w-3 h-3" />
+          </span>
+
           {isComposite ? (
             <Layers
               className={`w-3.5 h-3.5 shrink-0 ${
@@ -1563,6 +1747,14 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         const hasPChildren = pChildren.length > 0;
                         const shortPid = formatDisplayParentId(pid);
                         const isParentActive = activeParentChunk?.parent_chunk_id === pid;
+                        const isTarget = dragOverTarget?.id === pid;
+                        const dropIndicatorClass = isTarget
+                          ? dragOverTarget.position === 'inside'
+                            ? 'ring-2 ring-purple-500 bg-purple-100/80 dark:bg-purple-950/80'
+                            : dragOverTarget.position === 'before'
+                            ? 'border-t-2 border-purple-500 shadow-xs'
+                            : 'border-b-2 border-purple-500 shadow-xs'
+                          : '';
 
                         return (
                           <div key={pid} className="space-y-0.5">
@@ -1572,7 +1764,30 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                                 e.stopPropagation();
                                 handleSelectParentChunkFromTree(sec.id, pid);
                               }}
-                              className={`group/parent py-1 px-1.5 rounded-md cursor-pointer flex items-center justify-between text-[11px] transition select-none ${
+                              onDragOver={(e) => {
+                                if (!draggedItem) return;
+                                if (draggedItem.type === 'parent' && draggedItem.id === pid) return;
+                                if (draggedItem.type === 'section') return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (draggedItem.type === 'child') {
+                                  setDragOverTarget({ type: 'parent', id: pid, position: 'inside' });
+                                } else {
+                                  const pos = calculateDropPosition(e, false);
+                                  setDragOverTarget({ type: 'parent', id: pid, position: pos });
+                                }
+                              }}
+                              onDragLeave={() => {
+                                if (dragOverTarget?.id === pid) {
+                                  setDragOverTarget(null);
+                                }
+                              }}
+                              onDrop={(e) => {
+                                if (!draggedItem || draggedItem.type === 'section') return;
+                                const pos = draggedItem.type === 'child' ? 'inside' : calculateDropPosition(e, false);
+                                handleParentDrop(e, parent, pos);
+                              }}
+                              className={`group/parent py-1 px-1.5 rounded-md cursor-pointer flex items-center justify-between text-[11px] transition select-none ${dropIndicatorClass} ${
                                 isParentActive
                                   ? 'bg-purple-100/90 dark:bg-purple-950/70 text-purple-950 dark:text-purple-200 font-semibold border border-purple-300 dark:border-purple-800 shadow-2xs'
                                   : 'text-slate-700 dark:text-slate-300 hover:bg-purple-50/70 dark:hover:bg-purple-950/40 hover:text-purple-950 dark:hover:text-purple-200'
@@ -1580,6 +1795,32 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               title={`[${pid}] ${parent.title || ''}\n토큰: ${parent.token_estimate || 0}T | 자식 청크: ${pChildren.length}개\n${parent.text?.slice(0, 100) || ''}...`}
                             >
                               <div className="flex items-center gap-1.5 truncate min-w-0 pr-1">
+                                <span
+                                  draggable
+                                  onDragStart={(e) => {
+                                    e.stopPropagation();
+                                    setDraggedItem({
+                                      type: 'parent',
+                                      id: pid,
+                                      sectionId: sec.id,
+                                    });
+                                    e.dataTransfer.setData(
+                                      'application/json',
+                                      JSON.stringify({ type: 'parent', id: pid })
+                                    );
+                                    e.dataTransfer.effectAllowed = 'move';
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggedItem(null);
+                                    setDragOverTarget(null);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="cursor-grab active:cursor-grabbing text-slate-400 dark:text-slate-500 hover:text-purple-600 dark:hover:text-purple-300 -ml-1 mr-0.5 p-0.5 opacity-0 group-hover/parent:opacity-100 transition rounded hover:bg-purple-100 dark:hover:bg-purple-950/60 shrink-0"
+                                  title="드래그하여 섹션 내 순서 변경 또는 다른 섹션으로 이동"
+                                >
+                                  <GripVertical className="w-3 h-3" />
+                                </span>
+
                                 {hasPChildren ? (
                                   <button
                                     type="button"
@@ -1792,6 +2033,15 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                 const sCount = childSecs.length;
                 const isLeafEmpty = pCount === 0 && cCount === 0 && sCount === 0;
 
+                const isSecTarget = dragOverTarget?.id === sec.id;
+                const secDropIndicatorClass = isSecTarget
+                  ? dragOverTarget.position === 'inside'
+                    ? 'ring-2 ring-indigo-500 bg-indigo-100/70 dark:bg-indigo-950/70'
+                    : dragOverTarget.position === 'before'
+                    ? 'border-t-2 border-indigo-500 shadow-xs'
+                    : 'border-b-2 border-indigo-500 shadow-xs'
+                  : '';
+
                 return (
                   <div key={sec.id} className="space-y-0.5">
                     {/* Section Header Row */}
@@ -1804,7 +2054,31 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         }
                       }}
                       onDoubleClick={(e) => startEditSection(sec, e)}
-                      className={`group py-1.5 px-2 rounded-lg cursor-pointer flex items-center justify-between transition border-l-3 select-none ${
+                      onDragOver={(e) => {
+                        if (!draggedItem) return;
+                        if (draggedItem.type === 'section' && (draggedItem.id === sec.id || isRoot)) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (draggedItem.type === 'section') {
+                          const pos = calculateDropPosition(e, true);
+                          setDragOverTarget({ type: 'section', id: sec.id, position: pos });
+                        } else if (draggedItem.type === 'parent') {
+                          setDragOverTarget({ type: 'section', id: sec.id, position: 'inside' });
+                        } else if (draggedItem.type === 'child') {
+                          setDragOverTarget({ type: 'section', id: sec.id, position: 'inside' });
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverTarget?.id === sec.id) {
+                          setDragOverTarget(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (!draggedItem) return;
+                        const pos = draggedItem.type === 'section' ? calculateDropPosition(e, true) : 'inside';
+                        handleSectionDrop(e, sec, pos);
+                      }}
+                      className={`group py-1.5 px-2 rounded-lg cursor-pointer flex items-center justify-between transition border-l-3 select-none ${secDropIndicatorClass} ${
                         isActive
                           ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-600 text-indigo-900 dark:text-indigo-200 font-semibold shadow-2xs'
                           : 'border-transparent text-slate-700 dark:text-slate-300 hover:bg-slate-100/70 dark:hover:bg-slate-800'
@@ -1846,6 +2120,34 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                       ) : (
                         <>
                           <div className="flex items-center gap-1.5 truncate pr-1.5 min-w-0">
+                            {!isRoot && !sec.id.endsWith('_s00') && !sec.id.endsWith('_root') && (
+                              <span
+                                draggable
+                                onDragStart={(e) => {
+                                  e.stopPropagation();
+                                  setDraggedItem({
+                                    type: 'section',
+                                    id: sec.id,
+                                    parentId: sec.parent_section_id,
+                                  });
+                                  e.dataTransfer.setData(
+                                    'application/json',
+                                    JSON.stringify({ type: 'section', id: sec.id })
+                                  );
+                                  e.dataTransfer.effectAllowed = 'move';
+                                }}
+                                onDragEnd={() => {
+                                  setDraggedItem(null);
+                                  setDragOverTarget(null);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="cursor-grab active:cursor-grabbing text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-300 -ml-1 mr-0.5 p-0.5 opacity-0 group-hover:opacity-100 transition rounded hover:bg-indigo-100 dark:hover:bg-indigo-950/60 shrink-0"
+                                title="드래그하여 섹션 순서 변경 또는 다른 섹션의 하위로 이동"
+                              >
+                                <GripVertical className="w-3 h-3" />
+                              </span>
+                            )}
+
                             {/* Accordion Expand/Collapse Button */}
                             {hasSubTree ? (
                               <button
@@ -2657,6 +2959,13 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                         const isCOver = !isTable && !isComposite && cWords > 512;
                         const isCUnder = !isTable && !isComposite && !isCEmpty && cWords > 0 && cWords < 20;
 
+                        const isCardTarget = dragOverTarget?.id === chunk.chunk_id;
+                        const cardDropIndicator = isCardTarget
+                          ? dragOverTarget.position === 'before'
+                            ? 'border-t-2 border-indigo-500 shadow-md'
+                            : 'border-b-2 border-indigo-500 shadow-md'
+                          : '';
+
                         return (
                           <div
                             key={chunk.chunk_id}
@@ -2665,7 +2974,24 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                               setSelectedChunkId(chunk.chunk_id);
                               setMobileTab('editor');
                             }}
-                            className={`p-3 rounded-xl border transition-all cursor-pointer select-none text-xs relative ${
+                            onDragOver={(e) => {
+                              if (!draggedItem || draggedItem.type !== 'child' || draggedItem.id === chunk.chunk_id) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const pos = calculateDropPosition(e, false);
+                              setDragOverTarget({ type: 'child', id: chunk.chunk_id, position: pos });
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverTarget?.id === chunk.chunk_id) {
+                                setDragOverTarget(null);
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (!draggedItem || draggedItem.type !== 'child') return;
+                              const pos = calculateDropPosition(e, false);
+                              handleChildDrop(e, chunk, pos);
+                            }}
+                            className={`p-3 rounded-xl border transition-all cursor-pointer select-none text-xs relative ${cardDropIndicator} ${
                               isChecked
                                 ? 'bg-indigo-50/50 dark:bg-indigo-950/50 border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30 shadow-xs'
                                 : isSelected
@@ -2678,6 +3004,34 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                             {/* Top Row: Checkbox, Type, Page, ID, Status & Linter Badges */}
                             <div className="flex items-center justify-between gap-1.5 pb-1.5 border-b border-slate-100 dark:border-slate-800">
                               <div className="flex items-center gap-1.5 flex-wrap">
+                                {/* Drag handle */}
+                                <span
+                                  draggable
+                                  onDragStart={(e) => {
+                                    e.stopPropagation();
+                                    setDraggedItem({
+                                      type: 'child',
+                                      id: chunk.chunk_id,
+                                      parentId: pid,
+                                      sectionId: parent.section_id,
+                                    });
+                                    e.dataTransfer.setData(
+                                      'application/json',
+                                      JSON.stringify({ type: 'child', id: chunk.chunk_id })
+                                    );
+                                    e.dataTransfer.effectAllowed = 'move';
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggedItem(null);
+                                    setDragOverTarget(null);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="cursor-grab active:cursor-grabbing text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 transition"
+                                  title="드래그하여 순서 변경"
+                                >
+                                  <GripVertical className="w-3.5 h-3.5" />
+                                </span>
+
                                 {/* Checkbox for merge selection */}
                                 <button
                                   type="button"
@@ -4420,6 +4774,28 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
           parentChunks={parentChunks || []}
           childChunks={childChunks}
           onReparent={(params) => {
+            if (onReparentChildChunk) {
+              onReparentChildChunk(params);
+            }
+          }}
+        />
+      )}
+
+      {/* Quick Reparent to Section Modal (Child -> Section DnD) */}
+      {quickReparentModal.isOpen && quickReparentModal.childChunk && quickReparentModal.targetSection && (
+        <QuickReparentToSectionModal
+          isOpen={quickReparentModal.isOpen}
+          onClose={() =>
+            setQuickReparentModal({ isOpen: false, childChunk: null, targetSection: null })
+          }
+          childChunk={quickReparentModal.childChunk}
+          targetSection={quickReparentModal.targetSection}
+          availableParents={
+            (parentChunks || []).filter(
+              (p) => p.section_id === quickReparentModal.targetSection?.id
+            )
+          }
+          onConfirm={(params) => {
             if (onReparentChildChunk) {
               onReparentChildChunk(params);
             }

@@ -39,6 +39,9 @@ import {
   syncHierarchyOrder,
   estimateKoreanTokens,
   formatDisplayChunkId,
+  reorderArray,
+  isDescendantSection,
+  reorderSectionsSubtree,
 } from './utils/idUtils';
 import { syncChunkPageMetadata, extractCustomMetadata, applyBulkCustomMetadata } from './utils/pageUtils';
 import { deriveChunkTypeAndTables, mergeChunkAssets } from './utils/tableChunkUtils';
@@ -2534,6 +2537,232 @@ export function App() {
     handleReparentSection(sectionId, grandParentId);
   };
 
+  // 10-1g. Drag & Drop Reorder Sections
+  const handleReorderSections = (
+    sourceSectionId: string,
+    targetSectionId: string,
+    position: 'before' | 'after'
+  ) => {
+    if (!etlData || sourceSectionId === targetSectionId) return;
+    const sections = etlData.sections || etlData.parent_sections || [];
+    const sourceSec = sections.find((s) => s.id === sourceSectionId);
+    const targetSec = sections.find((s) => s.id === targetSectionId);
+    if (!sourceSec || !targetSec) return;
+
+    if (sourceSec.level === 0 || sourceSec.id.endsWith('_s00') || sourceSec.id.endsWith('_root')) {
+      showToast('루트 문서 섹션은 이동할 수 없습니다.', true);
+      return;
+    }
+
+    if (isDescendantSection(sections, sourceSectionId, targetSectionId)) {
+      showToast('하위 자손 섹션으로는 이동할 수 없습니다 (순환 참조 방지).', true);
+      return;
+    }
+
+    const updatedSections = reorderSectionsSubtree(sections, sourceSectionId, targetSectionId, position);
+    const syncedEtl = syncHierarchyOrder({
+      ...etlData,
+      sections: updatedSections,
+      parent_sections: updatedSections,
+    });
+
+    setEtlData(syncedEtl);
+    setIsDirty(true);
+    showToast(`섹션 '${sourceSec.title}'이(가) 이동되었습니다.`);
+  };
+
+  // 10-1h. Drag & Drop Reorder Parents within Section
+  const handleReorderParents = (
+    sourceParentId: string,
+    targetParentId: string,
+    position: 'before' | 'after'
+  ) => {
+    if (!etlData || sourceParentId === targetParentId) return;
+    const sections = etlData.sections || etlData.parent_sections || [];
+    const parentChunks = etlData.parent_chunks || [];
+
+    const sourceParent = parentChunks.find((p) => (p.parent_chunk_id || p.id) === sourceParentId);
+    const targetParent = parentChunks.find((p) => (p.parent_chunk_id || p.id) === targetParentId);
+    if (!sourceParent || !targetParent) return;
+
+    if (sourceParent.section_id !== targetParent.section_id) {
+      handleMoveParentToSection(sourceParentId, targetParent.section_id, targetParentId, position);
+      return;
+    }
+
+    const targetSection = sections.find((s) => s.id === sourceParent.section_id);
+    if (!targetSection) return;
+
+    const pids =
+      targetSection.parent_chunk_ids && targetSection.parent_chunk_ids.length > 0
+        ? [...targetSection.parent_chunk_ids]
+        : parentChunks
+            .filter((p) => p.section_id === targetSection.id)
+            .map((p) => p.parent_chunk_id || p.id || '');
+
+    const srcIdx = pids.indexOf(sourceParentId);
+    const tgtIdx = pids.indexOf(targetParentId);
+    if (srcIdx === -1 || tgtIdx === -1) return;
+
+    const reorderedPids = reorderArray(pids, srcIdx, tgtIdx, position);
+    const updatedSections = sections.map((s) =>
+      s.id === targetSection.id ? { ...s, parent_chunk_ids: reorderedPids } : s
+    );
+
+    const syncedEtl = syncHierarchyOrder({
+      ...etlData,
+      sections: updatedSections,
+      parent_sections: updatedSections,
+    });
+
+    setEtlData(syncedEtl);
+    setIsDirty(true);
+    showToast(`Parent '${sourceParent.title || sourceParentId}'의 순서가 변경되었습니다.`);
+  };
+
+  // 10-1i. Drag & Drop Move Parent to Section
+  const handleMoveParentToSection = (
+    sourceParentId: string,
+    targetSectionId: string,
+    targetParentId?: string,
+    position: 'before' | 'after' = 'after'
+  ) => {
+    if (!etlData) return;
+    const sections = etlData.sections || etlData.parent_sections || [];
+    let parentChunks = etlData.parent_chunks || [];
+    let childChunks = etlData.child_chunks || [];
+
+    const sourceParent = parentChunks.find((p) => (p.parent_chunk_id || p.id) === sourceParentId);
+    const targetSection = sections.find((s) => s.id === targetSectionId);
+    if (!sourceParent || !targetSection) return;
+
+    const oldSectionId = sourceParent.section_id;
+    if (oldSectionId === targetSectionId && !targetParentId) {
+      return;
+    }
+
+    // 1. 섹션들의 parent_chunk_ids 갱신
+    const updatedSections = sections.map((sec) => {
+      let pids = sec.parent_chunk_ids ? [...sec.parent_chunk_ids] : [];
+      if (sec.id === oldSectionId) {
+        pids = pids.filter((pid) => pid !== sourceParentId);
+      }
+      if (sec.id === targetSectionId) {
+        pids = pids.filter((pid) => pid !== sourceParentId);
+        if (targetParentId) {
+          const tgtIdx = pids.indexOf(targetParentId);
+          if (tgtIdx !== -1) {
+            const insIdx = position === 'before' ? tgtIdx : tgtIdx + 1;
+            pids.splice(insIdx, 0, sourceParentId);
+          } else {
+            pids.push(sourceParentId);
+          }
+        } else {
+          pids.push(sourceParentId);
+        }
+      }
+      return { ...sec, parent_chunk_ids: pids };
+    });
+
+    // 2. Parent 객체의 section_id 갱신
+    parentChunks = parentChunks.map((p) => {
+      if ((p.parent_chunk_id || p.id) === sourceParentId) {
+        return { ...p, section_id: targetSectionId, is_edited: true };
+      }
+      return p;
+    });
+
+    // 3. 소속 자식 청크들의 section_id 및 breadcrumbs 동기화
+    const childIdSet = new Set(sourceParent.child_chunk_ids || []);
+    childChunks = childChunks.map((c) => {
+      if (childIdSet.has(c.chunk_id)) {
+        return {
+          ...c,
+          section_id: targetSectionId,
+          breadcrumbs: targetSection.breadcrumbs || [],
+          is_edited: true,
+        };
+      }
+      return c;
+    });
+
+    const syncedEtl = syncHierarchyOrder({
+      ...etlData,
+      sections: updatedSections,
+      parent_sections: updatedSections,
+      parent_chunks: parentChunks,
+      child_chunks: childChunks,
+    });
+
+    setEtlData(syncedEtl);
+    setIsDirty(true);
+    showToast(
+      `Parent '${sourceParent.title || sourceParentId}'이(가) '${targetSection.title}' 섹션으로 이동되었습니다.`
+    );
+  };
+
+  // 10-1j. Drag & Drop Reorder Children within Parent
+  const handleReorderChildren = (
+    sourceChildId: string,
+    targetChildId: string,
+    position: 'before' | 'after'
+  ) => {
+    if (!etlData || sourceChildId === targetChildId) return;
+    const parentChunks = etlData.parent_chunks || [];
+    const childChunks = etlData.child_chunks || [];
+
+    const sourceChild = childChunks.find((c) => c.chunk_id === sourceChildId);
+    const targetChild = childChunks.find((c) => c.chunk_id === targetChildId);
+    if (!sourceChild || !targetChild) return;
+
+    const sourcePid = sourceChild.parent_chunk_id || sourceChild.parent_id;
+    const targetPid = targetChild.parent_chunk_id || targetChild.parent_id;
+
+    if (sourcePid !== targetPid && targetPid) {
+      handleMoveChildToParent(sourceChildId, targetPid, targetChildId, position);
+      return;
+    }
+
+    const parent = parentChunks.find((p) => (p.parent_chunk_id || p.id) === sourcePid);
+    if (!parent) return;
+
+    const cids = [...(parent.child_chunk_ids || [])];
+    const srcIdx = cids.indexOf(sourceChildId);
+    const tgtIdx = cids.indexOf(targetChildId);
+    if (srcIdx === -1 || tgtIdx === -1) return;
+
+    const reorderedCids = reorderArray(cids, srcIdx, tgtIdx, position);
+    const updatedParents = parentChunks.map((p) => {
+      if ((p.parent_chunk_id || p.id) === sourcePid) {
+        return { ...p, child_chunk_ids: reorderedCids, is_edited: true };
+      }
+      return p;
+    });
+
+    const syncedEtl = syncHierarchyOrder({
+      ...etlData,
+      parent_chunks: updatedParents,
+    });
+
+    setEtlData(syncedEtl);
+    setIsDirty(true);
+    showToast(`Child 청크의 순서가 변경되었습니다.`);
+  };
+
+  // 10-1k. Drag & Drop Move Child to Parent
+  const handleMoveChildToParent = (
+    sourceChildId: string,
+    targetParentId: string,
+    _targetChildId?: string,
+    _position: 'before' | 'after' = 'after'
+  ) => {
+    if (!etlData) return;
+    handleReparentChildChunk({
+      chunkIds: [sourceChildId],
+      targetParentChunkId: targetParentId,
+    });
+  };
+
   // 10-2. Add Child Chunk to Parent Handler
   const handleAddChild = (data: AddChildData) => {
     if (!etlData) return;
@@ -3217,6 +3446,12 @@ export function App() {
                 onBatchCleanEmptyChunks={handleBatchCleanEmptyChunks}
                 onReindexIds={handleReindexIds}
                 onBulkUpdateMetadata={handleBulkUpdateMetadata}
+                onReorderSections={handleReorderSections}
+                onReparentSectionTo={handleReparentSection}
+                onReorderParents={handleReorderParents}
+                onMoveParentToSection={handleMoveParentToSection}
+                onReorderChildren={handleReorderChildren}
+                onMoveChildToParent={handleMoveChildToParent}
                 isLoading={isLoadingEtl}
               />
             )}

@@ -398,3 +398,22 @@ export interface ReparentChildChunkParams {
     insertPosition?: ParentInsertPosition;
   };
 }
+
+// 10. Drag & Drop 계층 재배치 및 소속 이동 타입
+export type DragItemType = 'section' | 'parent' | 'child';
+
+export interface DragItemPayload {
+  type: DragItemType;
+  id: string; // sectionId, parentId, or chunkId
+  parentId?: string; // Section's parent_section_id, or Parent's section_id, or Child's parent_chunk_id
+  sectionId?: string; // 소속 섹션 ID
+}
+
+export type DropPosition = 'before' | 'inside' | 'after';
+
+export interface DropTargetInfo {
+  type: DragItemType;
+  id: string;
+  position: DropPosition;
+}
+

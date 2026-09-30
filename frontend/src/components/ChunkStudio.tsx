@@ -68,6 +68,7 @@ import { EditParentModal } from './EditParentModal';
 import { BulkMetadataModal } from './BulkMetadataModal';
 import { ReparentSectionModal } from './ReparentSectionModal';
 import { ReparentChildModal } from './ReparentChildModal';
+import { ReassignParentSectionModal } from './ReassignParentSectionModal';
 import { QuickReparentToSectionModal } from './QuickReparentToSectionModal';
 import { TableEditorModal } from './TableEditorModal';
 import {
@@ -240,6 +241,16 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     if (selectedList.length === 0) return;
     setReparentTargetChunks(selectedList);
     setIsReparentChildModalOpen(true);
+  };
+
+  // Reassign Parent Section Modal State (Tree Picker)
+  const [reassignSectionTargetParent, setReassignSectionTargetParent] = useState<ParentChunk | null>(null);
+  const [isReassignParentSectionModalOpen, setIsReassignParentSectionModalOpen] = useState(false);
+
+  const handleOpenReassignParentSectionModal = (parent: ParentChunk, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setReassignSectionTargetParent(parent);
+    setIsReassignParentSectionModalOpen(true);
   };
 
   const [isEditParentModalOpen, setIsEditParentModalOpen] = useState(false);
@@ -2835,29 +2846,19 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                           </div>
                         )}
 
-                        {/* Fast Section Reassign Dropdown */}
-                        <div
-                          className="flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-0.5 shadow-2xs"
-                          title="이 Parent 및 소속 Child 청크의 상위 섹션 빠른 재지정"
+                        {/* Fast Section Reassign Button (Tree Modal) */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenReassignParentSectionModal(parent, e)}
+                          className="flex items-center gap-1.5 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 rounded-lg px-2 py-0.5 shadow-2xs transition cursor-pointer group"
+                          title="상위 섹션 변경 (트리에서 선택)"
                         >
-                          <FolderTree className="w-3 h-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                          <select
-                            value={parent.section_id}
-                            onChange={(e) => {
-                              const newSecId = e.target.value;
-                              if (onReassignParentSection && newSecId !== parent.section_id) {
-                                onReassignParentSection(pid, newSecId);
-                              }
-                            }}
-                            className="text-[11px] font-medium text-slate-700 dark:text-slate-200 bg-transparent focus:outline-hidden cursor-pointer max-w-[130px] truncate"
-                          >
-                            {parentSections.map((sec) => (
-                              <option key={sec.id} value={sec.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
-                                {sec.title} (L{sec.level})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                          <FolderTree className="w-3 h-3 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform shrink-0" />
+                          <span className="text-[11px] font-medium text-slate-700 dark:text-slate-200 truncate max-w-[140px]">
+                            {parentMap.get(parent.section_id)?.title || parent.section_id}
+                          </span>
+                          <ChevronDown className="w-2.5 h-2.5 text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 shrink-0" />
+                        </button>
 
                         {/* Parent Token Estimate Badge */}
                         <span
@@ -3521,32 +3522,36 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     </div>
                   )}
 
-                  {/* (3) Parent 단위 Section 재할당 드롭다운 */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-indigo-100/80 dark:border-indigo-900/50">
+                  {/* (3) Parent 단위 Section 재할당 버튼 */}
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-indigo-100/80 dark:border-indigo-900/50">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 shrink-0 whitespace-nowrap">
                       <FolderTree className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                      <span>Parent 소속 섹션 변경:</span>
+                      <span>Parent 소속 섹션:</span>
                     </label>
-                    <select
-                      value={activeChunk.section_id || activeChunk.parent_id}
-                      onChange={(e) => {
-                        const newSecId = e.target.value;
-                        const pid = activeChunk.parent_chunk_id || activeChunk.parent_id;
-                        if (onReassignParentSection && pid) {
-                          onReassignParentSection(pid, newSecId);
-                        } else {
-                          handleFieldChange('parent_id', newSecId);
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetP =
+                          activeParentChunk ||
+                          (parentChunks || []).find(
+                            (p) => (p.parent_chunk_id || p.id) === (activeChunk.parent_chunk_id || activeChunk.parent_id)
+                          );
+                        if (targetP) {
+                          handleOpenReassignParentSectionModal(targetP);
                         }
                       }}
-                      className="flex-1 min-w-0 text-xs font-medium bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 truncate cursor-pointer shadow-2xs"
-                      title="소속된 상위 Parent 청크 전체의 섹션을 변경합니다."
+                      className="flex-1 min-w-0 flex items-center justify-between text-xs font-medium bg-white dark:bg-slate-900 hover:bg-indigo-50/60 dark:hover:bg-slate-800 border border-indigo-200 dark:border-indigo-800 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 hover:border-indigo-400 transition cursor-pointer shadow-2xs group"
+                      title="트리에서 Parent 청크 소속 섹션 재배치"
                     >
-                      {parentSections.map((sec) => (
-                        <option key={sec.id} value={sec.id} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
-                          {sec.title} (L{sec.level})
-                        </option>
-                      ))}
-                    </select>
+                      <span className="truncate">
+                        {parentMap.get(activeChunk.section_id || activeChunk.parent_id || '')?.title ||
+                          activeChunk.section_id ||
+                          '섹션 지정 필요'}
+                      </span>
+                      <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold shrink-0 ml-1.5 group-hover:underline">
+                        트리에서 변경
+                      </span>
+                    </button>
                   </div>
                 </div>
                 
@@ -4776,6 +4781,24 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
           onReparent={(params) => {
             if (onReparentChildChunk) {
               onReparentChildChunk(params);
+            }
+          }}
+        />
+      )}
+
+      {/* Reassign Parent Section (Tree Picker) Modal */}
+      {isReassignParentSectionModalOpen && reassignSectionTargetParent && (
+        <ReassignParentSectionModal
+          isOpen={isReassignParentSectionModalOpen}
+          onClose={() => {
+            setIsReassignParentSectionModalOpen(false);
+            setReassignSectionTargetParent(null);
+          }}
+          targetParent={reassignSectionTargetParent}
+          parentSections={parentSections}
+          onReassign={(parentChunkId, newSectionId) => {
+            if (onReassignParentSection) {
+              onReassignParentSection(parentChunkId, newSectionId);
             }
           }}
         />

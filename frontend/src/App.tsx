@@ -662,16 +662,27 @@ export function App() {
   const handleUpdateChunk = (updatedChunk: ChildChunk, silent = false) => {
     if (!etlData) return;
 
+    const currentDocTitle = etlData.doc_title || selectedPdf;
+    const currentDocId = etlData.doc_id || generateDocId(currentDocTitle);
+
+    const syncedMeta = syncChunkPageMetadata(
+      updatedChunk.metadata,
+      updatedChunk.page_number,
+      updatedChunk.page_end
+    );
+    if (!syncedMeta.doc_title && currentDocTitle) {
+      syncedMeta.doc_title = currentDocTitle;
+    }
+    if (!syncedMeta.doc_id && currentDocId) {
+      syncedMeta.doc_id = currentDocId;
+    }
+
     const finalChunk: ChildChunk = {
       ...updatedChunk,
       token_estimate: updatedChunk.token_estimate || estimateKoreanTokens(updatedChunk.text),
       parent_id: updatedChunk.parent_chunk_id || updatedChunk.parent_id || '',
       parent_chunk_id: updatedChunk.parent_chunk_id || updatedChunk.parent_id || '',
-      metadata: syncChunkPageMetadata(
-        updatedChunk.metadata,
-        updatedChunk.page_number,
-        updatedChunk.page_end
-      ),
+      metadata: syncedMeta,
     };
 
     // 1) Update child_chunks array
@@ -2010,6 +2021,8 @@ export function App() {
       is_edited: true,
       metadata: {
         ...syncChunkPageMetadata(inheritedCustomMeta, data.pageNumber),
+        doc_id: docId,
+        doc_title: etlData.doc_title || selectedPdf,
         type: cType,
       },
     };
@@ -2807,6 +2820,8 @@ export function App() {
       ...syncChunkPageMetadata({}, data.pageNumber, data.pageEnd),
       ...(data.customTags && data.customTags.length > 0 ? { custom_tags: data.customTags } : {}),
       ...(tableItems && tableItems.length > 0 ? { tables: tableItems } : {}),
+      doc_id: docId,
+      doc_title: etlData.doc_title || selectedPdf,
     };
 
     if (data.articleNo) {
@@ -3417,6 +3432,7 @@ export function App() {
               </div>
             ) : (
               <ChunkStudio
+                docTitle={etlData?.doc_title || selectedPdf}
                 parentSections={etlData?.sections || etlData?.parent_sections || []}
                 childChunks={etlData?.child_chunks || []}
                 parentChunks={etlData?.parent_chunks || []}

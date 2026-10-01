@@ -622,6 +622,12 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
       finalEnd
     );
     synchronizedMeta.type = getChunkKind(cleanChild);
+    if (!synchronizedMeta.doc_title && (etl.doc_title || (etl as any).active_pdf)) {
+      synchronizedMeta.doc_title = etl.doc_title || (etl as any).active_pdf;
+    }
+    if (!synchronizedMeta.doc_id && docId) {
+      synchronizedMeta.doc_id = docId;
+    }
 
     cleanChild.metadata = synchronizedMeta;
     return cleanChild as ChildChunk;

@@ -175,6 +175,7 @@ interface ChunkStudioProps {
   onMoveParentToSection?: (sourceParentId: string, targetSectionId: string, targetParentId?: string, position?: 'before' | 'after') => void;
   onReorderChildren?: (sourceChildId: string, targetChildId: string, position: 'before' | 'after') => void;
   onMoveChildToParent?: (sourceChildId: string, targetParentId: string, targetChildId?: string, position?: 'before' | 'after') => void;
+  docTitle?: string;
   isLoading: boolean;
 }
 
@@ -183,6 +184,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   childChunks,
   parentChunks,
   selectedSectionId,
+  docTitle: docTitleProp,
   onSelectSection,
   onUpdateChunk,
   onUpdateSectionTitle,
@@ -1402,14 +1404,16 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       setTimeout(() => setMetaNotice(null), 2500);
       return;
     }
+    const currentDocTitle = activeChunk.metadata?.doc_title || docTitleProp;
     const merged = mergeMetadataWithPage(
       activeChunk.metadata,
       toPaste,
       activeChunk.page_number,
-      activeChunk.page_end
+      activeChunk.page_end,
+      currentDocTitle
     );
     handleFieldChange('metadata', merged);
-    setMetaNotice(`메타데이터 ${Object.keys(toPaste).length}개를 붙여넣었습니다. (페이지 번호 유지)`);
+    setMetaNotice(`메타데이터 ${Object.keys(toPaste).length}개를 붙여넣었습니다. (문서/페이지 정보 유지)`);
     setTimeout(() => setMetaNotice(null), 2500);
   };
 
@@ -1485,15 +1489,17 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       setIsImportMenuOpen(false);
       return;
     }
+    const currentDocTitle = activeChunk.metadata?.doc_title || docTitleProp;
     const merged = mergeMetadataWithPage(
       activeChunk.metadata,
       custom,
       activeChunk.page_number,
-      activeChunk.page_end
+      activeChunk.page_end,
+      currentDocTitle
     );
     handleFieldChange('metadata', merged);
     setIsImportMenuOpen(false);
-    setMetaNotice(`메타데이터 ${Object.keys(custom).length}개를 가져왔습니다. (페이지 번호 유지)`);
+    setMetaNotice(`메타데이터 ${Object.keys(custom).length}개를 가져왔습니다. (문서/페이지 정보 유지)`);
     setTimeout(() => setMetaNotice(null), 2500);
   };
 
@@ -4189,7 +4195,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                   {/* 시스템 자동 추적 메타데이터 (읽기 전용 표시) */}
                   {(() => {
                     const tableSummary = computeTableMetadata(activeChunk);
-                    const docTitle = activeChunk.metadata?.doc_title;
+                    const docTitle = activeChunk.metadata?.doc_title || docTitleProp;
                     return (
                       <div className="p-2 bg-slate-100/80 dark:bg-slate-900/80 rounded-lg border border-slate-200/80 dark:border-slate-800 text-[11px] space-y-1">
                         <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-between">

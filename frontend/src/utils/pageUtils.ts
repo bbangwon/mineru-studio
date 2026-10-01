@@ -198,17 +198,23 @@ export function extractCustomMetadata(metadata?: Record<string, any>): Record<st
 /**
  * 원본 메타데이터에 새 커스텀 메타데이터를 안전하게 병합하고,
  * 대상 청크의 pageNumber와 pageEnd를 온전히 유지하여 최종 메타데이터를 생성합니다.
+ * 대상 청크(baseMeta)의 시스템 속성(doc_title, doc_id, chunk_type, tables 등)은 안전하게 보존됩니다.
  */
 export function mergeMetadataWithPage(
   baseMeta: Record<string, any> | undefined,
   incomingMeta: Record<string, any> | undefined,
   pageNumber: number,
-  pageEnd?: number
+  pageEnd?: number,
+  docTitle?: string
 ): Record<string, any> {
-  const customBase = extractCustomMetadata(baseMeta);
+  const base = { ...(baseMeta || {}) };
   const customIncoming = extractCustomMetadata(incomingMeta);
-  const merged = { ...customBase, ...customIncoming };
-  return syncChunkPageMetadata(merged, pageNumber, pageEnd);
+  const merged = { ...base, ...customIncoming };
+  const synced = syncChunkPageMetadata(merged, pageNumber, pageEnd);
+  if (!synced.doc_title && (docTitle || incomingMeta?.doc_title)) {
+    synced.doc_title = docTitle || incomingMeta?.doc_title;
+  }
+  return synced;
 }
 
 export type MetadataMergeStrategy = 'overwrite' | 'append' | 'skip';

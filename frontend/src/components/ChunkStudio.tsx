@@ -59,18 +59,7 @@ import type {
   DropTargetInfo,
   DropPosition,
 } from '../types';
-import { ChunkSplitModal } from './ChunkSplitModal';
-import { ChunkMergeModal } from './ChunkMergeModal';
-import { AddSectionModal } from './AddSectionModal';
-import { AddParentModal } from './AddParentModal';
-import { AddChildModal } from './AddChildModal';
-import { EditParentModal } from './EditParentModal';
-import { BulkMetadataModal } from './BulkMetadataModal';
-import { ReparentSectionModal } from './ReparentSectionModal';
-import { ReparentChildModal } from './ReparentChildModal';
-import { ReassignParentSectionModal } from './ReassignParentSectionModal';
-import { QuickReparentToSectionModal } from './QuickReparentToSectionModal';
-import { TableEditorModal } from './TableEditorModal';
+import { ChunkStudioModals } from './chunk-studio/ChunkStudioModals';
 import {
   deleteTableFromChunk,
   addTableToChunk,
@@ -99,7 +88,6 @@ import {
   hasTableData,
 } from '../utils/chunkKindUtils';
 import { refineChunkText } from '../api/client';
-import { RefineDiffModal } from './RefineDiffModal';
 import { CopyableBadge } from './CopyableBadge';
 
 interface ChunkStudioProps {
@@ -4623,281 +4611,75 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
         </section>
       </div>
 
-      {/* Chunk Split Modal */}
-      {isSplitModalOpen && activeChunk && onSplitChunk && (
-        <ChunkSplitModal
-          chunk={activeChunk}
-          onClose={() => setIsSplitModalOpen(false)}
-          onConfirmSplit={(id, p1, p2, page1, page2) => {
-            onSplitChunk(id, p1, p2, page1, page2);
-            setIsSplitModalOpen(false);
-          }}
-        />
-      )}
-
-      {/* Chunk Merge Modal */}
-      {isMergeModalOpen && selectedChunksList.length >= 2 && onMergeChunks && (
-        <ChunkMergeModal
-          selectedChunks={selectedChunksList}
-          parentSections={parentSections}
-          onClose={() => setIsMergeModalOpen(false)}
-          onConfirmMerge={(ids, text, newId, pageStart, pageEnd) => {
-            onMergeChunks(ids, text, newId, pageStart, pageEnd);
-            clearSelectedChunks();
-            setIsMergeModalOpen(false);
-          }}
-        />
-      )}
-
-      {/* Add Section Modal */}
-      {onAddSection && (
-        <AddSectionModal
-          isOpen={isAddSectionModalOpen}
-          onClose={() => setIsAddSectionModalOpen(false)}
-          parentSections={parentSections}
-          onAddSection={onAddSection}
-        />
-      )}
-
-      {/* Add Parent Modal */}
-      {onAddParent && (
-        <AddParentModal
-          isOpen={isAddParentModalOpen}
-          onClose={() => setIsAddParentModalOpen(false)}
-          sections={parentSections}
-          parentChunks={parentChunks}
-          childChunks={childChunks}
-          defaultSectionId={targetSectionIdForAddParent || selectedSectionId}
-          onAddParent={onAddParent}
-        />
-      )}
-
-      {/* Add Child Modal */}
-      {onAddChild && (
-        <AddChildModal
-          isOpen={isAddChildModalOpen}
-          onClose={() => {
-            setIsAddChildModalOpen(false);
-            setTargetParentForAddChild(null);
-            setTargetInsertAfterChunkId(undefined);
-          }}
-          parentChunk={targetParentForAddChild}
-          parentChildren={
-            targetParentForAddChild
-              ? childChunks.filter(
-                  (c) =>
-                    (c.parent_chunk_id || c.parent_id) ===
-                    (targetParentForAddChild.parent_chunk_id || targetParentForAddChild.id)
-                )
-              : []
-          }
-          initialInsertAfterChunkId={targetInsertAfterChunkId}
-          sectionTitle={
-            targetParentForAddChild
-              ? parentMap.get(targetParentForAddChild.section_id)?.title
-              : undefined
-          }
-          onAddChild={onAddChild}
-        />
-      )}
-
-      {/* Edit Parent Modal */}
-      {onUpdateParent && (
-        <EditParentModal
-          isOpen={isEditParentModalOpen}
-          onClose={() => {
-            setIsEditParentModalOpen(false);
-            setTargetParentForEdit(null);
-          }}
-          parentChunk={targetParentForEdit}
-          sections={parentSections}
-          onUpdateParent={onUpdateParent}
-          onDeleteParent={onDeleteParent}
-        />
-      )}
-
-      {/* AI Refine Diff View Modal for Studio */}
-      <RefineDiffModal
-        isOpen={isStudioDiffOpen}
-        diffData={studioDiffData}
-        onClose={() => setOpenDiffChunkId(null)}
-        onApply={(refined) => {
-          if (editorTab === 'raw_html') {
-            handleFieldChange('raw_html', refined);
-          } else {
-            handleFieldChange('text', refined);
-          }
-        }}
+      <ChunkStudioModals
+        isSplitModalOpen={isSplitModalOpen}
+        setIsSplitModalOpen={setIsSplitModalOpen}
+        activeChunk={activeChunk}
+        onSplitChunk={onSplitChunk}
+        isMergeModalOpen={isMergeModalOpen}
+        setIsMergeModalOpen={setIsMergeModalOpen}
+        selectedChunksList={selectedChunksList}
+        parentSections={parentSections}
+        onMergeChunks={onMergeChunks}
+        clearSelectedChunks={clearSelectedChunks}
+        onAddSection={onAddSection}
+        isAddSectionModalOpen={isAddSectionModalOpen}
+        setIsAddSectionModalOpen={setIsAddSectionModalOpen}
+        onAddParent={onAddParent}
+        isAddParentModalOpen={isAddParentModalOpen}
+        setIsAddParentModalOpen={setIsAddParentModalOpen}
+        parentChunks={parentChunks}
+        childChunks={childChunks}
+        targetSectionIdForAddParent={targetSectionIdForAddParent}
+        selectedSectionId={selectedSectionId}
+        onAddChild={onAddChild}
+        isAddChildModalOpen={isAddChildModalOpen}
+        setIsAddChildModalOpen={setIsAddChildModalOpen}
+        targetParentForAddChild={targetParentForAddChild}
+        setTargetParentForAddChild={setTargetParentForAddChild}
+        targetInsertAfterChunkId={targetInsertAfterChunkId}
+        setTargetInsertAfterChunkId={setTargetInsertAfterChunkId}
+        parentMap={parentMap}
+        onUpdateParent={onUpdateParent}
+        onDeleteParent={onDeleteParent}
+        isEditParentModalOpen={isEditParentModalOpen}
+        setIsEditParentModalOpen={setIsEditParentModalOpen}
+        targetParentForEdit={targetParentForEdit}
+        setTargetParentForEdit={setTargetParentForEdit}
+        isStudioDiffOpen={isStudioDiffOpen}
+        studioDiffData={studioDiffData}
+        setOpenDiffChunkId={setOpenDiffChunkId}
+        editorTab={editorTab}
+        handleFieldChange={handleFieldChange}
+        isBulkMetaModalOpen={isBulkMetaModalOpen}
+        setIsBulkMetaModalOpen={setIsBulkMetaModalOpen}
+        filterParent={filterParent}
+        existingDocCustomKeys={existingDocCustomKeys}
+        onBulkUpdateMetadata={onBulkUpdateMetadata}
+        isReparentModalOpen={isReparentModalOpen}
+        setIsReparentModalOpen={setIsReparentModalOpen}
+        reparentModalSection={reparentModalSection}
+        setReparentModalSection={setReparentModalSection}
+        onReparentSection={onReparentSection}
+        isReparentChildModalOpen={isReparentChildModalOpen}
+        setIsReparentChildModalOpen={setIsReparentChildModalOpen}
+        reparentTargetChunks={reparentTargetChunks}
+        setReparentTargetChunks={setReparentTargetChunks}
+        onReparentChildChunk={onReparentChildChunk}
+        isReassignParentSectionModalOpen={isReassignParentSectionModalOpen}
+        setIsReassignParentSectionModalOpen={setIsReassignParentSectionModalOpen}
+        reassignSectionTargetParent={reassignSectionTargetParent}
+        setReassignSectionTargetParent={setReassignSectionTargetParent}
+        onReassignParentSection={onReassignParentSection}
+        quickReparentModal={quickReparentModal}
+        setQuickReparentModal={setQuickReparentModal}
+        tableEditorTarget={tableEditorTarget}
+        setTableEditorTarget={setTableEditorTarget}
+        handleSaveTableEditor={handleSaveTableEditor}
+        tableDeleteConfirm={tableDeleteConfirm}
+        setTableDeleteConfirm={setTableDeleteConfirm}
+        handleConfirmDeleteTable={handleConfirmDeleteTable}
       />
-
-      {/* Bulk Custom Metadata Modal */}
-      {isBulkMetaModalOpen && (
-        <BulkMetadataModal
-          isOpen={isBulkMetaModalOpen}
-          onClose={() => setIsBulkMetaModalOpen(false)}
-          totalChunksCount={childChunks.length}
-          currentSectionId={selectedSectionId || undefined}
-          currentSectionTitle={filterParent?.title || undefined}
-          currentSectionChunksCount={
-            childChunks.filter(
-              (c) => (c.section_id || c.parent_id) === selectedSectionId
-            ).length
-          }
-          activeChunkId={activeChunk?.chunk_id}
-          activeChunkMetadata={activeChunk?.metadata}
-          existingDocCustomKeys={existingDocCustomKeys}
-          onApply={(params) => {
-            if (onBulkUpdateMetadata) {
-              onBulkUpdateMetadata(params);
-            }
-          }}
-        />
-      )}
-
-      {/* Reparent Section (Change Parent / Nesting) Modal */}
-      {isReparentModalOpen && reparentModalSection && (
-        <ReparentSectionModal
-          isOpen={isReparentModalOpen}
-          onClose={() => {
-            setIsReparentModalOpen(false);
-            setReparentModalSection(null);
-          }}
-          targetSection={reparentModalSection}
-          parentSections={parentSections}
-          onReparent={(secId, newParentId) => {
-            if (onReparentSection) {
-              onReparentSection(secId, newParentId);
-            }
-          }}
-        />
-      )}
-
-      {/* Reparent Child Chunk Modal */}
-      {isReparentChildModalOpen && reparentTargetChunks.length > 0 && (
-        <ReparentChildModal
-          isOpen={isReparentChildModalOpen}
-          onClose={() => {
-            setIsReparentChildModalOpen(false);
-            setReparentTargetChunks([]);
-          }}
-          targetChunks={reparentTargetChunks}
-          parentSections={parentSections}
-          parentChunks={parentChunks || []}
-          childChunks={childChunks}
-          onReparent={(params) => {
-            if (onReparentChildChunk) {
-              onReparentChildChunk(params);
-            }
-          }}
-        />
-      )}
-
-      {/* Reassign Parent Section (Tree Picker) Modal */}
-      {isReassignParentSectionModalOpen && reassignSectionTargetParent && (
-        <ReassignParentSectionModal
-          isOpen={isReassignParentSectionModalOpen}
-          onClose={() => {
-            setIsReassignParentSectionModalOpen(false);
-            setReassignSectionTargetParent(null);
-          }}
-          targetParent={reassignSectionTargetParent}
-          parentSections={parentSections}
-          onReassign={(parentChunkId, newSectionId) => {
-            if (onReassignParentSection) {
-              onReassignParentSection(parentChunkId, newSectionId);
-            }
-          }}
-        />
-      )}
-
-      {/* Quick Reparent to Section Modal (Child -> Section DnD) */}
-      {quickReparentModal.isOpen && quickReparentModal.childChunk && quickReparentModal.targetSection && (
-        <QuickReparentToSectionModal
-          isOpen={quickReparentModal.isOpen}
-          onClose={() =>
-            setQuickReparentModal({ isOpen: false, childChunk: null, targetSection: null })
-          }
-          childChunk={quickReparentModal.childChunk}
-          targetSection={quickReparentModal.targetSection}
-          availableParents={
-            (parentChunks || []).filter(
-              (p) => p.section_id === quickReparentModal.targetSection?.id
-            )
-          }
-          onConfirm={(params) => {
-            if (onReparentChildChunk) {
-              onReparentChildChunk(params);
-            }
-          }}
-        />
-      )}
-
-      {/* Table Editor Modal */}
-      {tableEditorTarget && (
-        <TableEditorModal
-          isOpen={Boolean(tableEditorTarget)}
-          onClose={() => setTableEditorTarget(null)}
-          initialHtml={tableEditorTarget.initialHtml}
-          initialMarkdown={tableEditorTarget.initialMarkdown}
-          caption={tableEditorTarget.caption}
-          footnote={tableEditorTarget.footnote}
-          tableIndex={tableEditorTarget.tableIndex}
-          onSave={handleSaveTableEditor}
-        />
-      )}
-
-      {/* Table Delete Confirmation Dialog */}
-      {tableDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 max-w-md w-full space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/70 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  {tableDeleteConfirm.tableName} 삭제 확인
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {tableDeleteConfirm.isLastTable
-                    ? '이 청크의 마지막 표입니다. 삭제 시 청크가 일반 문단(paragraph)으로 자동 전환됩니다.'
-                    : '이 표를 청크에서 제거하고 남은 표들의 순서를 재정렬합니다.'}
-                </p>
-              </div>
-            </div>
-
-            <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-1">
-              <div className="font-semibold text-slate-700 dark:text-slate-300">삭제 시 수행되는 작업:</div>
-              <ul className="list-disc list-inside space-y-0.5 text-[11px]">
-                <li>청크 내 표 메타데이터 및 원형 HTML에서 해당 표 제거</li>
-                <li>RAG 임베딩 본문 텍스트에서 해당 표 마크다운 블록 제거</li>
-                {tableDeleteConfirm.isLastTable && (
-                  <li className="text-rose-600 dark:text-rose-400 font-semibold">
-                    청크 타입을 일반 문단(paragraph)으로 안전하게 강등
-                  </li>
-                )}
-              </ul>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setTableDeleteConfirm(null)}
-                className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer transition"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteTable}
-                className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg cursor-pointer shadow-xs transition"
-              >
-                삭제 실행
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -158,6 +158,17 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
     }
   }, [chunk]);
 
+  // 실시간 표 침범(절단) 감지:
+  const isTableCutting = useMemo(() => {
+    if (!hasTable) return false;
+    const cutPos = part1.length;
+    return isInsideTable(cutPos, fullOriginalText);
+  }, [hasTable, part1, fullOriginalText]);
+
+  // 실시간 예상 청크 타입 파생
+  const p1Asset = useMemo(() => (chunk ? deriveChunkTypeAndTables(part1, chunk) : { chunk_type: 'paragraph', tables: [] }), [part1, chunk]);
+  const p2Asset = useMemo(() => (chunk ? deriveChunkTypeAndTables(part2, chunk) : { chunk_type: 'paragraph', tables: [] }), [part2, chunk]);
+
   if (!chunk) return null;
 
   const originalWords = chunk.token_estimate || countWords(chunk.text);
@@ -168,15 +179,6 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
   const isPart2Valid = part2.trim().length > 0;
   const canSplit = isPart1Valid && isPart2Valid;
 
-  // 실시간 표 침범(절단) 감지:
-  // part1 끝자락 또는 part2 시작부에서 마크다운 표가 불완전하게 잘렸는지 검사
-  const isTableCutting = useMemo(() => {
-    if (!hasTable) return false;
-    // fullOriginalText 상에서 part1과 일치하는 오프셋 찾기
-    const cutPos = part1.length;
-    return isInsideTable(cutPos, fullOriginalText);
-  }, [hasTable, part1, fullOriginalText]);
-
   // 안전 스냅 핸들러
   const handleSnapToTableBoundary = () => {
     if (!fullOriginalText) return;
@@ -185,9 +187,6 @@ export const ChunkSplitModal: React.FC<ChunkSplitModalProps> = ({
     setPart2(fullOriginalText.slice(safeIndex).trim());
   };
 
-  // 실시간 예상 청크 타입 파생
-  const p1Asset = useMemo(() => deriveChunkTypeAndTables(part1, chunk), [part1, chunk]);
-  const p2Asset = useMemo(() => deriveChunkTypeAndTables(part2, chunk), [part2, chunk]);
 
   const chunkId1 = chunk.chunk_id;
   const chunkId2 = `${chunk.chunk_id} + 신규 번호`;

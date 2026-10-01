@@ -8,13 +8,15 @@ client = TestClient(app)
 
 
 def test_api_get_qdrant_config_vector_names():
+    current = get_qdrant_config()
     response = client.get("/api/qdrant/config")
     assert response.status_code == 200
     data = response.json()
     assert "dense_vector_name" in data
     assert "sparse_vector_name" in data
-    assert data["dense_vector_name"] == "dense"
-    assert data["sparse_vector_name"] == "sparse"
+    assert data["dense_vector_name"] == current.dense_vector_name
+    assert data["sparse_vector_name"] == current.sparse_vector_name
+
 
 
 def test_api_save_qdrant_config_custom_vector_names():

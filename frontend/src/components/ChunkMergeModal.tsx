@@ -67,6 +67,9 @@ export const ChunkMergeModal: React.FC<ChunkMergeModalProps> = ({
   const firstChunk = selectedChunks[0];
   const defaultMergedId = firstChunk?.chunk_id || '';
 
+  // 병합 후 예상 타입 및 표 자산 계산
+  const expectedAssets = useMemo(() => mergeChunkAssets(selectedChunks), [selectedChunks]);
+
   // Synchronize combined text when selected chunks change
   useEffect(() => {
     if (selectedChunks.length === 0) return;
@@ -91,8 +94,6 @@ export const ChunkMergeModal: React.FC<ChunkMergeModalProps> = ({
 
   const primaryParent = firstChunk ? parentMap.get(firstChunk.section_id || firstChunk.parent_id || '') : null;
 
-  // 병합 후 예상 타입 및 표 자산 계산
-  const expectedAssets = useMemo(() => mergeChunkAssets(selectedChunks), [selectedChunks]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

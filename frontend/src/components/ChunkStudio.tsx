@@ -1384,7 +1384,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     setMetadataClipboard(custom);
     try {
       localStorage.setItem('mineru_copied_meta', JSON.stringify(custom));
-    } catch (e) {}
+    } catch {}
     setMetaNotice(`커스텀 메타데이터 ${Object.keys(custom).length}개가 복사되었습니다.`);
     setTimeout(() => setMetaNotice(null), 2500);
   };
@@ -1397,7 +1397,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       try {
         const stored = localStorage.getItem('mineru_copied_meta');
         if (stored) toPaste = JSON.parse(stored);
-      } catch (e) {}
+      } catch {}
     }
     if (!toPaste || Object.keys(toPaste).length === 0) {
       setMetaNotice('붙여넣을 메타데이터가 없습니다. 먼저 [복사]를 해주세요.');

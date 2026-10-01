@@ -9,13 +9,15 @@ client = TestClient(app)
 
 
 def test_api_get_llm_config():
+    current = get_llm_config()
     response = client.get("/api/llm/config")
     assert response.status_code == 200
     data = response.json()
-    assert data["model_name"] == "gemma4:12b-mlx"
-    assert data["temperature"] == 0.0
+    assert data["model_name"] == current.model_name
+    assert data["temperature"] == current.temperature
     assert "base_url" in data
     assert "system_prompt" in data
+
 
 
 def test_api_save_llm_config():

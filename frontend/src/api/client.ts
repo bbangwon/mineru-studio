@@ -318,6 +318,90 @@ export async function refineChunkText(
   return res.json();
 }
 
+export async function getDefaultRAGPrompt(): Promise<{ default_prompt: string }> {
+  const res = await fetch('/api/llm/rag-query/default-prompt');
+  if (!res.ok) throw new Error('RAG 기본 프롬프트를 불러오지 못했습니다.');
+  return res.json();
+}
+
+export interface StreamRAGCallbacks {
+  onStart?: (data: import('../types').RAGStreamStartPayload) => void;
+  onToken?: (token: string) => void;
+  onDone?: (data: import('../types').RAGStreamDonePayload) => void;
+  onError?: (error: Error) => void;
+}
+
+export async function streamRAGQuery(
+  params: import('../types').RAGStreamRequest,
+  callbacks: StreamRAGCallbacks,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch('/api/llm/rag-query/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `RAG 요청 실패 (HTTP ${res.status})`);
+  }
+
+  if (!res.body) {
+    throw new Error('응답 스트림 본문이 비어 있습니다.');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      let currentEvent = '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('event: ')) {
+          currentEvent = trimmed.slice(7).trim();
+        } else if (trimmed.startsWith('data: ')) {
+          const dataStr = trimmed.slice(6).trim();
+          try {
+            const data = JSON.parse(dataStr);
+            const eventName = data.event || currentEvent;
+            if (eventName === 'start' && callbacks.onStart) {
+              callbacks.onStart(data);
+            } else if (eventName === 'token' && callbacks.onToken) {
+              callbacks.onToken(data.token || '');
+            } else if (eventName === 'done' && callbacks.onDone) {
+              callbacks.onDone(data);
+            } else if (eventName === 'error' && callbacks.onError) {
+              callbacks.onError(new Error(data.message || 'RAG 스트리밍 오류 발생'));
+            }
+          } catch (e) {
+            console.warn('SSE JSON parse error:', e, dataStr);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    if (signal?.aborted) {
+      return; // 사용자에 의한 취소
+    }
+    if (callbacks.onError) {
+      callbacks.onError(err);
+    } else {
+      throw err;
+    }
+  }
+}
+
 export async function deletePdfDocument(
   filename: string,
   deleteVectors: boolean = true

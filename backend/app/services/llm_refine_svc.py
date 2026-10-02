@@ -21,6 +21,21 @@ def _clean_markdown_fence(text: str) -> str:
     return trimmed
 
 
+DEFAULT_RAG_SYSTEM_PROMPT = """당신은 주어진 참고 문서를 바탕으로 질문에 정확하고 충실하게 답변하는 전문 AI 어시스턴트입니다.
+
+[답변 원칙]
+1. 반드시 아래 제공된 [참고 문서]의 내용만을 근거로 삼아 답변하세요.
+2. 문서에서 명시적으로 확인할 수 없는 사실은 추측하여 지어내지 말고, "제공된 문서에서 관련 내용을 찾을 수 없습니다"라고 솔직하게 답변하세요.
+3. 답변 시 참고한 문서 번호(예: [참조 #1], [참조 #2])를 내용 중간이나 끝에 인용 표기하세요.
+4. 부모 청크 문맥(상위 맥락)이 함께 제공된 경우, 해당 섹션의 전체적인 배경과 목적을 충분히 고려하여 답변의 정확성을 높이세요.
+5. 한국어로 친절하고 일목요연하게 마크다운(Markdown) 형식으로 작성하세요."""
+
+
+def get_default_rag_prompt() -> str:
+    """기본 RAG 시스템 프롬프트 텍스트 반환"""
+    return DEFAULT_RAG_SYSTEM_PROMPT
+
+
 class LLMRefineService:
     """OpenAI 호환 API 기반 텍스트 정제 및 모델 통신 서비스"""
 
@@ -191,6 +206,131 @@ class LLMRefineService:
                 "original_chars": len(text),
                 "refined_chars": len(refined),
             }
+
+    @staticmethod
+    def build_rag_context(
+        chunks: List[Dict[str, Any]],
+        use_parent_context: bool = True,
+    ) -> str:
+        """검색된 청크 목록을 LLM에 주입하기 좋은 구조화된 마크다운 컨텍스트 블록으로 조립합니다."""
+        if not chunks:
+            return "검색된 관련 문서가 없습니다."
+
+        context_blocks: List[str] = []
+        for idx, chunk in enumerate(chunks, start=1):
+            chunk_id = chunk.get("chunk_id") or chunk.get("id") or f"chunk_{idx}"
+            breadcrumbs = chunk.get("breadcrumbs") or chunk.get("heading_hierarchy") or []
+            hierarchy_path = " > ".join(str(b) for b in breadcrumbs) if breadcrumbs else "기타"
+            doc_title = chunk.get("title") or chunk.get("doc_title") or ""
+            page_start = chunk.get("page_number") or ((chunk.get("page_idx") or 0) + 1)
+            page_end = chunk.get("page_end") or page_start
+            page_str = f"p.{page_start}~{page_end}" if page_end > page_start else f"p.{page_start}"
+
+            location_parts = []
+            if doc_title:
+                location_parts.append(doc_title)
+            if hierarchy_path and hierarchy_path != doc_title:
+                location_parts.append(hierarchy_path)
+            location_parts.append(page_str)
+            location_info = " | ".join(location_parts)
+
+            child_text = (chunk.get("text") or "").strip()
+            parent_text = (chunk.get("parent_text") or "").strip()
+
+            block_lines = [
+                f"[참조 #{idx}] 청크 ID: {chunk_id} ({location_info})",
+                "--- [검색된 자식 청크 본문] ---",
+                child_text,
+            ]
+
+            if use_parent_context and parent_text and parent_text != child_text:
+                block_lines.extend([
+                    "--- [연계된 상위 부모 청크 문맥 (Parent Context)] ---",
+                    parent_text,
+                ])
+
+            context_blocks.append("\n".join(block_lines))
+
+        return "\n\n" + ("=" * 48) + "\n\n".join([""] + context_blocks) + "\n" + ("=" * 48)
+
+    async def stream_rag_answer(
+        self,
+        query: str,
+        retrieved_chunks: List[Dict[str, Any]],
+        use_parent_context: bool = True,
+        custom_system_prompt: Optional[str] = None,
+        config: Optional[LLMConfig] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ):
+        """참조 문서를 바탕으로 질문에 대한 답변을 OpenAI 호환 SSE 스트리밍으로 생성합니다."""
+        import json
+
+        cfg = config or get_llm_config()
+        base_url = cfg.base_url.rstrip("/")
+        headers = self._build_headers(cfg.api_key)
+
+        system_prompt = (
+            custom_system_prompt.strip()
+            if (custom_system_prompt and custom_system_prompt.strip())
+            else get_default_rag_prompt()
+        )
+
+        context_str = self.build_rag_context(retrieved_chunks, use_parent_context=use_parent_context)
+
+        user_content = (
+            f"[참고 문서]\n{context_str}\n\n"
+            f"[사용자 질문]\n{query.strip()}\n\n"
+            f"[답변 지침]\n위 [참고 문서]의 내용을 기반으로 질문에 신뢰성 있게 답변하세요. 인용 가능한 [참조 #N] 번호를 함께 표기하세요."
+        )
+
+        payload = {
+            "model": cfg.model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": temperature if temperature is not None else cfg.temperature,
+            "max_tokens": max_tokens if max_tokens is not None else cfg.max_tokens,
+            "stream": True,
+        }
+
+        async with httpx.AsyncClient(timeout=cfg.timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+            ) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    err_msg = error_text.decode("utf-8", errors="replace")
+                    try:
+                        err_json = json.loads(err_msg)
+                        if "error" in err_json:
+                            err_msg = str(err_json["error"])
+                    except Exception:
+                        pass
+                    raise RuntimeError(f"LLM 스트리밍 호출 실패 (HTTP {response.status_code}): {err_msg}")
+
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    line = line.strip()
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data_json = json.loads(data_str)
+                            choices = data_json.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content")
+                                if content:
+                                    yield content
+                        except Exception:
+                            continue
 
 
 llm_refine_svc = LLMRefineService()

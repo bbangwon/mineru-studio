@@ -897,10 +897,11 @@ export function App() {
             )}
           </div>
         ) : (
-          /* Hybrid Search Playground Mode */
+          /* Hybrid Search & RAG Playground Mode */
           <RetrievalPlayground
             collectionName={qdrantCollection || undefined}
             onOpenConfig={() => setIsQdrantConfigOpen(true)}
+            onOpenLLMConfig={() => setIsLLMConfigOpen(true)}
             onSelectChunk={(chunkId) => {
               // 검색 결과에서 해당 청크를 스튜디오에서 탐색할 수 있도록 탭 전환
               setActiveTab('studio');

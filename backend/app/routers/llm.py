@@ -104,3 +104,108 @@ async def api_refine_chunk(req: RefineChunkRequest):
             status_code=500,
             detail=f"텍스트 교정 중 오류가 발생했습니다: {str(e)}",
         )
+
+
+class RAGStreamRequest(BaseModel):
+    query: str
+    collection_name: Optional[str] = None
+    limit: Optional[int] = 5
+    use_parent_context: Optional[bool] = True
+    system_prompt: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+
+@router.get("/rag-query/default-prompt")
+async def api_get_default_rag_prompt():
+    """RAG 기본 시스템 프롬프트 조회"""
+    from backend.app.services.llm_refine_svc import get_default_rag_prompt
+    return {"default_prompt": get_default_rag_prompt()}
+
+
+@router.post("/rag-query/stream")
+async def api_stream_rag_query(req: RAGStreamRequest):
+    """자연어 질문에 대한 하이브리드 검색 후 LLM 스트리밍 답변 생성 (SSE)"""
+    import json
+    import time
+    from fastapi.responses import StreamingResponse
+
+    from backend.app.services.embedding_svc import embedding_svc
+    from backend.app.services.qdrant_config_svc import get_qdrant_config
+
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=400, detail="질문(Query)이 비어 있습니다.")
+
+    qdrant_cfg = get_qdrant_config()
+    target_col = req.collection_name or qdrant_cfg.collection_name
+    llm_cfg = get_llm_config()
+
+    # 1. 하이브리드 검색 실행 및 지연시간 측정
+    search_t0 = time.perf_counter()
+    try:
+        retrieved_chunks = embedding_svc.hybrid_search(
+            query=req.query,
+            limit=req.limit or 5,
+            config=qdrant_cfg,
+            collection_name=target_col,
+        )
+    except Exception as search_err:
+        logger.warning(f"RAG 하이브리드 검색 실패: {search_err}")
+        retrieved_chunks = []
+
+    search_elapsed = round(time.perf_counter() - search_t0, 3)
+
+    async def sse_generator():
+        use_parent = True if req.use_parent_context is None else req.use_parent_context
+        used_context = llm_refine_svc.build_rag_context(
+            retrieved_chunks,
+            use_parent_context=use_parent,
+        )
+
+        # 1. 검색 메타데이터 및 청크 목록 전송
+        start_payload = {
+            "event": "start",
+            "collection_name": target_col,
+            "search_elapsed_seconds": search_elapsed,
+            "retrieved_chunks": retrieved_chunks,
+            "used_context": used_context,
+            "model_name": llm_cfg.model_name,
+        }
+        yield f"event: start\ndata: {json.dumps(start_payload, ensure_ascii=False)}\n\n"
+
+        # 2. LLM 스트리밍 토큰 생성
+        llm_t0 = time.perf_counter()
+        try:
+            async for token in llm_refine_svc.stream_rag_answer(
+                query=req.query,
+                retrieved_chunks=retrieved_chunks,
+                use_parent_context=use_parent,
+                custom_system_prompt=req.system_prompt,
+                temperature=req.temperature,
+                max_tokens=req.max_tokens,
+            ):
+                token_payload = {"event": "token", "token": token}
+                yield f"event: token\ndata: {json.dumps(token_payload, ensure_ascii=False)}\n\n"
+
+            llm_elapsed = round(time.perf_counter() - llm_t0, 3)
+            total_elapsed = round(search_elapsed + llm_elapsed, 3)
+            done_payload = {
+                "event": "done",
+                "llm_elapsed_seconds": llm_elapsed,
+                "total_elapsed_seconds": total_elapsed,
+            }
+            yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"RAG LLM 스트리밍 실패: {e}")
+            err_payload = {"event": "error", "message": str(e)}
+            yield f"event: error\ndata: {json.dumps(err_payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

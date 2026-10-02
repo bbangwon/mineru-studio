@@ -196,7 +196,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
           )}
         </button>
 
-        {/* Hybrid Search Playground Tab */}
+        {/* Hybrid Search & RAG Playground Tab */}
         <button
           type="button"
           onClick={() => handleTabClick('search')}
@@ -207,13 +207,15 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25 font-bold'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60'
           }`}
-          title="하이브리드 검색 플레이그라운드 (Qdrant RRF)"
+          title="하이브리드 검색 & 실시간 스트리밍 RAG 플레이그라운드"
         >
           <Search className="w-4 h-4 shrink-0" />
           {!isCollapsed && (
             <div className="flex flex-1 items-center justify-between">
-              <span>하이브리드 검색</span>
-              <span className="text-[10px] bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 px-1 py-0.2 rounded font-medium">RRF</span>
+              <span>하이브리드 검색 & RAG</span>
+              <span className="text-[10px] bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-bold">
+                RAG
+              </span>
             </div>
           )}
         </button>

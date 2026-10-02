@@ -324,6 +324,46 @@ export interface LLMRefineResponse {
   refined_chars: number;
 }
 
+// 6-1. RAG 질의응답 및 스트리밍 타입
+export interface RAGStreamRequest {
+  query: string;
+  collection_name?: string;
+  limit?: number;
+  use_parent_context?: boolean;
+  system_prompt?: string;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface RAGStreamStartPayload {
+  event: 'start';
+  collection_name: string;
+  search_elapsed_seconds: number;
+  retrieved_chunks: SearchResultItem[];
+  used_context: string;
+  model_name: string;
+}
+
+export interface RAGStreamDonePayload {
+  event: 'done';
+  llm_elapsed_seconds: number;
+  total_elapsed_seconds: number;
+}
+
+export interface RAGStreamState {
+  status: 'idle' | 'searching' | 'generating' | 'completed' | 'error';
+  query: string;
+  answer: string;
+  retrieved_chunks: SearchResultItem[];
+  used_context: string;
+  model_name: string;
+  collection_name: string;
+  search_elapsed_seconds?: number;
+  llm_elapsed_seconds?: number;
+  total_elapsed_seconds?: number;
+  error?: string;
+}
+
 // 7. 기본 파서 설정 관련 타입
 export interface ParserConfig {
   backend: string;

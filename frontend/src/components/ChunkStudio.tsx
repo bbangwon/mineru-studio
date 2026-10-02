@@ -1675,6 +1675,8 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     handleDeleteSelectedChunks,
     handleOpenReparentSelectedChunks,
     onMergeChunks,
+    isMergeModalOpen,
+    setIsMergeModalOpen,
     visibleGroups,
     toggleSelectChunk,
     handleChildDrop,

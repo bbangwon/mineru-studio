@@ -95,11 +95,20 @@ async def get_sample_etl(strategy: Optional[str] = "general", filename: Optional
                 old_truncated = file_path.parent.parent.name
                 if not edited_data.get("doc_title") or normalize_text(edited_data.get("doc_title", "")) == normalize_text(old_truncated):
                     edited_data["doc_title"] = doc_name
-                if edited_data.get("sections"):
-                    root_s = edited_data["sections"][0]
+                secs = edited_data.get("sections") or edited_data.get("parent_sections") or []
+                if secs:
+                    root_s = secs[0]
                     if normalize_text(root_s.get("title", "")) == normalize_text(old_truncated) or not root_s.get("title"):
                         root_s["title"] = doc_name
-                    HierarchicalChunker.recalculate_section_hierarchy(edited_data["sections"], doc_title=doc_name)
+                    HierarchicalChunker.reconcile_hierarchy_integrity(
+                        secs,
+                        edited_data.get("parent_chunks", []),
+                        edited_data.get("child_chunks", []),
+                        doc_title=doc_name,
+                    )
+                    edited_data["sections"] = secs
+                    edited_data["parent_sections"] = secs
+
                 for c in edited_data.get("child_chunks", []):
                     meta = c.get("metadata", {})
                     if normalize_text(meta.get("doc_title", "")) == normalize_text(old_truncated):
@@ -109,13 +118,13 @@ async def get_sample_etl(strategy: Optional[str] = "general", filename: Optional
                 for p in edited_data.get("parent_chunks", []):
                     if p.get("breadcrumbs") and normalize_text(p["breadcrumbs"][0]) == normalize_text(old_truncated):
                         p["breadcrumbs"][0] = doc_name
+
                 healed = HierarchicalChunker.heal_composite_chunks(edited_data.get("child_chunks", []))
-                if healed:
-                    try:
-                        with open(edited_path, "w", encoding="utf-8") as f_save:
-                            json.dump(edited_data, f_save, ensure_ascii=False, indent=2)
-                    except Exception as save_err:
-                        logger.error(f"Failed to auto-save healed composite chunks: {save_err}")
+                try:
+                    with open(edited_path, "w", encoding="utf-8") as f_save:
+                        json.dump(edited_data, f_save, ensure_ascii=False, indent=2)
+                except Exception as save_err:
+                    logger.error(f"Failed to auto-save reconciled edited chunks: {save_err}")
                 job_manager.latest_etl_result = edited_data
                 return edited_data
         except Exception as e:

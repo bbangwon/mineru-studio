@@ -1771,6 +1771,101 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertEqual(parser.rows[0], ["항목", "값"])
         self.assertEqual(parser.rows[1], ["A", "1"])
 
+    def test_reindex_reconciles_broken_hierarchy_and_ghost_chunks(self):
+        """
+        ID 재정렬(reindex_etl_result) 실행 시:
+        1. 상위 폴더 섹션에 잘못 잔존한 유령 자식 청크(ghost child chunk) ID 제거
+        2. 부모-자식 간 section_id 불일치 및 고아 청크 정합성 자동 복구
+        3. 각 섹션의 parent_chunk_ids 및 child_chunk_ids 완벽 재계산
+        """
+        raw_etl = {
+            "doc_id": "test_integrity_doc",
+            "doc_title": "업무 매뉴얼",
+            "sections": [
+                {
+                    "id": "test_integrity_doc_s00",
+                    "title": "업무 매뉴얼",
+                    "level": 0,
+                    "parent_section_id": None,
+                    "parent_chunk_ids": [],
+                    "child_chunk_ids": [],
+                },
+                {
+                    "id": "test_integrity_doc_s01",
+                    "title": "제2장 업무처리 지침 등",
+                    "level": 1,
+                    "parent_section_id": "test_integrity_doc_s00",
+                    "parent_chunk_ids": [],
+                    "child_chunk_ids": [],
+                },
+                {
+                    "id": "test_integrity_doc_s02",
+                    "title": "3. 주요 업무처리 지침 및 지시",
+                    "level": 2,
+                    "parent_section_id": "test_integrity_doc_s01",
+                    "parent_chunk_ids": [],
+                    # s02는 하위 섹션만 가진 폴더이나, 잘못된 유령 청크 ID c001이 등록되어 있는 상태 시뮬레이션
+                    "child_chunk_ids": ["test_integrity_doc_c001"],
+                },
+                {
+                    "id": "test_integrity_doc_s03",
+                    "title": "마. 세부 지침",
+                    "level": 3,
+                    "parent_section_id": "test_integrity_doc_s02",
+                    "parent_chunk_ids": ["test_integrity_doc_p001"],
+                    "child_chunk_ids": ["test_integrity_doc_c001"],
+                },
+            ],
+            "parent_chunks": [
+                {
+                    "parent_chunk_id": "test_integrity_doc_p001",
+                    "id": "test_integrity_doc_p001",
+                    "section_id": "test_integrity_doc_s03",
+                    "title": "배경",
+                    "text": "지침 배경 설명",
+                    "token_estimate": 100,
+                    "child_chunk_ids": ["test_integrity_doc_c001"],
+                    "page_range": [10, 10],
+                }
+            ],
+            "child_chunks": [
+                {
+                    "chunk_id": "test_integrity_doc_c001",
+                    "parent_chunk_id": "test_integrity_doc_p001",
+                    # 실제 소속 섹션은 s03
+                    "section_id": "test_integrity_doc_s03",
+                    "text": "지침 본문 내용",
+                    "token_estimate": 50,
+                    "page_number": 10,
+                }
+            ],
+        }
+
+        reindexed = HierarchicalChunker.reindex_etl_result(raw_etl)
+
+        s_dict = {s["title"]: s for s in reindexed["sections"]}
+        s02_reindexed = s_dict["3. 주요 업무처리 지침 및 지시"]
+        s03_reindexed = s_dict["마. 세부 지침"]
+
+        # 1. 상위 폴더 섹션 s02의 유령 청크 c001이 완전히 제거되어 빈 배열이어야 함
+        self.assertEqual(s02_reindexed["parent_chunk_ids"], [])
+        self.assertEqual(s02_reindexed["child_chunk_ids"], [])
+
+        # 2. 실제 청크가 소속된 하위 섹션 s03에는 부모와 자식 청크가 정상 연결되어야 함
+        self.assertEqual(len(s03_reindexed["parent_chunk_ids"]), 1)
+        self.assertEqual(len(s03_reindexed["child_chunk_ids"]), 1)
+        new_pid = s03_reindexed["parent_chunk_ids"][0]
+        new_cid = s03_reindexed["child_chunk_ids"][0]
+
+        reindexed_parent = reindexed["parent_chunks"][0]
+        reindexed_child = reindexed["child_chunks"][0]
+
+        self.assertEqual(reindexed_parent["parent_chunk_id"], new_pid)
+        self.assertEqual(reindexed_parent["section_id"], s03_reindexed["id"])
+        self.assertEqual(reindexed_child["chunk_id"], new_cid)
+        self.assertEqual(reindexed_child["section_id"], s03_reindexed["id"])
+        self.assertEqual(reindexed_child["parent_chunk_id"], new_pid)
+
 
 if __name__ == "__main__":
     unittest.main()

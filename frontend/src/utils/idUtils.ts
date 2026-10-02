@@ -178,23 +178,31 @@ export function syncHierarchyOrder(etl: HierarchicalEtlResult): HierarchicalEtlR
     }
   }
 
-  // 3. 각 섹션의 child_chunk_ids 동기화
+  // 3. 각 섹션의 parent_chunk_ids 및 child_chunk_ids 동기화
   const updatedSectionsWithChildren: SectionNode[] = sections.map((sec) => {
-    const secPids = sec.parent_chunk_ids || [];
+    const secParents = orderedParents.filter((p) => p.section_id === sec.id);
+    const secPids = secParents.map((p) => p.parent_chunk_id || p.id || '').filter(Boolean);
+
     const secChildIds: string[] = [];
-    for (const pid of secPids) {
-      const p = parentMap.get(pid);
-      if (p && p.child_chunk_ids) {
-        for (const cid of p.child_chunk_ids) {
-          if (!secChildIds.includes(cid)) {
-            secChildIds.push(cid);
-          }
+    for (const p of secParents) {
+      for (const cid of (p.child_chunk_ids || [])) {
+        if (!secChildIds.includes(cid)) {
+          secChildIds.push(cid);
+        }
+      }
+    }
+    // 직속 미할당 자식 청크 포함
+    for (const c of orderedChildren) {
+      if (c.section_id === sec.id && (!c.parent_chunk_id || c.parent_chunk_id === 'unassigned')) {
+        if (!secChildIds.includes(c.chunk_id)) {
+          secChildIds.push(c.chunk_id);
         }
       }
     }
     return {
       ...sec,
-      child_chunk_ids: secChildIds.length > 0 ? secChildIds : (sec.child_chunk_ids || []),
+      parent_chunk_ids: secPids,
+      child_chunk_ids: secChildIds,
     };
   });
 
@@ -439,6 +447,173 @@ export function getChildSubheadingSuffix(
 }
 
 /**
+ * 섹션, 부모 청크, 자식 청크 간의 상호 참조 정합성(Integrity)을 일괄 검사하고 복구(Healing)합니다.
+ * 1. 고아/미등록 section_id 및 parent_chunk_id 복구
+ * 2. 부모-자식 간 소속 섹션(section_id) 강제 일치
+ * 3. 부모 청크의 child_chunk_ids와 자식 청크의 parent_chunk_id 양방향 완전 동기화
+ * 4. 섹션의 parent_chunk_ids 및 child_chunk_ids 완전 재계산 (유령/고아 청크 ID 제거)
+ * 5. Breadcrumbs 및 계층 레벨 일괄 재계산
+ * 6. Page range 상향식(Bottom-up) 동기화
+ */
+export function reconcileHierarchyIntegrity(etl: HierarchicalEtlResult): HierarchicalEtlResult {
+  const sections = (etl.sections && etl.sections.length > 0)
+    ? [...etl.sections]
+    : [...(etl.parent_sections || [])];
+  const parents = [...(etl.parent_chunks || [])];
+  const children = [...(etl.child_chunks || [])];
+
+  if (sections.length === 0) return etl;
+
+  let rootSec: SectionNode | null = null;
+  for (const s of sections) {
+    if (s.level === 0 || s.id.endsWith('_s00') || s.id.endsWith('_root') || !s.parent_section_id) {
+      rootSec = s;
+      break;
+    }
+  }
+  if (!rootSec && sections.length > 0) {
+    rootSec = sections[0];
+  }
+  const fallbackSecId = rootSec?.id || '';
+
+  const sectionMap = new Map<string, SectionNode>(sections.map((s) => [s.id, s]));
+  const parentMap = new Map<string, ParentChunk>();
+  for (const p of parents) {
+    const pid = p.parent_chunk_id || p.id || '';
+    if (pid) parentMap.set(pid, p);
+  }
+  const childMap = new Map<string, ChildChunk>(children.map((c) => [c.chunk_id, c]));
+
+  // 1. 부모 청크 정합성 복구
+  const reconciledParents: ParentChunk[] = parents.map((p) => {
+    const sid = p.section_id && sectionMap.has(p.section_id) ? p.section_id : fallbackSecId;
+    const validCids: string[] = [];
+    for (const cid of (p.child_chunk_ids || [])) {
+      if (childMap.has(cid) && !validCids.includes(cid)) {
+        validCids.push(cid);
+      }
+    }
+    return {
+      ...p,
+      section_id: sid,
+      child_chunk_ids: validCids,
+    };
+  });
+  const reconciledParentMap = new Map<string, ParentChunk>();
+  for (const p of reconciledParents) {
+    const pid = p.parent_chunk_id || p.id || '';
+    if (pid) reconciledParentMap.set(pid, p);
+  }
+
+  // 2. 자식 청크 정합성 복구
+  const reconciledChildren: ChildChunk[] = children.map((c) => {
+    const rawPid = c.parent_chunk_id || c.parent_id || '';
+    if (rawPid && reconciledParentMap.has(rawPid)) {
+      const p = reconciledParentMap.get(rawPid)!;
+      const canonicalPid = p.parent_chunk_id || p.id || '';
+      if (!p.child_chunk_ids.includes(c.chunk_id)) {
+        p.child_chunk_ids.push(c.chunk_id);
+      }
+      return {
+        ...c,
+        parent_chunk_id: canonicalPid,
+        parent_id: canonicalPid,
+        section_id: p.section_id,
+      };
+    } else {
+      const sid = c.section_id && sectionMap.has(c.section_id) ? c.section_id : fallbackSecId;
+      return {
+        ...c,
+        parent_chunk_id: '',
+        parent_id: undefined,
+        section_id: sid,
+      };
+    }
+  });
+
+  const reconciledChildMap = new Map<string, ChildChunk>(reconciledChildren.map((c) => [c.chunk_id, c]));
+
+  // 부모-자식 양방향 소속 엄격화
+  for (const p of reconciledParents) {
+    const pid = p.parent_chunk_id || p.id || '';
+    p.child_chunk_ids = (p.child_chunk_ids || []).filter(
+      (cid) => reconciledChildMap.get(cid)?.parent_chunk_id === pid
+    );
+  }
+
+  // 3. 섹션의 parent_chunk_ids 및 child_chunk_ids 완전 재계산
+  const reconciledSections: SectionNode[] = sections.map((sec) => {
+    const secParents = reconciledParents.filter((p) => p.section_id === sec.id);
+    const secPids = secParents.map((p) => p.parent_chunk_id || p.id || '').filter(Boolean);
+
+    const secChildIds: string[] = [];
+    for (const p of secParents) {
+      for (const cid of p.child_chunk_ids) {
+        if (!secChildIds.includes(cid)) {
+          secChildIds.push(cid);
+        }
+      }
+    }
+    // 직속 미할당 자식 청크 포함
+    for (const c of reconciledChildren) {
+      if (c.section_id === sec.id && !c.parent_chunk_id) {
+        if (!secChildIds.includes(c.chunk_id)) {
+          secChildIds.push(c.chunk_id);
+        }
+      }
+    }
+
+    return {
+      ...sec,
+      parent_chunk_ids: secPids,
+      child_chunk_ids: secChildIds,
+    };
+  });
+
+  // 4. Breadcrumbs 및 계층 레벨 일괄 재계산
+  const finalSections = recalculateSectionHierarchy(reconciledSections, etl.doc_title);
+  const finalSectionMap = new Map<string, SectionNode>(finalSections.map((s) => [s.id, s]));
+
+  const finalParents = reconciledParents.map((p) => {
+    const sec = finalSectionMap.get(p.section_id);
+    let pBcs = p.breadcrumbs;
+    let pText = p.text;
+    if (sec?.breadcrumbs) {
+      pBcs = [...sec.breadcrumbs];
+      if (pText && pText.startsWith('[')) {
+        const pBcStr = pBcs.join(' > ');
+        pText = pText.replace(/^\[([^\]]+?)(\s*\(계속\))?\]/, (_match, _old, cont) => `[${pBcStr}${cont || ''}]`);
+      }
+    }
+    return {
+      ...p,
+      breadcrumbs: pBcs,
+      text: pText,
+    };
+  });
+
+  const finalChildren = reconciledChildren.map((c) => {
+    const sec = finalSectionMap.get(c.section_id);
+    const childBcs = sec?.breadcrumbs ? [...sec.breadcrumbs] : c.breadcrumbs;
+    return {
+      ...c,
+      breadcrumbs: childBcs,
+    };
+  });
+
+  // 5. Page range 상향식 동기화
+  const finalSectionsWithPages = syncSectionPageRanges(finalSections, finalChildren);
+
+  return {
+    ...etl,
+    sections: finalSectionsWithPages,
+    parent_sections: finalSectionsWithPages,
+    parent_chunks: finalParents,
+    child_chunks: finalChildren,
+  };
+}
+
+/**
  * 문서 물리적 등장 순서(Page & Block Position)를 기준으로
  * 3단계 계층(Section - Parent - Child)의 전체 ID를 순차적으로 일괄 재정렬(Re-index)합니다.
  * - Section ID: {doc_id}_s00 (루트), {doc_id}_s01, s02...
@@ -641,57 +816,33 @@ export function reindexEtlData(etl: HierarchicalEtlResult): HierarchicalEtlResul
     child_chunk_ids: (sec.child_chunk_ids || []).map((cid) => childIdMap[cid] || cid).filter(Boolean),
   }));
 
-  // 4. 전역 계층 레벨 및 breadcrumbs 일괄 재계산
-  const finalSections = recalculateSectionHierarchy(mappedSections, etl.doc_title);
-  const sectionObjMap = new Map<string, SectionNode>(finalSections.map((s) => [s.id, s]));
+  const mappedParents: ParentChunk[] = newParents.map((parent) => ({
+    ...parent,
+    section_id: sectionIdMap[parent.section_id] || parent.section_id,
+    child_chunk_ids: parent.child_chunk_ids.map((cid) => childIdMap[cid] || cid).filter(Boolean),
+  }));
 
-  const finalParents: ParentChunk[] = newParents.map((parent) => {
-    const newSid = sectionIdMap[parent.section_id] || parent.section_id;
-    const sec = sectionObjMap.get(newSid);
-    let pBcs = parent.breadcrumbs;
-    let pText = parent.text;
-    if (sec?.breadcrumbs) {
-      pBcs = [...sec.breadcrumbs];
-      if (pText && pText.startsWith('[')) {
-        const pBcStr = pBcs.join(' > ');
-        pText = pText.replace(/^\[([^\]]+?)(\s*\(계속\))?\]/, (_match, _old, cont) => `[${pBcStr}${cont || ''}]`);
-      }
-    }
-    return {
-      ...parent,
-      section_id: newSid,
-      breadcrumbs: pBcs,
-      text: pText,
-      child_chunk_ids: parent.child_chunk_ids.map((cid) => childIdMap[cid] || cid).filter(Boolean),
-    };
-  });
-
-  const finalChildren: ChildChunk[] = newChildren.map((child) => {
+  const mappedChildren: ChildChunk[] = newChildren.map((child) => {
     const oldPid = child.parent_chunk_id || child.parent_id || '';
     const newPid = parentIdMap[oldPid] || oldPid;
     const oldSid = child.section_id;
     const newSid = sectionIdMap[oldSid] || oldSid;
-    const sec = sectionObjMap.get(newSid);
-
-    const childBcs = sec?.breadcrumbs ? [...sec.breadcrumbs] : child.breadcrumbs;
-
     return {
       ...child,
-      parent_chunk_id: newPid,
-      parent_id: newPid,
+      parent_chunk_id: newPid || '',
+      parent_id: newPid || undefined,
       section_id: newSid,
-      breadcrumbs: childBcs,
     };
   });
 
-  return {
+  return reconcileHierarchyIntegrity({
     ...etl,
     doc_id: docId,
-    sections: finalSections,
-    parent_sections: finalSections,
-    parent_chunks: finalParents,
-    child_chunks: finalChildren,
-  };
+    sections: mappedSections,
+    parent_sections: mappedSections,
+    parent_chunks: mappedParents,
+    child_chunks: mappedChildren,
+  });
 }
 
 /**

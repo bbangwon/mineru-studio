@@ -28,6 +28,7 @@ from backend.app.services.chunker.reindexer import (
     calculate_stats,
     generate_doc_id,
     recalculate_section_hierarchy,
+    reconcile_hierarchy_integrity,
     reindex_etl_result,
     sync_section_page_ranges,
 )
@@ -105,6 +106,7 @@ class HierarchicalChunker:
     heal_composite_chunks = classmethod(lambda cls, child_chunks: heal_composite_chunks(child_chunks))
     recalculate_section_hierarchy = classmethod(lambda cls, sections, doc_title="": recalculate_section_hierarchy(sections, doc_title))
     sync_section_page_ranges = classmethod(lambda cls, sections, child_chunks: sync_section_page_ranges(sections, child_chunks))
+    reconcile_hierarchy_integrity = classmethod(lambda cls, sections, parents, children, doc_title="": reconcile_hierarchy_integrity(sections, parents, children, doc_title))
     reindex_etl_result = classmethod(lambda cls, etl_result: reindex_etl_result(etl_result))
     _calculate_stats = classmethod(lambda cls, sections, parents, children: calculate_stats(sections, parents, children))
 

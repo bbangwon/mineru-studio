@@ -370,31 +370,10 @@ def reindex_etl_result(etl_result: Dict[str, Any]) -> Dict[str, Any]:
         if old_psid and old_psid in section_id_map:
             sec["parent_section_id"] = section_id_map[old_psid]
 
-        sec["parent_chunk_ids"] = [
-            parent_id_map[pid] for pid in sec.get("parent_chunk_ids", []) if pid in parent_id_map
-        ]
-        sec["child_chunk_ids"] = [
-            child_id_map[cid] for cid in sec.get("child_chunk_ids", []) if cid in child_id_map
-        ]
-
-    recalculate_section_hierarchy(new_sections, doc_title=res.get("doc_title", ""))
-
-    section_obj_map = {s.get("id"): s for s in new_sections if s.get("id")}
-
     for p in new_parents:
         old_sid = p.get("section_id")
         if old_sid and old_sid in section_id_map:
             p["section_id"] = section_id_map[old_sid]
-
-        sec = section_obj_map.get(p.get("section_id"))
-        if sec and sec.get("breadcrumbs"):
-            p["breadcrumbs"] = list(sec["breadcrumbs"])
-
-            p_text = p.get("text", "")
-            if p_text and p_text.startswith("["):
-                p_bc_str = " > ".join(p["breadcrumbs"])
-                p["text"] = re.sub(r"^\[([^\]]+?)(\s*\(계속\))?\]", rf"[{p_bc_str}\2]", p_text)
-
         p["child_chunk_ids"] = [
             child_id_map[cid] for cid in p.get("child_chunk_ids", []) if cid in child_id_map
         ]
@@ -409,9 +388,7 @@ def reindex_etl_result(etl_result: Dict[str, Any]) -> Dict[str, Any]:
         if old_sid and old_sid in section_id_map:
             c["section_id"] = section_id_map[old_sid]
 
-        sec = section_obj_map.get(c.get("section_id"))
-        if sec and sec.get("breadcrumbs"):
-            c["breadcrumbs"] = list(sec["breadcrumbs"])
+    reconcile_hierarchy_integrity(new_sections, new_parents, new_children, doc_title=res.get("doc_title", ""))
 
     res["sections"] = new_sections
     res["parent_sections"] = new_sections
@@ -420,3 +397,116 @@ def reindex_etl_result(etl_result: Dict[str, Any]) -> Dict[str, Any]:
     res["stats"] = calculate_stats(new_sections, new_parents, new_children)
 
     return res
+
+
+def reconcile_hierarchy_integrity(
+    sections: List[Dict[str, Any]],
+    parents: List[Dict[str, Any]],
+    children: List[Dict[str, Any]],
+    doc_title: str = "",
+) -> None:
+    """
+    섹션(sections), 부모 청크(parents), 자식 청크(children) 간의 상호 참조 정합성(Integrity)을 일괄 검사하고 복구(Healing)합니다.
+    1. 고아/미등록 section_id 및 parent_chunk_id 복구
+    2. 부모-자식 간 소속 섹션(section_id) 강제 일치
+    3. 부모 청크의 child_chunk_ids와 자식 청크의 parent_chunk_id 양방향 완전 동기화
+    4. 섹션의 parent_chunk_ids 및 child_chunk_ids 완전 재계산 (유령/고아 청크 ID 제거)
+    5. Breadcrumbs 및 계층 레벨 일괄 재계산
+    6. Page range 상향식(Bottom-up) 동기화
+    """
+    if not sections:
+        return
+
+    # Root section 식별 및 fallback section 결정
+    root_sec = None
+    for s in sections:
+        sid = str(s.get("id", ""))
+        if s.get("level", 0) == 0 or sid.endswith("_s00") or sid.endswith("_root") or not s.get("parent_section_id"):
+            root_sec = s
+            break
+    if not root_sec and sections:
+        root_sec = sections[0]
+    fallback_sec_id = str(root_sec.get("id", "")) if root_sec else ""
+
+    section_map = {str(s.get("id", "")): s for s in sections if s.get("id")}
+    parent_map = {str(p.get("parent_chunk_id") or p.get("id", "")): p for p in parents if (p.get("parent_chunk_id") or p.get("id"))}
+    child_map = {str(c.get("chunk_id", "")): c for c in children if c.get("chunk_id")}
+
+    # 1. 부모 청크 정합성 복구
+    for p in parents:
+        pid = str(p.get("parent_chunk_id") or p.get("id", ""))
+        if not p.get("section_id") or str(p.get("section_id")) not in section_map:
+            p["section_id"] = fallback_sec_id
+        valid_cids = []
+        for cid in p.get("child_chunk_ids", []):
+            cid_str = str(cid)
+            if cid_str in child_map and cid_str not in valid_cids:
+                valid_cids.append(cid_str)
+        p["child_chunk_ids"] = valid_cids
+
+    # 2. 자식 청크 정합성 복구
+    for c in children:
+        cid = str(c.get("chunk_id", ""))
+        raw_pid = c.get("parent_chunk_id") or c.get("parent_id")
+        pid_str = str(raw_pid) if raw_pid else ""
+        if pid_str and pid_str in parent_map:
+            p = parent_map[pid_str]
+            p_canonical_id = str(p.get("parent_chunk_id") or p.get("id", ""))
+            c["parent_chunk_id"] = p_canonical_id
+            c["parent_id"] = p_canonical_id
+            # 자식 청크의 section_id는 부모 청크의 section_id와 반드시 일치
+            c["section_id"] = str(p.get("section_id", fallback_sec_id))
+            if cid not in p["child_chunk_ids"]:
+                p["child_chunk_ids"].append(cid)
+        else:
+            c["parent_chunk_id"] = None
+            c["parent_id"] = None
+            if not c.get("section_id") or str(c.get("section_id")) not in section_map:
+                c["section_id"] = fallback_sec_id
+
+    # 부모-자식 양방향 소속 엄격화: 부모의 child_chunk_ids 중 실제 이 부모를 참조하는 청크만 유지
+    for p in parents:
+        pid = str(p.get("parent_chunk_id") or p.get("id", ""))
+        p["child_chunk_ids"] = [
+            cid for cid in p.get("child_chunk_ids", [])
+            if child_map.get(cid, {}).get("parent_chunk_id") == pid
+        ]
+
+    # 3. 섹션의 parent_chunk_ids 및 child_chunk_ids 완전 재계산
+    for sec in sections:
+        sid = str(sec.get("id", ""))
+        sec_parents = [p for p in parents if str(p.get("section_id", "")) == sid]
+        sec["parent_chunk_ids"] = [str(p.get("parent_chunk_id") or p.get("id", "")) for p in sec_parents]
+
+        sec_child_ids = []
+        for p in sec_parents:
+            for cid in p.get("child_chunk_ids", []):
+                if cid not in sec_child_ids:
+                    sec_child_ids.append(cid)
+
+        # 직속 미할당 자식 청크 포함
+        for c in children:
+            if str(c.get("section_id", "")) == sid and not c.get("parent_chunk_id"):
+                cid = str(c.get("chunk_id", ""))
+                if cid not in sec_child_ids:
+                    sec_child_ids.append(cid)
+
+        sec["child_chunk_ids"] = sec_child_ids
+
+    # 4. Breadcrumbs 및 계층 레벨 일괄 재계산
+    recalculate_section_hierarchy(sections, doc_title=doc_title)
+    for p in parents:
+        sec = section_map.get(str(p.get("section_id", "")))
+        if sec and sec.get("breadcrumbs"):
+            p["breadcrumbs"] = list(sec["breadcrumbs"])
+            p_text = p.get("text", "")
+            if p_text and p_text.startswith("["):
+                p_bc_str = " > ".join(p["breadcrumbs"])
+                p["text"] = re.sub(r"^\[([^\]]+?)(\s*\(계속\))?\]", rf"[{p_bc_str}\2]", p_text)
+    for c in children:
+        sec = section_map.get(str(c.get("section_id", "")))
+        if sec and sec.get("breadcrumbs"):
+            c["breadcrumbs"] = list(sec["breadcrumbs"])
+
+    # 5. Page range 상향식 동기화
+    sync_section_page_ranges(sections, children)

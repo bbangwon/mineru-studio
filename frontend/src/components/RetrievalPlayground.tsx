@@ -3,6 +3,7 @@ import type { SearchResultItem, SearchTestResponse, RAGStreamState } from '../ty
 import { searchTest, getQdrantCollections, getDefaultRAGPrompt, streamRAGQuery } from '../api/client';
 import { CopyableBadge } from './CopyableBadge';
 import { getChunkKind, getChunkKindLabel, getChunkKindBadgeClass } from '../utils/chunkKindUtils';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface RetrievalPlaygroundProps {
   collectionName?: string;
@@ -46,8 +47,21 @@ export const RetrievalPlayground: React.FC<RetrievalPlaygroundProps> = ({
   const [isContextInspectorOpen, setIsContextInspectorOpen] = useState(false);
   const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({});
   const [highlightedRank, setHighlightedRank] = useState<number | null>(null);
+  const [answerViewMode, setAnswerViewMode] = useState<'rendered' | 'raw'>('rendered');
+  const [isCopied, setIsCopied] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleCopyAnswer = async () => {
+    if (!ragState.answer) return;
+    try {
+      await navigator.clipboard.writeText(ragState.answer);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (e) {
+      console.warn('클립보드 복사 실패:', e);
+    }
+  };
 
   useEffect(() => {
     loadCollections();
@@ -561,6 +575,61 @@ export const RetrievalPlayground: React.FC<RetrievalPlaygroundProps> = ({
                       LLM: <span className="font-mono">{ragState.llm_elapsed_seconds}s</span>
                     </span>
                   )}
+                  {ragState.total_elapsed_seconds !== undefined && (
+                    <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/50 rounded-lg text-indigo-700 dark:text-indigo-300 font-semibold text-[11px] border border-indigo-200 dark:border-indigo-800">
+                      총: <span className="font-mono">{ragState.total_elapsed_seconds}s</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* 뷰 모드 토글 및 복사 툴바 */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setAnswerViewMode('rendered')}
+                      className={`px-2 py-0.5 rounded-md transition cursor-pointer ${
+                        answerViewMode === 'rendered'
+                          ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-2xs font-bold'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                      title="실시간 서식 적용 마크다운 뷰"
+                    >
+                      서식 뷰
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAnswerViewMode('raw')}
+                      className={`px-2 py-0.5 rounded-md transition cursor-pointer ${
+                        answerViewMode === 'raw'
+                          ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-2xs font-bold'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                      title="원문 마크다운 텍스트 뷰"
+                    >
+                      원문 (Raw)
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyAnswer}
+                    disabled={!ragState.answer}
+                    className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition flex items-center gap-1 cursor-pointer disabled:opacity-40 shadow-2xs"
+                    title="마크다운 답변 클립보드 복사"
+                  >
+                    {isCopied ? (
+                      <>
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">복사됨</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>📋</span>
+                        <span>복사</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -587,15 +656,23 @@ export const RetrievalPlayground: React.FC<RetrievalPlaygroundProps> = ({
                 </div>
               )}
 
-              {/* 답변 본문 렌더링 */}
-              <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-800 dark:text-slate-100 leading-relaxed font-sans whitespace-pre-wrap min-h-[90px] shadow-inner selection:bg-indigo-500 selection:text-white">
+              {/* 답변 본문 렌더링 (실시간 스트리밍 마크다운) */}
+              <div className="p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-800 dark:text-slate-100 min-h-[90px] shadow-inner selection:bg-indigo-500 selection:text-white">
                 {ragState.answer ? (
-                  <>
-                    {ragState.answer}
-                    {ragState.status === 'generating' && (
-                      <span className="inline-block w-2 h-4 ml-1 bg-indigo-600 dark:bg-indigo-400 animate-pulse align-middle" />
-                    )}
-                  </>
+                  answerViewMode === 'rendered' ? (
+                    <MarkdownRenderer
+                      content={ragState.answer}
+                      isStreaming={ragState.status === 'generating'}
+                      onSelectCitation={scrollToChunkCard}
+                    />
+                  ) : (
+                    <div className="font-mono text-xs whitespace-pre-wrap leading-relaxed text-slate-800 dark:text-slate-200 overflow-x-auto">
+                      {ragState.answer}
+                      {ragState.status === 'generating' && (
+                        <span className="inline-block w-2 h-4 ml-1 bg-indigo-600 dark:bg-indigo-400 animate-pulse align-middle" />
+                      )}
+                    </div>
+                  )
                 ) : ragState.status === 'searching' ? (
                   <div className="flex items-center gap-2 text-slate-400 dark:text-slate-500 py-4">
                     <svg className="animate-spin w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   X,
   Table2,
@@ -6,6 +6,10 @@ import {
   Trash2,
   Split,
   Maximize2,
+  Minimize2,
+  ZoomIn,
+  ZoomOut,
+  Edit3,
   Eye,
   Check,
   ClipboardPaste,
@@ -94,6 +98,290 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
   const [isTsvInputOpen, setIsTsvInputOpen] = useState<boolean>(false);
   const [tsvText, setTsvText] = useState<string>('');
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isLargeView, setIsLargeView] = useState<boolean>(false);
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+
+  const cellRefs = useRef<{ [key: string]: HTMLTableCellElement | null }>({});
+  const textareaRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({});
+
+  // 병합으로 숨겨진 셀인 경우 상위 원본(Anchor) 셀 위치 탐색
+  const findCellAnchor = useCallback(
+    (targetGrid: TableGrid, r: number, c: number): { r: number; c: number } => {
+      if (r < 0 || r >= targetGrid.length) return { r: Math.max(0, Math.min(r, targetGrid.length - 1)), c: 0 };
+      const row = targetGrid[r];
+      if (!row || c < 0 || c >= row.length) return { r, c: Math.max(0, Math.min(c, (row?.length || 1) - 1)) };
+      if (!row[c]?.isMergedHidden) return { r, c };
+
+      for (let cr = r; cr >= 0; cr--) {
+        for (let cc = c; cc >= 0; cc--) {
+          const cell = targetGrid[cr]?.[cc];
+          if (cell && !cell.isMergedHidden) {
+            const rs = cell.rowSpan || 1;
+            const cs = cell.colSpan || 1;
+            if (cr + rs > r && cc + cs > c) {
+              return { r: cr, c: cc };
+            }
+          }
+        }
+      }
+      return { r, c };
+    },
+    []
+  );
+
+  const moveDirection = useCallback(
+    (dir: 'up' | 'down' | 'left' | 'right') => {
+      if (!selectedCell) return;
+      const { r, c } = selectedCell;
+      const currentCell = grid[r]?.[c];
+      if (!currentCell) return;
+
+      let targetR = r;
+      let targetC = c;
+
+      if (dir === 'up') {
+        if (r <= 0) return;
+        targetR = r - 1;
+      } else if (dir === 'down') {
+        targetR = r + (currentCell.rowSpan || 1);
+        if (targetR >= grid.length) return;
+      } else if (dir === 'left') {
+        if (c <= 0) return;
+        targetC = c - 1;
+      } else if (dir === 'right') {
+        targetC = c + (currentCell.colSpan || 1);
+        if (targetC >= (grid[r]?.length || 0)) return;
+      }
+
+      const anchor = findCellAnchor(grid, targetR, targetC);
+      setSelectedCell(anchor);
+    },
+    [selectedCell, grid, findCellAnchor]
+  );
+
+  const moveTab = useCallback(() => {
+    if (!selectedCell) return;
+    const { r, c } = selectedCell;
+    const currentCell = grid[r]?.[c];
+    if (!currentCell) return;
+
+    const targetC = c + (currentCell.colSpan || 1);
+    if (targetC < (grid[r]?.length || 0)) {
+      setSelectedCell(findCellAnchor(grid, r, targetC));
+    } else if (r + 1 < grid.length) {
+      setSelectedCell(findCellAnchor(grid, r + 1, 0));
+    }
+  }, [selectedCell, grid, findCellAnchor]);
+
+  const moveShiftTab = useCallback(() => {
+    if (!selectedCell) return;
+    const { r, c } = selectedCell;
+    if (c > 0) {
+      setSelectedCell(findCellAnchor(grid, r, c - 1));
+    } else if (r > 0) {
+      const prevRowLen = grid[r - 1]?.length || 1;
+      setSelectedCell(findCellAnchor(grid, r - 1, prevRowLen - 1));
+    }
+  }, [selectedCell, grid, findCellAnchor]);
+
+  // 셀 선택 / 편집 모드 전환 시 포커스 제어
+  useEffect(() => {
+    if (!selectedCell || activeTab !== 'grid') return;
+    const activeEl = document.activeElement;
+    if (activeEl?.getAttribute('data-formula-bar') === 'true') return;
+
+    const key = `${selectedCell.r}_${selectedCell.c}`;
+    if (isEditing) {
+      const textarea = textareaRefs.current[key];
+      if (textarea && document.activeElement !== textarea) {
+        textarea.focus();
+        const len = textarea.value.length;
+        textarea.setSelectionRange(len, len);
+      }
+    } else {
+      const cellEl = cellRefs.current[key];
+      if (cellEl && document.activeElement !== cellEl) {
+        cellEl.focus({ preventScroll: true });
+        cellEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    }
+  }, [selectedCell, isEditing, activeTab]);
+
+  const lastPasteTimeRef = useRef<number>(0);
+
+  // 클립보드 텍스트를 대상 셀 위치를 시작점으로 배치 (단일 셀 또는 엑셀 다중 셀 TSV 지원)
+  const applyPastedText = (text: string, startR: number, startC: number) => {
+    const now = Date.now();
+    if (now - lastPasteTimeRef.current < 200) return;
+    lastPasteTimeRef.current = now;
+
+    const lines = text.replace(/\r\n/g, '\n').split('\n');
+    if (lines.length > 1 && lines[lines.length - 1] === '') {
+      lines.pop();
+    }
+
+    if (lines.length === 1 && !lines[0].includes('\t')) {
+      handleCellChange(startR, startC, lines[0]);
+      showAlert('셀에 텍스트가 붙여넣어졌습니다.');
+      return;
+    }
+
+    setGrid((prev) => {
+      const next = prev.map((row) => row.map((cell) => ({ ...cell })));
+      lines.forEach((line, dr) => {
+        const targetR = startR + dr;
+        if (targetR >= next.length) return;
+        const cells = line.split('\t');
+        cells.forEach((val, dc) => {
+          const targetC = startC + dc;
+          if (targetC >= (next[targetR]?.length || 0)) return;
+          if (!next[targetR][targetC].isMergedHidden) {
+            next[targetR][targetC].text = val.trim();
+          }
+        });
+      });
+      return next;
+    });
+    showAlert(`${lines.length}행 범위의 데이터가 표에 붙여넣어졌습니다.`);
+  };
+
+  // 탐색 모드 (TD) 키보드 이벤트
+  const handleTdKeyDown = (e: React.KeyboardEvent<HTMLTableCellElement>, r: number, c: number) => {
+    // 편집 모드 중이거나 내부 텍스트에어리어에서 발생한 이벤트는 TD에서 가로채지 않음
+    if (isEditing || e.target !== e.currentTarget) return;
+    if (e.nativeEvent.isComposing) return;
+
+    // 클립보드 복사 (Ctrl+C / Cmd+C)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault();
+      const text = grid[r]?.[c]?.text ?? '';
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+      showAlert(`셀 내용 복사됨: "${text.length > 20 ? text.slice(0, 20) + '...' : text}"`);
+      return;
+    }
+
+    // 클립보드 잘라내기 (Ctrl+X / Cmd+X)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+      e.preventDefault();
+      const text = grid[r]?.[c]?.text ?? '';
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+      handleCellChange(r, c, '');
+      showAlert('셀 내용이 잘라내기 되었습니다.');
+      return;
+    }
+
+    // 클립보드 붙여넣기 (Ctrl+V / Cmd+V fallback)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      if (navigator?.clipboard?.readText) {
+        navigator.clipboard
+          .readText()
+          .then((clipText) => {
+            if (clipText) {
+              applyPastedText(clipText, r, c);
+            }
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case 'ArrowUp':
+        e.preventDefault();
+        moveDirection('up');
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        moveDirection('down');
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        moveDirection('left');
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        moveDirection('right');
+        break;
+      case 'Tab':
+        e.preventDefault();
+        if (e.shiftKey) moveShiftTab();
+        else moveTab();
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (e.shiftKey) moveDirection('up');
+        else moveDirection('down');
+        break;
+      case 'F2':
+        e.preventDefault();
+        setIsEditing(true);
+        break;
+      case 'Delete':
+      case 'Backspace':
+        e.preventDefault();
+        handleCellChange(r, c, '');
+        break;
+      case 'Escape':
+        e.preventDefault();
+        break;
+      default:
+        // 탐색 모드에서 타이핑 시작 시 (영문, 숫자, 한글 IME 포함): 기존 내용을 덮어쓰지 않고 편집 모드로 진입하여 이어 입력
+        if (
+          (e.key.length === 1 || e.key === 'Process' || e.nativeEvent.isComposing) &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey
+        ) {
+          setIsEditing(true);
+          const key = `${r}_${c}`;
+          const textarea = textareaRefs.current[key];
+          if (textarea) {
+            textarea.focus();
+            const len = textarea.value.length;
+            textarea.setSelectionRange(len, len);
+          }
+        }
+        break;
+    }
+  };
+
+  // 편집 모드 (Textarea) 키보드 이벤트
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 텍스트에어리어 키 입력이 상위 TD로 버블링되어 셀 내용이 덮어써지거나 IME 자음이 중복 입력되는 현상 방지
+    e.stopPropagation();
+
+    if (e.nativeEvent.isComposing) return;
+
+    if (e.key === 'Enter') {
+      if (e.shiftKey || e.altKey) {
+        // Shift+Enter / Alt+Enter: 줄바꿈 허용 (기본 동작)
+        return;
+      }
+      // Enter 단독: 편집 완료 후 아래 셀로 이동
+      e.preventDefault();
+      setIsEditing(false);
+      moveDirection('down');
+    } else if (e.key === 'Tab') {
+      // Tab: 편집 완료 후 다음 열로 이동
+      e.preventDefault();
+      setIsEditing(false);
+      if (e.shiftKey) moveShiftTab();
+      else moveTab();
+    } else if (e.key === 'Escape') {
+      // Esc: 편집 취소 및 탐색 모드 복귀
+      e.preventDefault();
+      setIsEditing(false);
+    } else if (e.key === 'F2') {
+      // F2 토글
+      e.preventDefault();
+      setIsEditing(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -357,8 +645,14 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
   const selectedCellData = selectedCell ? grid[selectedCell.r]?.[selectedCell.c] : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden text-slate-800 dark:text-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div
+        className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-800 dark:text-slate-100 transition-all duration-200 ${
+          isFullscreen
+            ? 'w-full h-full max-w-none max-h-none rounded-none sm:rounded-2xl sm:w-[98vw] sm:h-[96vh]'
+            : 'w-full max-w-6xl max-h-[92vh]'
+        }`}
+      >
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-950/40">
           <div className="flex items-center gap-3">
@@ -397,6 +691,14 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
                   <span>그리드 편집</span>
                 </>
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              title={isFullscreen ? '창 크기 복원' : '창 최대화 (전체화면)'}
+              className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer transition"
+            >
+              {isFullscreen ? <Minimize2 className="w-5 h-5 text-indigo-500" /> : <Maximize2 className="w-5 h-5" />}
             </button>
             <button
               type="button"
@@ -501,12 +803,36 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
               <ClipboardPaste className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
               <span>엑셀/TSV 붙여넣기</span>
             </button>
+
+            {/* 보기 크기 확대 토글 */}
+            <button
+              type="button"
+              onClick={() => setIsLargeView(!isLargeView)}
+              title={isLargeView ? '기본 크기로 전환' : '셀 및 글자 크기 확대 (여유로운 편집)'}
+              className={`px-2.5 py-1 rounded-lg border font-medium flex items-center gap-1 cursor-pointer transition ${
+                isLargeView
+                  ? 'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700'
+                  : 'bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+              }`}
+            >
+              {isLargeView ? <ZoomOut className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" /> : <ZoomIn className="w-3.5 h-3.5 text-indigo-500" />}
+              <span>{isLargeView ? '확대 모드 ON' : '크게 보기'}</span>
+            </button>
           </div>
 
           {/* 선택 상태 뱃지 */}
           {selectedCell && (
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 font-mono">
-              <span>선택 셀: R{selectedCell.r + 1}:C{selectedCell.c + 1}</span>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-mono">
+              <span>선택: R{selectedCell.r + 1}:C{selectedCell.c + 1}</span>
+              {isEditing ? (
+                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800 animate-pulse">
+                  [수정 중]
+                </span>
+              ) : (
+                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700">
+                  [탐색 모드]
+                </span>
+              )}
               {(selectedCellData?.colSpan || 1) > 1 && (
                 <span className="text-indigo-600 dark:text-indigo-400 font-bold">
                   [가로{selectedCellData?.colSpan}칸]
@@ -596,11 +922,64 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
           </div>
         </div>
 
+        {/* 선택된 셀 집중 편집창 (수식 입력줄 / Formula Bar 스타일) */}
+        {activeTab === 'grid' && selectedCell && selectedCellData && !selectedCellData.isMergedHidden && (
+          <div className="px-6 py-2.5 bg-indigo-50/70 dark:bg-indigo-950/40 border-b border-indigo-200 dark:border-indigo-900/60 flex items-start gap-3 animate-in fade-in duration-100">
+            <div className="flex items-center gap-1.5 pt-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 shrink-0">
+              <Edit3 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span className="font-mono bg-white dark:bg-slate-900 px-2 py-0.5 rounded-md border border-indigo-200 dark:border-indigo-800 shadow-2xs">
+                {selectedCell.r === 0 ? '헤더(1행)' : `${selectedCell.r + 1}행`} · {selectedCell.c + 1}열
+              </span>
+            </div>
+            <div className="flex-1 relative">
+              <textarea
+                data-formula-bar="true"
+                value={selectedCellData.text}
+                onChange={(e) => handleCellChange(selectedCell.r, selectedCell.c, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    moveDirection('down');
+                  }
+                }}
+                rows={2}
+                placeholder="선택한 셀 내용 집중 편집 (여기에 입력하면 표에 실시간 반영되며, 줄바꿈과 긴 문장을 여유 있게 편집할 수 있습니다)..."
+                className="w-full text-xs sm:text-sm p-2 bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700/80 rounded-lg shadow-inner focus:ring-2 focus:ring-indigo-500 focus:outline-hidden text-slate-800 dark:text-slate-100 resize-y min-h-[50px]"
+              />
+            </div>
+          </div>
+        )}
+
         {/* Main Content Area */}
         <div className="flex-1 overflow-auto p-6 bg-slate-100/50 dark:bg-slate-950/50">
           {activeTab === 'grid' ? (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-x-auto p-4">
-              <table className="border-collapse border border-slate-300 dark:border-slate-700 w-full min-w-[500px] text-xs">
+              <table
+                onCopy={(e) => {
+                  if (isEditing || !selectedCell) return;
+                  const text = grid[selectedCell.r]?.[selectedCell.c]?.text ?? '';
+                  e.clipboardData.setData('text/plain', text);
+                  e.preventDefault();
+                  showAlert(`셀 내용 복사됨: "${text.length > 20 ? text.slice(0, 20) + '...' : text}"`);
+                }}
+                onCut={(e) => {
+                  if (isEditing || !selectedCell) return;
+                  const text = grid[selectedCell.r]?.[selectedCell.c]?.text ?? '';
+                  e.clipboardData.setData('text/plain', text);
+                  handleCellChange(selectedCell.r, selectedCell.c, '');
+                  e.preventDefault();
+                  showAlert('셀 내용이 잘라내기 되었습니다.');
+                }}
+                onPaste={(e) => {
+                  if (isEditing || !selectedCell) return;
+                  const text = e.clipboardData.getData('text/plain');
+                  if (text) {
+                    e.preventDefault();
+                    applyPastedText(text, selectedCell.r, selectedCell.c);
+                  }
+                }}
+                className="border-collapse border border-slate-300 dark:border-slate-700 w-full min-w-full"
+              >
                 <tbody>
                   {grid.map((row, r) => (
                     <tr key={r}>
@@ -613,24 +992,59 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
                         return (
                           <td
                             key={c}
+                            ref={(el) => {
+                              cellRefs.current[`${r}_${c}`] = el;
+                            }}
+                            tabIndex={0}
                             colSpan={cell.colSpan && cell.colSpan > 1 ? cell.colSpan : undefined}
                             rowSpan={cell.rowSpan && cell.rowSpan > 1 ? cell.rowSpan : undefined}
-                            onClick={() => setSelectedCell({ r, c })}
-                            className={`border border-slate-300 dark:border-slate-700 p-1.5 transition relative ${
+                            onClick={() => {
+                              if (isSelected && !isEditing) {
+                                setIsEditing(true);
+                              } else {
+                                setSelectedCell({ r, c });
+                                setIsEditing(false);
+                              }
+                            }}
+                            onDoubleClick={() => {
+                              setSelectedCell({ r, c });
+                              setIsEditing(true);
+                            }}
+                            onKeyDown={(e) => handleTdKeyDown(e, r, c)}
+                            className={`border border-slate-300 dark:border-slate-700 transition relative align-top outline-hidden select-none ${
+                              isLargeView ? 'min-w-[200px] p-2' : 'min-w-[150px] p-1.5'
+                            } ${
                               isSelected
-                                ? 'ring-2 ring-indigo-500 z-10 bg-indigo-50/50 dark:bg-indigo-950/40'
+                                ? isEditing
+                                  ? 'ring-2 ring-emerald-500 ring-inset z-20 bg-white dark:bg-slate-900 shadow-md'
+                                  : 'ring-2 ring-indigo-500 ring-inset z-10 bg-indigo-50/70 dark:bg-indigo-950/50 cursor-cell'
                                 : isHeader
-                                ? 'bg-slate-100 dark:bg-slate-800/80 font-medium'
-                                : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                                ? 'bg-slate-100 dark:bg-slate-800/80 font-medium cursor-pointer'
+                                : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer'
                             }`}
                           >
                             <textarea
+                              ref={(el) => {
+                                textareaRefs.current[`${r}_${c}`] = el;
+                              }}
                               value={cell.text}
+                              readOnly={!isEditing}
                               onChange={(e) => handleCellChange(r, c, e.target.value)}
-                              onFocus={() => setSelectedCell({ r, c })}
-                              rows={Math.max(1, (cell.text.match(/\n/g) || []).length + 1)}
+                              onKeyDown={handleTextareaKeyDown}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedCell({ r, c });
+                                setIsEditing(true);
+                              }}
+                              rows={Math.max(isLargeView ? 2 : 1, (cell.text.match(/\n/g) || []).length + 1)}
                               placeholder={isHeader ? `항목 ${c + 1}` : '내용'}
-                              className={`w-full bg-transparent border-0 focus:outline-hidden text-xs resize-none p-1 rounded ${
+                              className={`w-full bg-transparent border-0 focus:outline-hidden resize-none rounded transition ${
+                                isEditing ? 'cursor-text select-text' : 'cursor-cell select-none pointer-events-none'
+                              } ${
+                                isLargeView
+                                  ? 'text-sm p-1.5 min-h-[48px]'
+                                  : 'text-xs sm:text-sm p-1 min-h-[38px]'
+                              } ${
                                 isHeader
                                   ? 'font-bold text-slate-800 dark:text-slate-100 text-center'
                                   : 'text-slate-700 dark:text-slate-200'
@@ -688,10 +1102,30 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
         </div>
 
         {/* Footer Buttons */}
-        <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 flex items-center justify-between">
-          <div className="text-xs text-slate-500 dark:text-slate-400">
-            총 <span className="font-bold text-slate-800 dark:text-slate-200">{grid.length}</span>행 ×{' '}
-            <span className="font-bold text-slate-800 dark:text-slate-200">{grid[0]?.length || 0}</span>열
+        <div className="px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              총 <span className="font-bold text-slate-800 dark:text-slate-200">{grid.length}</span>행 ×{' '}
+              <span className="font-bold text-slate-800 dark:text-slate-200">{grid[0]?.length || 0}</span>열
+            </div>
+
+            {/* 엑셀 단축키 안내 뱃지 */}
+            <div className="hidden lg:flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 font-mono">
+              <span className="font-bold text-indigo-600 dark:text-indigo-400">⌨️ 엑셀 단축키</span>
+              <span>[방향키/Tab] 이동</span>
+              <span>·</span>
+              <span>[F2/더블클릭] 편집</span>
+              <span>·</span>
+              <span>[Enter] 아래 이동</span>
+              <span>·</span>
+              <span>[Shift+Enter] 줄바꿈</span>
+              <span>·</span>
+              <span>[Ctrl+C/X/V] 복사/잘라내기/붙여넣기</span>
+              <span>·</span>
+              <span>[Del] 비우기</span>
+              <span>·</span>
+              <span>[Esc] 완료</span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2.5">

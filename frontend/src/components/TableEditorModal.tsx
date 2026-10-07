@@ -186,25 +186,23 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
   }, [selectedCell, grid, findCellAnchor]);
 
   // 셀 선택 / 편집 모드 전환 시 포커스 제어
+  // 핵심: 탐색 모드(!isEditing)에서도 포커스를 TD 대신 선택된 셀의 textarea에 상시 유지하여
+  // 비편집 요소(TD) -> 편집 요소(textarea)로의 포커스 전환 시 발생하는 macOS/브라우저 한글 IME 조합 버퍼 유실(자모 분리) 방지
   useEffect(() => {
     if (!selectedCell || activeTab !== 'grid') return;
     const activeEl = document.activeElement;
     if (activeEl?.getAttribute('data-formula-bar') === 'true') return;
 
     const key = `${selectedCell.r}_${selectedCell.c}`;
-    if (isEditing) {
-      const textarea = textareaRefs.current[key];
-      if (textarea && document.activeElement !== textarea) {
-        textarea.focus();
+    const textarea = textareaRefs.current[key];
+    if (textarea) {
+      if (document.activeElement !== textarea) {
+        textarea.focus({ preventScroll: true });
         const len = textarea.value.length;
         textarea.setSelectionRange(len, len);
       }
-    } else {
       const cellEl = cellRefs.current[key];
-      if (cellEl && document.activeElement !== cellEl) {
-        cellEl.focus({ preventScroll: true });
-        cellEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      }
+      cellEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
   }, [selectedCell, isEditing, activeTab]);
 
@@ -246,13 +244,49 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
     showAlert(`${lines.length}행 범위의 데이터가 표에 붙여넣어졌습니다.`);
   };
 
-  // 탐색 모드 (TD) 키보드 이벤트
-  const handleTdKeyDown = (e: React.KeyboardEvent<HTMLTableCellElement>, r: number, c: number) => {
-    // 편집 모드 중이거나 내부 텍스트에어리어에서 발생한 이벤트는 TD에서 가로채지 않음
-    if (isEditing || e.target !== e.currentTarget) return;
-    if (e.nativeEvent.isComposing) return;
+  // 셀 키보드 이벤트 (textarea 상시 포커스 기반 처리로 탐색 모드 -> 한글 입력 시 자모 분리 완전 방지)
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLTextAreaElement | HTMLTableCellElement>,
+    r: number,
+    c: number
+  ) => {
+    // 텍스트에어리어 키 입력이 상위 TD/Table로 무분별하게 버블링되는 것 방지
+    e.stopPropagation();
 
-    // 클립보드 복사 (Ctrl+C / Cmd+C)
+    // 1. 편집 모드 (isEditing === true) 상태의 키 제어
+    if (isEditing) {
+      // 한글 조합 중(isComposing)일 때는 Enter 등으로 인한 조기 편집 종료 방지
+      if (e.nativeEvent.isComposing) return;
+
+      if (e.key === 'Enter') {
+        if (e.shiftKey || e.altKey) {
+          // Shift+Enter / Alt+Enter: 줄바꿈 허용 (기본 동작 유지)
+          return;
+        }
+        // Enter 단독: 편집 완료 후 아래 셀로 이동
+        e.preventDefault();
+        setIsEditing(false);
+        moveDirection('down');
+      } else if (e.key === 'Tab') {
+        // Tab: 편집 완료 후 다음 열로 이동
+        e.preventDefault();
+        setIsEditing(false);
+        if (e.shiftKey) moveShiftTab();
+        else moveTab();
+      } else if (e.key === 'Escape') {
+        // Esc: 편집 모드 종료 (탐색 모드로 복귀)
+        e.preventDefault();
+        setIsEditing(false);
+      } else if (e.key === 'F2') {
+        // F2: 편집 모드 토글 (탐색 모드로 복귀)
+        e.preventDefault();
+        setIsEditing(false);
+      }
+      return;
+    }
+
+    // 2. 탐색 모드 (!isEditing) 상태의 키 제어
+    // (1) 클립보드 복사 (Ctrl+C / Cmd+C)
     if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
       e.preventDefault();
       const text = grid[r]?.[c]?.text ?? '';
@@ -263,7 +297,7 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
       return;
     }
 
-    // 클립보드 잘라내기 (Ctrl+X / Cmd+X)
+    // (2) 클립보드 잘라내기 (Ctrl+X / Cmd+X)
     if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
       e.preventDefault();
       const text = grid[r]?.[c]?.text ?? '';
@@ -275,8 +309,9 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
       return;
     }
 
-    // 클립보드 붙여넣기 (Ctrl+V / Cmd+V fallback)
+    // (3) 클립보드 붙여넣기 (Ctrl+V / Cmd+V)
     if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
       if (navigator?.clipboard?.readText) {
         navigator.clipboard
           .readText()
@@ -290,96 +325,59 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
       return;
     }
 
+    // (4) 방향키 및 셀 내비게이션
     switch (e.key) {
       case 'ArrowUp':
         e.preventDefault();
         moveDirection('up');
-        break;
+        return;
       case 'ArrowDown':
         e.preventDefault();
         moveDirection('down');
-        break;
+        return;
       case 'ArrowLeft':
         e.preventDefault();
         moveDirection('left');
-        break;
+        return;
       case 'ArrowRight':
         e.preventDefault();
         moveDirection('right');
-        break;
+        return;
       case 'Tab':
         e.preventDefault();
         if (e.shiftKey) moveShiftTab();
         else moveTab();
-        break;
+        return;
       case 'Enter':
         e.preventDefault();
         if (e.shiftKey) moveDirection('up');
         else moveDirection('down');
-        break;
+        return;
       case 'F2':
         e.preventDefault();
         setIsEditing(true);
-        break;
+        return;
       case 'Delete':
       case 'Backspace':
         e.preventDefault();
         handleCellChange(r, c, '');
-        break;
+        return;
       case 'Escape':
         e.preventDefault();
-        break;
+        return;
       default:
-        // 탐색 모드에서 타이핑 시작 시 (영문, 숫자, 한글 IME 포함): 기존 내용을 덮어쓰지 않고 편집 모드로 진입하여 이어 입력
+        // 일반 문자 타이핑 시작 시 (영문, 숫자, 기호, 한글 IME 포함):
+        // 핵심: 포커스 이동이나 selection 변경 없이 오직 isEditing만 true로 켜고 이벤트를 통과시켜,
+        // 브라우저의 기본 타이핑 및 macOS IME 조합 세션(compositionstart)이 단절되지 않고 깨끗하게 이어지도록 함!
         if (
-          (e.key.length === 1 || e.key === 'Process' || e.nativeEvent.isComposing) &&
           !e.ctrlKey &&
           !e.metaKey &&
-          !e.altKey
+          !e.altKey &&
+          (e.key.length === 1 || e.key === 'Process' || e.nativeEvent.isComposing)
         ) {
           setIsEditing(true);
-          const key = `${r}_${c}`;
-          const textarea = textareaRefs.current[key];
-          if (textarea) {
-            textarea.focus();
-            const len = textarea.value.length;
-            textarea.setSelectionRange(len, len);
-          }
         }
         break;
-    }
-  };
-
-  // 편집 모드 (Textarea) 키보드 이벤트
-  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 텍스트에어리어 키 입력이 상위 TD로 버블링되어 셀 내용이 덮어써지거나 IME 자음이 중복 입력되는 현상 방지
-    e.stopPropagation();
-
-    if (e.nativeEvent.isComposing) return;
-
-    if (e.key === 'Enter') {
-      if (e.shiftKey || e.altKey) {
-        // Shift+Enter / Alt+Enter: 줄바꿈 허용 (기본 동작)
-        return;
-      }
-      // Enter 단독: 편집 완료 후 아래 셀로 이동
-      e.preventDefault();
-      setIsEditing(false);
-      moveDirection('down');
-    } else if (e.key === 'Tab') {
-      // Tab: 편집 완료 후 다음 열로 이동
-      e.preventDefault();
-      setIsEditing(false);
-      if (e.shiftKey) moveShiftTab();
-      else moveTab();
-    } else if (e.key === 'Escape') {
-      // Esc: 편집 취소 및 탐색 모드 복귀
-      e.preventDefault();
-      setIsEditing(false);
-    } else if (e.key === 'F2') {
-      // F2 토글
-      e.preventDefault();
-      setIsEditing(false);
     }
   };
 
@@ -990,12 +988,12 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
                         const isHeader = r === 0;
 
                         return (
-                          <td
+                            <td
                             key={c}
                             ref={(el) => {
                               cellRefs.current[`${r}_${c}`] = el;
                             }}
-                            tabIndex={0}
+                            tabIndex={-1}
                             colSpan={cell.colSpan && cell.colSpan > 1 ? cell.colSpan : undefined}
                             rowSpan={cell.rowSpan && cell.rowSpan > 1 ? cell.rowSpan : undefined}
                             onClick={() => {
@@ -1010,7 +1008,7 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
                               setSelectedCell({ r, c });
                               setIsEditing(true);
                             }}
-                            onKeyDown={(e) => handleTdKeyDown(e, r, c)}
+                            onKeyDown={(e) => handleCellKeyDown(e, r, c)}
                             className={`border border-slate-300 dark:border-slate-700 transition relative align-top outline-hidden select-none ${
                               isLargeView ? 'min-w-[200px] p-2' : 'min-w-[150px] p-1.5'
                             } ${
@@ -1028,9 +1026,32 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
                                 textareaRefs.current[`${r}_${c}`] = el;
                               }}
                               value={cell.text}
-                              readOnly={!isEditing}
+                              readOnly={!isSelected}
                               onChange={(e) => handleCellChange(r, c, e.target.value)}
-                              onKeyDown={handleTextareaKeyDown}
+                              onKeyDown={(e) => handleCellKeyDown(e, r, c)}
+                              onCopy={(e) => {
+                                if (isEditing) return;
+                                const text = cell.text ?? '';
+                                e.clipboardData.setData('text/plain', text);
+                                e.preventDefault();
+                                showAlert(`셀 내용 복사됨: "${text.length > 20 ? text.slice(0, 20) + '...' : text}"`);
+                              }}
+                              onCut={(e) => {
+                                if (isEditing) return;
+                                const text = cell.text ?? '';
+                                e.clipboardData.setData('text/plain', text);
+                                handleCellChange(r, c, '');
+                                e.preventDefault();
+                                showAlert('셀 내용이 잘라내기 되었습니다.');
+                              }}
+                              onPaste={(e) => {
+                                if (isEditing) return;
+                                const text = e.clipboardData.getData('text/plain');
+                                if (text) {
+                                  e.preventDefault();
+                                  applyPastedText(text, r, c);
+                                }
+                              }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedCell({ r, c });
@@ -1039,7 +1060,11 @@ export const TableEditorModal: React.FC<TableEditorModalProps> = ({
                               rows={Math.max(isLargeView ? 2 : 1, (cell.text.match(/\n/g) || []).length + 1)}
                               placeholder={isHeader ? `항목 ${c + 1}` : '내용'}
                               className={`w-full bg-transparent border-0 focus:outline-hidden resize-none rounded transition ${
-                                isEditing ? 'cursor-text select-text' : 'cursor-cell select-none pointer-events-none'
+                                isSelected
+                                  ? isEditing
+                                    ? 'cursor-text select-text caret-indigo-600 dark:caret-indigo-400'
+                                    : 'cursor-cell select-none caret-transparent pointer-events-none'
+                                  : 'cursor-pointer select-none pointer-events-none'
                               } ${
                                 isLargeView
                                   ? 'text-sm p-1.5 min-h-[48px]'

@@ -455,6 +455,7 @@ export function App() {
       if (selectedFolder === folderPath || selectedFolder?.startsWith(`${folderPath}/`)) {
         setSelectedFolder(null);
       }
+      await fetchFolders();
       await fetchPdfs();
     } catch (err: any) {
       showToast(err.message || '폴더 삭제 실패', true);
@@ -471,6 +472,7 @@ export function App() {
       } else {
         showToast(`일부 파일 이동 실패: ${res.errors.join(', ')}`, true);
       }
+      await fetchFolders();
       await fetchPdfs();
     } catch (err: any) {
       showToast(err.message || '파일 이동 실패', true);

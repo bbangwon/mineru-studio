@@ -149,29 +149,43 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  // Filtered documents (folder filter + status filter + search query)
-  const filteredList = useMemo(() => {
+  // Current Folder Scope Documents (only filtered by folder, before statusFilter and searchQuery)
+  const folderScopeDocs = useMemo(() => {
     return pdfList.filter((item) => {
-      // 1. Folder filtering
       if (selectedFolder !== null) {
         const itemFolder = item.folder || '';
-        // Exact match or subfolder inclusion
         if (selectedFolder === '') {
-          // 루트 '문서' 선택 시: 루트 직속 파일만 보거나, 또는 루트 직속 문서 매칭
+          // 루트 '문서' 선택 시: 루트 직속 파일만 매칭
           if (itemFolder !== '') return false;
         } else {
-          // 서브폴더 선택 시: 해당 폴더 직속이거나 하위 서브폴더인 경우
+          // 서브폴더 선택 시: 해당 폴더 직속이거나 하위 서브폴더 매칭
           if (itemFolder !== selectedFolder && !itemFolder.startsWith(`${selectedFolder}/`)) {
             return false;
           }
         }
       }
+      return true;
+    });
+  }, [pdfList, selectedFolder]);
 
-      // 2. Search query
+  // Status Counts for Tabs (scoped to currently selected folder)
+  const folderStatusCounts = useMemo(() => {
+    return {
+      all: folderScopeDocs.length,
+      completed: folderScopeDocs.filter((p) => p.etl_status === 'completed').length,
+      embedded: folderScopeDocs.filter((p) => p.is_embedded).length,
+      not_started: folderScopeDocs.filter((p) => p.etl_status === 'not_started').length,
+    };
+  }, [folderScopeDocs]);
+
+  // Filtered documents (folder filter + status filter + search query)
+  const filteredList = useMemo(() => {
+    return folderScopeDocs.filter((item) => {
+      // 1. Search query
       const matchName = item.filename.toLowerCase().includes(searchQuery.toLowerCase());
       if (!matchName) return false;
 
-      // 3. Status filter
+      // 2. Status filter
       if (statusFilter === 'all') return true;
       if (statusFilter === 'completed') return item.etl_status === 'completed';
       if (statusFilter === 'running') return item.etl_status === 'running';
@@ -179,7 +193,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       if (statusFilter === 'embedded') return !!item.is_embedded;
       return true;
     });
-  }, [pdfList, searchQuery, statusFilter, selectedFolder]);
+  }, [folderScopeDocs, searchQuery, statusFilter]);
 
   // 파싱 완료된 대상 파일 목록 (필터된 목록 기준)
   const completedDocsInFiltered = useMemo(() => {
@@ -738,7 +752,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
-              전체 ({pdfList.length})
+              전체 ({folderStatusCounts.all})
             </button>
             <button
               type="button"
@@ -749,7 +763,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
-              파싱 완료 ({pdfList.filter((p) => p.etl_status === 'completed').length})
+              파싱 완료 ({folderStatusCounts.completed})
             </button>
             <button
               type="button"
@@ -760,7 +774,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
-              Qdrant 색인됨 ({pdfList.filter((p) => p.is_embedded).length})
+              Qdrant 색인됨 ({folderStatusCounts.embedded})
             </button>
             <button
               type="button"
@@ -771,7 +785,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
-              미변환 ({pdfList.filter((p) => p.etl_status === 'not_started').length})
+              미변환 ({folderStatusCounts.not_started})
             </button>
           </div>
 

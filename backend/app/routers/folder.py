@@ -209,7 +209,7 @@ async def delete_folder(
         shutil.rmtree(target)
         return {
             "success": True,
-            "message": f"폴더 '{req.folder_path}'가 삭제되었습니다.",
+            "message": f"폴더 '{target_path_str}'가 삭제되었습니다.",
             "evacuated_count": len(evacuated_files),
             "evacuated_files": evacuated_files,
         }

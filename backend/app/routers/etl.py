@@ -15,6 +15,7 @@ from backend.app.common import (
     DOCS_DIR,
     _doc_stats_cache,
     find_latest_content_list,
+    find_pdf_path,
     get_pdf_page_count,
     normalize_text,
 )
@@ -54,10 +55,9 @@ class MergedExportRequest(BaseModel):
 
 @router.delete("/{filename}")
 async def reset_etl_by_filename(filename: str, delete_vectors: bool = True):
-    """PDF 원본은 유지하고, ETL 파싱 산출물과 벡터 색인만 초기화하여 미변환 상태로 복원"""
-    target = DOCS_DIR / filename
-    extra = BASE_DIR / "pdfs" / filename
-    if not target.exists() and not extra.exists():
+    """PDF 원본은 유지하고, ETL 파싱 산출물과 벡터 색인만 초기화하여 미변환 상태로 복원 (서브폴더 지원)"""
+    target = find_pdf_path(filename)
+    if not target or not target.exists():
         raise HTTPException(status_code=404, detail=f"문서 '{filename}'을 찾을 수 없습니다.")
 
     res = clean_document_artifacts(filename, delete_pdf=False, delete_vectors=delete_vectors)

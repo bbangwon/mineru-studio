@@ -30,6 +30,10 @@ import {
   saveParserConfig,
   resetParserConfig,
   reindexEtlResult,
+  getFolderTree,
+  createFolder,
+  deleteFolder,
+  movePdfFiles,
 } from './api/client';
 import { reindexEtlData } from './utils/idUtils';
 import { normalizeEtlData, isLegalDoc } from './utils/etlUtils';
@@ -42,6 +46,7 @@ import type {
   ParentChunk,
   JobStatusResponse,
   ParseRequestParams,
+  FolderNode,
 } from './types';
 
 export function App() {
@@ -51,8 +56,12 @@ export function App() {
   const [globalStats, setGlobalStats] = useState<GlobalStats | undefined>(undefined);
   const [selectedPdf, setSelectedPdf] = useState<string>('');
   const selectedPdfRef = useRef(selectedPdf);
-  selectedPdfRef.current = selectedPdf;
   const [isUploading, setIsUploading] = useState(false);
+
+  // Folder states
+  const [folderRootNode, setFolderRootNode] = useState<FolderNode | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [isLoadingFolders, setIsLoadingFolders] = useState(false);
 
   const [engine, setEngine] = useState('pipeline');
   const [method, setMethod] = useState('auto');
@@ -181,6 +190,18 @@ export function App() {
   };
 
   // 1. Initial Data Fetching
+  const fetchFolders = useCallback(async () => {
+    try {
+      setIsLoadingFolders(true);
+      const res = await getFolderTree();
+      setFolderRootNode(res.root);
+    } catch (err: any) {
+      console.warn('폴더 트리 로드 실패:', err);
+    } finally {
+      setIsLoadingFolders(false);
+    }
+  }, []);
+
   const fetchPdfs = useCallback(async () => {
     try {
       const data = await getPdfList();
@@ -204,11 +225,12 @@ export function App() {
         }
         return next;
       });
+      fetchFolders();
     } catch (err: any) {
       console.error(err);
       showToast('PDF 목록을 불러오는 중 오류 발생', true);
     }
-  }, []);
+  }, [fetchFolders]);
 
   const fetchSample = useCallback(async (targetDoc?: string) => {
     setIsLoadingEtl(true);
@@ -394,10 +416,11 @@ export function App() {
   };
 
   // 3. Upload PDF Handler
-  const handleUploadPdf = async (file: File) => {
+  const handleUploadPdf = async (file: File, folder?: string) => {
     setIsUploading(true);
     try {
-      const res = await uploadPdf(file);
+      const uploadTargetFolder = folder ?? (selectedFolder || undefined);
+      const res = await uploadPdf(file, uploadTargetFolder);
       showToast(`PDF 업로드 성공: ${res.filename} (${res.total_pages}p)`);
       await fetchPdfs();
       await handleSelectPdf(res.filename);
@@ -408,8 +431,51 @@ export function App() {
     }
   };
 
-  const handleDropUploadPdf = async (file: File) => {
-    await handleUploadPdf(file);
+  const handleDropUploadPdf = async (file: File, folder?: string) => {
+    await handleUploadPdf(file, folder);
+  };
+
+  // Folder Action Handlers
+  const handleCreateFolder = async (_parentPath: string, fullPath: string) => {
+    try {
+      const res = await createFolder(fullPath);
+      showToast(res.message);
+      await fetchFolders();
+      setSelectedFolder(res.path);
+    } catch (err: any) {
+      showToast(err.message || '폴더 생성 실패', true);
+      throw err;
+    }
+  };
+
+  const handleDeleteFolder = async (folderPath: string) => {
+    try {
+      const res = await deleteFolder(folderPath, '');
+      showToast(res.message);
+      if (selectedFolder === folderPath || selectedFolder?.startsWith(`${folderPath}/`)) {
+        setSelectedFolder(null);
+      }
+      await fetchPdfs();
+    } catch (err: any) {
+      showToast(err.message || '폴더 삭제 실패', true);
+      throw err;
+    }
+  };
+
+  const handleMovePdfFiles = async (filenames: string[], targetFolder: string) => {
+    try {
+      const res = await movePdfFiles(filenames, targetFolder);
+      if (res.success) {
+        const destName = targetFolder ? `'${targetFolder}'` : "'문서 (최상위)'";
+        showToast(`${res.moved_count}개 문서가 ${destName} 폴더로 이동되었습니다.`);
+      } else {
+        showToast(`일부 파일 이동 실패: ${res.errors.join(', ')}`, true);
+      }
+      await fetchPdfs();
+    } catch (err: any) {
+      showToast(err.message || '파일 이동 실패', true);
+      throw err;
+    }
   };
 
   // 3-1. Delete PDF Document completely
@@ -813,6 +879,13 @@ export function App() {
             isSavingParserConfig={isSavingParserConfig}
             onDeletePdf={handleDeletePdfDocument}
             onResetEtl={handleResetEtlDocument}
+            folderRootNode={folderRootNode}
+            selectedFolder={selectedFolder}
+            onSelectFolder={setSelectedFolder}
+            onCreateFolder={handleCreateFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onMovePdfFiles={handleMovePdfFiles}
+            isLoadingFolders={isLoadingFolders}
           />
         ) : activeTab === 'studio' ? (
           /* Chunk Studio Mode: 3-Column Focus IDE Workspace */

@@ -31,10 +31,10 @@ class JobManager:
 
     def get_active_pdf_path(self) -> Optional[Path]:
         if self.current_selected_pdf_name:
-            p1 = DOCS_DIR / self.current_selected_pdf_name
-            if p1.exists():
+            p1 = find_pdf_path(self.current_selected_pdf_name)
+            if p1 and p1.exists():
                 return p1
-        pdf_files = list(DOCS_DIR.glob("*.pdf"))
+        pdf_files = list(DOCS_DIR.rglob("*.pdf"))
         if pdf_files:
             self.current_selected_pdf_name = pdf_files[0].name
             return pdf_files[0]

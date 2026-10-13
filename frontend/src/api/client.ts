@@ -7,6 +7,7 @@ import type {
   BackupListResponse,
   CreateBackupRequest,
   RestoreBackupResponse,
+  FolderTreeResponse,
 } from '../types';
 
 export async function getPdfList(): Promise<PdfListResponse> {
@@ -29,16 +30,19 @@ export async function selectPdf(filename: string): Promise<{ success: boolean; c
   return res.json();
 }
 
-export async function uploadPdf(file: File): Promise<{
+export async function uploadPdf(file: File, folder?: string): Promise<{
   success: boolean;
   filename: string;
+  folder?: string;
+  relative_path?: string;
   total_pages: number;
   size_bytes: number;
 }> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await fetch('/api/pdf/upload', {
+  const url = folder ? `/api/pdf/upload?folder=${encodeURIComponent(folder)}` : '/api/pdf/upload';
+  const res = await fetch(url, {
     method: 'POST',
     body: formData,
   });
@@ -543,6 +547,58 @@ export async function uploadBackup(
   }
   return res.json();
 }
+
+export async function getFolderTree(): Promise<FolderTreeResponse> {
+  const res = await fetch('/api/pdf/folders');
+  if (!res.ok) {
+    throw new Error('폴더 목록을 불러오지 못했습니다.');
+  }
+  return res.json();
+}
+
+export async function createFolder(folderPath: string): Promise<{ success: boolean; message: string; path: string }> {
+  const res = await fetch('/api/pdf/folders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder_path: folderPath }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '폴더 생성에 실패했습니다.');
+  }
+  return res.json();
+}
+
+export async function deleteFolder(
+  folderPath: string,
+  evacuateTo: string = ''
+): Promise<{ success: boolean; message: string; evacuated_count: number }> {
+  const res = await fetch(`/api/pdf/folders/${encodeURIComponent(folderPath)}?evacuate_to=${encodeURIComponent(evacuateTo)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '폴더 삭제에 실패했습니다.');
+  }
+  return res.json();
+}
+
+export async function movePdfFiles(
+  filenames: string[],
+  targetFolder: string
+): Promise<{ success: boolean; moved_count: number; moved: any[]; errors: string[] }> {
+  const res = await fetch('/api/pdf/folders/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filenames, target_folder: targetFolder }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '파일 이동에 실패했습니다.');
+  }
+  return res.json();
+}
+
 
 
 

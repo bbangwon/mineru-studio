@@ -18,6 +18,7 @@ from backend.app.common import (
     _doc_stats_cache,
     extract_pipeline_meta_from_path,
     find_latest_content_list,
+    find_pdf_path,
     get_embedded_doc_status,
     get_pdf_page_count,
     normalize_text,
@@ -86,11 +87,16 @@ def clean_document_artifacts(filename: str, delete_pdf: bool = True, delete_vect
 
     # 5. 원본 PDF 파일 삭제 (완전 삭제 요청 시)
     if delete_pdf:
-        targets = [DOCS_DIR / filename, BASE_DIR / "pdfs" / filename]
-        fn_norm = normalize_text(filename)
-        for cand in list(DOCS_DIR.glob("*.pdf")) + list((BASE_DIR / "pdfs").glob("*.pdf")):
-            if normalize_text(cand.name) == fn_norm and cand not in targets:
-                targets.append(cand)
+        targets = []
+        found_target = find_pdf_path(filename)
+        if found_target:
+            targets.append(found_target)
+
+        fn_norm = normalize_text(Path(filename).name)
+        if DOCS_DIR.exists():
+            for cand in DOCS_DIR.rglob("*.pdf"):
+                if normalize_text(cand.name) == fn_norm and cand not in targets:
+                    targets.append(cand)
 
         for p in targets:
             if p.exists():
@@ -100,8 +106,8 @@ def clean_document_artifacts(filename: str, delete_pdf: bool = True, delete_vect
                 except Exception as e:
                     logger.error(f"PDF 파일 삭제 실패 {p}: {e}")
 
-        if normalize_text(job_manager.current_selected_pdf_name) == normalize_text(filename):
-            remaining_pdfs = [p.name for p in DOCS_DIR.glob("*.pdf")]
+        if normalize_text(job_manager.current_selected_pdf_name) == fn_norm:
+            remaining_pdfs = [p.name for p in DOCS_DIR.rglob("*.pdf")]
             job_manager.current_selected_pdf_name = remaining_pdfs[0] if remaining_pdfs else None
 
     return {
@@ -116,12 +122,12 @@ def clean_document_artifacts(filename: str, delete_pdf: bool = True, delete_vect
 
 @router.get("/list")
 async def list_pdfs():
-    """사용 가능한 모든 PDF 파일 목록과 상세 ETL/인덱싱 상태 및 통계 반환"""
+    """사용 가능한 모든 PDF 파일 목록과 상세 ETL/인덱싱 상태 및 통계 반환 (모든 서브폴더 재귀 검색)"""
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    pdf_files = list(DOCS_DIR.glob("*.pdf"))
+    pdf_files = list(DOCS_DIR.rglob("*.pdf"))
     extra_docs = BASE_DIR / "pdfs"
-    if extra_docs.exists():
-        for f in extra_docs.glob("*.pdf"):
+    if extra_docs.exists() and extra_docs != DOCS_DIR:
+        for f in extra_docs.rglob("*.pdf"):
             if not any(p.name == f.name for p in pdf_files):
                 pdf_files.append(f)
 
@@ -322,9 +328,24 @@ async def list_pdfs():
         if is_embedded:
             total_embedded_count += 1
 
+        rel_folder = ""
+        try:
+            rel_parent = str(p.parent.relative_to(DOCS_DIR))
+            if rel_parent != ".":
+                rel_folder = normalize_text(rel_parent)
+        except ValueError:
+            pass
+
+        try:
+            rel_path = normalize_text(str(p.relative_to(DOCS_DIR)))
+        except ValueError:
+            rel_path = p.name
+
         items.append(
             {
                 "filename": p.name,
+                "folder": rel_folder,
+                "relative_path": rel_path,
                 "size_bytes": size_bytes,
                 "total_pages": pages,
                 "is_current": (p.name == job_manager.current_selected_pdf_name),
@@ -360,47 +381,51 @@ async def list_pdfs():
 
 @router.post("/select")
 async def select_pdf(req: SelectPdfRequest):
-    """활성 파싱 대상 PDF 변경"""
-    norm_name = unicodedata.normalize("NFC", req.filename)
-    target = DOCS_DIR / norm_name
-    if not target.exists():
-        target = DOCS_DIR / req.filename
-    if not target.exists():
-        extra = BASE_DIR / "pdfs" / norm_name
-        if extra.exists():
-            target = extra
-        elif (BASE_DIR / "pdfs" / req.filename).exists():
-            target = BASE_DIR / "pdfs" / req.filename
-        else:
-            req_norm = normalize_text(req.filename)
-            matched = [p for p in DOCS_DIR.glob("*.pdf") if normalize_text(p.name) == req_norm]
-            if matched:
-                target = matched[0]
-            else:
-                raise HTTPException(status_code=404, detail="PDF file not found")
+    """활성 파싱 대상 PDF 변경 (서브폴더 내 문서 지원)"""
+    target = find_pdf_path(req.filename)
+    if not target or not target.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found")
     job_manager.current_selected_pdf_name = target.name
     pages = get_pdf_page_count(target)
     return {"success": True, "current": target.name, "total_pages": pages}
 
 
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
-    """신규 PDF 파일 업로드 및 자동 활성화 (NFC 정규화 적용)"""
+async def upload_pdf(file: UploadFile = File(...), folder: Optional[str] = None):
+    """신규 PDF 파일 업로드 및 자동 활성화 (지정 서브폴더 업로드 및 NFC 정규화 적용)"""
     clean_filename = unicodedata.normalize("NFC", file.filename)
     if not clean_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    save_path = DOCS_DIR / clean_filename
+    target_dir = DOCS_DIR
+    if folder:
+        norm_folder = normalize_text(folder).strip().strip("/")
+        if norm_folder:
+            target_dir = (DOCS_DIR / norm_folder).resolve()
+            docs_resolved = DOCS_DIR.resolve()
+            if not (target_dir == docs_resolved or str(target_dir).startswith(str(docs_resolved) + os.sep)):
+                raise HTTPException(status_code=400, detail="유효하지 않은 대상 폴더 경로입니다.")
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    save_path = target_dir / clean_filename
     with open(save_path, "wb") as f:
         content = await file.read()
         f.write(content)
 
     job_manager.current_selected_pdf_name = clean_filename
     pages = get_pdf_page_count(save_path)
+    rel_folder = ""
+    try:
+        if save_path.parent != DOCS_DIR:
+            rel_folder = normalize_text(str(save_path.parent.relative_to(DOCS_DIR)))
+    except ValueError:
+        pass
+
     return {
         "success": True,
         "filename": clean_filename,
+        "folder": rel_folder,
+        "relative_path": normalize_text(str(save_path.relative_to(DOCS_DIR))),
         "total_pages": pages,
         "size_bytes": save_path.stat().st_size,
     }
@@ -408,10 +433,9 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @router.delete("/{filename}")
 async def delete_pdf_document(filename: str, delete_vectors: bool = True):
-    """PDF 파일 및 모든 파싱 산출물, Qdrant 벡터 색인을 완전히 삭제"""
-    target = DOCS_DIR / filename
-    extra = BASE_DIR / "pdfs" / filename
-    if not target.exists() and not extra.exists():
+    """PDF 파일 및 모든 파싱 산출물, Qdrant 벡터 색인을 완전히 삭제 (서브폴더 지원)"""
+    target = find_pdf_path(filename)
+    if not target or not target.exists():
         raise HTTPException(status_code=404, detail=f"문서 '{filename}'을 찾을 수 없습니다.")
 
     res = clean_document_artifacts(filename, delete_pdf=True, delete_vectors=delete_vectors)

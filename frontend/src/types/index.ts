@@ -8,6 +8,8 @@ export interface PdfItemStats {
 
 export interface PdfItem {
   filename: string;
+  folder?: string;
+  relative_path?: string;
   size_bytes: number;
   total_pages: number;
   is_current: boolean;
@@ -26,6 +28,20 @@ export interface PdfItem {
   } | null;
   stats?: PdfItemStats | null;
   last_modified?: string | null;
+}
+
+export interface FolderNode {
+  name: string;
+  path: string;
+  depth: number;
+  doc_count: number;
+  total_doc_count: number;
+  subfolders: FolderNode[];
+}
+
+export interface FolderTreeResponse {
+  root: FolderNode;
+  total_documents: number;
 }
 
 export interface QdrantStatus {

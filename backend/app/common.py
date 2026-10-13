@@ -132,3 +132,40 @@ def get_embedded_doc_status(ttl_seconds: float = 4.0, force_refresh: bool = Fals
 def get_embedded_doc_names() -> set[str]:
     names, _ = get_embedded_doc_status()
     return names
+
+
+def find_pdf_path(filename_or_relpath: str) -> Optional[Path]:
+    """
+    루트 또는 서브폴더(N-depth)에 위치한 PDF 파일 경로 탐색
+    1. 직접 상대 경로 매칭 (DOCS_DIR / filename_or_relpath)
+    2. NFC 정규화 비교
+    3. 전체 서브폴더 재귀 검색 (rglob)
+    """
+    if not filename_or_relpath:
+        return None
+
+    clean = normalize_text(filename_or_relpath).strip("/")
+    direct = DOCS_DIR / clean
+    if direct.exists() and direct.is_file():
+        return direct
+
+    # Base filename match
+    base_name = Path(clean).name
+    norm_base = normalize_text(base_name)
+    norm_clean = normalize_text(clean)
+
+    if DOCS_DIR.exists():
+        for p in DOCS_DIR.rglob("*.pdf"):
+            rel_str = normalize_text(str(p.relative_to(DOCS_DIR)))
+            if rel_str == norm_clean or normalize_text(p.name) == norm_base:
+                return p
+
+    # Fallback to extra docs dir (BASE_DIR / pdfs) if different
+    extra_docs = BASE_DIR / "pdfs"
+    if extra_docs.exists() and extra_docs != DOCS_DIR:
+        for p in extra_docs.rglob("*.pdf"):
+            rel_str = normalize_text(str(p.relative_to(extra_docs)))
+            if rel_str == norm_clean or normalize_text(p.name) == norm_base:
+                return p
+
+    return None

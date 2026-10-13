@@ -27,8 +27,10 @@ import {
   Loader2,
   Archive,
 } from 'lucide-react';
-import type { PdfItem, GlobalStats, JobStatusResponse, ParseRequestParams } from '../types';
+import type { PdfItem, GlobalStats, JobStatusResponse, ParseRequestParams, FolderNode } from '../types';
 import { RunEtlModal } from './RunEtlModal';
+import { FolderTreePane } from './FolderTreePane';
+import { GripVertical, Folder as FolderIcon } from 'lucide-react';
 
 interface DashboardOverviewProps {
   pdfList: PdfItem[];
@@ -36,8 +38,8 @@ interface DashboardOverviewProps {
   selectedPdf: string;
   onSelectPdf: (filename: string) => Promise<void>;
   onSelectAndOpenStudio: (filename: string) => Promise<void>;
-  onUploadPdf: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
-  onDropUploadPdf: (file: File) => Promise<void>;
+  onUploadPdf: (e: React.ChangeEvent<HTMLInputElement>, folder?: string) => Promise<void>;
+  onDropUploadPdf: (file: File, folder?: string) => Promise<void>;
   isUploading: boolean;
   onRunEtl: (params?: string | Partial<ParseRequestParams>, saveAsDefault?: boolean) => Promise<void>;
   isParsing: boolean;
@@ -47,6 +49,14 @@ interface DashboardOverviewProps {
   onOpenBackup?: () => void;
   onDeletePdf?: (filename: string, deleteVectors: boolean) => Promise<void>;
   onResetEtl?: (filename: string, deleteVectors: boolean) => Promise<void>;
+  // Folder tree management props
+  folderRootNode?: FolderNode | null;
+  selectedFolder?: string | null;
+  onSelectFolder?: (folder: string | null) => void;
+  onCreateFolder?: (parentPath: string, newFolderName: string) => Promise<void>;
+  onDeleteFolder?: (folderPath: string) => Promise<void>;
+  onMovePdfFiles?: (filenames: string[], targetFolder: string) => Promise<void>;
+  isLoadingFolders?: boolean;
   // Parser settings pass-through
   engine: string;
   setEngine: (v: string) => void;
@@ -105,6 +115,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   onSaveParserConfig,
   onResetParserConfig,
   isSavingParserConfig = false,
+  folderRootNode,
+  selectedFolder = null,
+  onSelectFolder,
+  onCreateFolder,
+  onDeleteFolder,
+  onMovePdfFiles,
+  isLoadingFolders = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'running' | 'not_started' | 'embedded'>('all');
@@ -118,6 +135,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const [isEtlModalOpen, setIsEtlModalOpen] = useState(false);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [isExportingMerged, setIsExportingMerged] = useState(false);
+  const [isMoveFolderModalOpen, setIsMoveFolderModalOpen] = useState(false);
+  const [moveTargetFolder, setMoveTargetFolder] = useState<string>('');
+  const [movingFilenames, setMovingFilenames] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // File size formatter
@@ -129,12 +149,29 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  // Filtered documents
+  // Filtered documents (folder filter + status filter + search query)
   const filteredList = useMemo(() => {
     return pdfList.filter((item) => {
+      // 1. Folder filtering
+      if (selectedFolder !== null) {
+        const itemFolder = item.folder || '';
+        // Exact match or subfolder inclusion
+        if (selectedFolder === '') {
+          // 루트 '문서' 선택 시: 루트 직속 파일만 보거나, 또는 루트 직속 문서 매칭
+          if (itemFolder !== '') return false;
+        } else {
+          // 서브폴더 선택 시: 해당 폴더 직속이거나 하위 서브폴더인 경우
+          if (itemFolder !== selectedFolder && !itemFolder.startsWith(`${selectedFolder}/`)) {
+            return false;
+          }
+        }
+      }
+
+      // 2. Search query
       const matchName = item.filename.toLowerCase().includes(searchQuery.toLowerCase());
       if (!matchName) return false;
 
+      // 3. Status filter
       if (statusFilter === 'all') return true;
       if (statusFilter === 'completed') return item.etl_status === 'completed';
       if (statusFilter === 'running') return item.etl_status === 'running';
@@ -142,7 +179,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       if (statusFilter === 'embedded') return !!item.is_embedded;
       return true;
     });
-  }, [pdfList, searchQuery, statusFilter]);
+  }, [pdfList, searchQuery, statusFilter, selectedFolder]);
 
   // 파싱 완료된 대상 파일 목록 (필터된 목록 기준)
   const completedDocsInFiltered = useMemo(() => {
@@ -664,10 +701,32 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
       )}
 
-      {/* Main Document Pipeline Management Table Card */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-2xs transition-colors">
-        {/* Table Toolbar & Filters */}
-        <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3.5">
+      {/* 2-Column Layout: Left Folder Tree & Right Document Table */}
+      <div className="flex flex-col lg:flex-row items-start gap-4">
+        {/* Left: Folder Tree Sidebar */}
+        <div className="w-full lg:w-64 xl:w-72 shrink-0">
+          <FolderTreePane
+            rootNode={folderRootNode || null}
+            selectedFolder={selectedFolder}
+            onSelectFolder={(folder) => onSelectFolder?.(folder)}
+            onCreateFolder={async (parent, name) => {
+              const fullPath = parent ? `${parent}/${name}` : name;
+              await onCreateFolder?.(parent, fullPath);
+            }}
+            onDeleteFolder={async (path) => {
+              await onDeleteFolder?.(path);
+            }}
+            onDropFiles={async (filenames, target) => {
+              await onMovePdfFiles?.(filenames, target);
+            }}
+            isLoading={isLoadingFolders}
+          />
+        </div>
+
+        {/* Right: Main Document Pipeline Management Table Card */}
+        <div className="flex-1 w-full min-w-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-2xs transition-colors">
+          {/* Table Toolbar & Filters */}
+          <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3.5">
           {/* Status Filter Tabs */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
             <button
@@ -753,6 +812,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                onClick={() => {
+                  setMovingFilenames(Array.from(selectedDocs));
+                  setMoveTargetFolder(selectedFolder || '');
+                  setIsMoveFolderModalOpen(true);
+                }}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                title="선택된 문서들을 다른 폴더로 이동"
+              >
+                <FolderIcon className="w-3.5 h-3.5 text-indigo-500" />
+                <span>폴더 이동 ({selectedDocs.size})</span>
+              </button>
+              <button
+                type="button"
                 onClick={handleClearSelectedDocs}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
@@ -827,6 +899,17 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   return (
                     <tr
                       key={item.filename}
+                      draggable={true}
+                      onDragStart={(e) => {
+                        const targets = selectedDocs.has(item.filename)
+                          ? Array.from(selectedDocs)
+                          : [item.filename];
+                        e.dataTransfer.setData(
+                          'application/json',
+                          JSON.stringify({ filenames: targets })
+                        );
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
                       className={`group transition-colors ${
                         selectedDocs.has(item.filename)
                           ? 'bg-indigo-50/70 dark:bg-indigo-950/30'
@@ -835,20 +918,28 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                           : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'
                       }`}
                     >
-                      {/* Selection Checkbox */}
-                      <td className="py-3.5 px-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={selectedDocs.has(item.filename)}
-                          onChange={() => handleToggleSelectDoc(item.filename)}
-                          disabled={item.etl_status !== 'completed'}
-                          title={
-                            item.etl_status !== 'completed'
-                              ? '파싱 완료된 문서만 선택할 수 있습니다'
-                              : '통합 JSONL 다운로드 대상 선택'
-                          }
-                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed align-middle"
-                        />
+                      {/* Selection Checkbox & Drag Handle */}
+                      <td className="py-3.5 px-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <span
+                            className="cursor-grab text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-300 active:cursor-grabbing transition-colors"
+                            title="드래그하여 원하는 폴더로 이동"
+                          >
+                            <GripVertical className="w-3.5 h-3.5" />
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={selectedDocs.has(item.filename)}
+                            onChange={() => handleToggleSelectDoc(item.filename)}
+                            disabled={item.etl_status !== 'completed'}
+                            title={
+                              item.etl_status !== 'completed'
+                                ? '파싱 완료된 문서만 선택할 수 있습니다'
+                                : '통합 JSONL 다운로드 대상 선택'
+                            }
+                            className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed align-middle"
+                          />
+                        </div>
                       </td>
                       {/* 1. PDF Info */}
                       <td className="py-3.5 px-4">
@@ -874,6 +965,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                               >
                                 {item.filename}
                               </button>
+                              {item.folder && (
+                                <span
+                                  onClick={() => onSelectFolder?.(item.folder || null)}
+                                  className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium shrink-0 cursor-pointer hover:border-indigo-400"
+                                  title={`폴더: ${item.folder} (클릭 시 해당 폴더로 필터)`}
+                                >
+                                  📁 {item.folder}
+                                </span>
+                              )}
                               {isCurrent && (
                                 <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 font-semibold shrink-0">
                                   현재 작업 중
@@ -1037,6 +1137,20 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                             <ChevronRight className="w-3.5 h-3.5" />
                           </button>
 
+                          {/* Move to Folder Button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMovingFilenames([item.filename]);
+                              setMoveTargetFolder(item.folder || '');
+                              setIsMoveFolderModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors shadow-2xs cursor-pointer"
+                            title="문서를 다른 폴더로 이동"
+                          >
+                            <FolderIcon className="w-3.5 h-3.5" />
+                          </button>
+
                           {/* ETL Parse Button */}
                           <button
                             type="button"
@@ -1090,6 +1204,96 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </table>
         </div>
       </div>
+    </div>
+
+      {/* Move Document to Folder Modal */}
+      {isMoveFolderModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full shadow-2xl p-5">
+            <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm">
+                <FolderIcon className="w-4 h-4" />
+                <span>폴더로 문서 이동</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMoveFolderModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 mb-3">
+              선택한 <span className="font-bold text-slate-900 dark:text-white">{movingFilenames.length}개 문서</span>를 이동할 대상 폴더를 선택하세요.
+            </p>
+
+            <div className="space-y-1 max-h-56 overflow-y-auto mb-4 border border-slate-200 dark:border-slate-800 rounded-xl p-2 bg-slate-50 dark:bg-slate-950/60 text-xs">
+              {/* 루트 '문서' 옵션 */}
+              <label className="flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-950/40">
+                <input
+                  type="radio"
+                  name="targetFolder"
+                  value=""
+                  checked={moveTargetFolder === ''}
+                  onChange={() => setMoveTargetFolder('')}
+                  className="w-3.5 h-3.5 text-indigo-600"
+                />
+                <span className="font-bold text-slate-800 dark:text-slate-200">📁 문서 (최상위 루트)</span>
+              </label>
+
+              {/* 모든 서브폴더 평면 나열 옵션 */}
+              {(() => {
+                const listAllFolders = (node: FolderNode, acc: { name: string; path: string; depth: number }[] = []) => {
+                  if (node.path) {
+                    acc.push({ name: node.name, path: node.path, depth: node.depth });
+                  }
+                  (node.subfolders || []).forEach((c) => listAllFolders(c, acc));
+                  return acc;
+                };
+                const folders = folderRootNode ? listAllFolders(folderRootNode) : [];
+                return folders.map((f) => (
+                  <label
+                    key={f.path}
+                    style={{ paddingLeft: `${f.depth * 14 + 8}px` }}
+                    className="flex items-center gap-2 p-1.5 rounded-lg cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                  >
+                    <input
+                      type="radio"
+                      name="targetFolder"
+                      value={f.path}
+                      checked={moveTargetFolder === f.path}
+                      onChange={() => setMoveTargetFolder(f.path)}
+                      className="w-3.5 h-3.5 text-indigo-600"
+                    />
+                    <span className="text-slate-700 dark:text-slate-300">📁 {f.path}</span>
+                  </label>
+                ));
+              })()}
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsMoveFolderModalOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsMoveFolderModalOpen(false);
+                  await onMovePdfFiles?.(movingFilenames, moveTargetFolder);
+                }}
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-xs"
+              >
+                이동 실행
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete / Reset Confirmation Modal */}
       {deleteTargetItem && (

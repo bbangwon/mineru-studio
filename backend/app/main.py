@@ -27,6 +27,7 @@ from backend.app.routers.qdrant import router as qdrant_router
 from backend.app.routers.llm import router as llm_router
 from backend.app.routers.parser import router as parser_router
 from backend.app.routers.backup import router as backup_router
+from backend.app.routers.folder import router as folder_router
 
 # 하위 호환성을 위한 심볼 재내보내기 (기존 테스트 및 외부 참조용)
 mineru_svc = job_manager.mineru_svc
@@ -87,6 +88,8 @@ if (FRONTEND_DIST_DIR / "assets").exists():
     )
 
 # 라우터 등록
+# Note: /api/pdf/folders는 /api/pdf/{filename}보다 먼저 등록되어야 라우팅 섀도잉(경로 충돌)이 발생하지 않음
+app.include_router(folder_router)
 app.include_router(pdf_router)
 app.include_router(etl_router)
 app.include_router(qdrant_router)

@@ -4,6 +4,8 @@
 
 Apple Silicon(Mac M-series)의 **MLX/Metal** 하드웨어 가속 환경에서 고속 구동됩니다.
 
+📖 **[상세 사용자 매뉴얼 & 스크린샷 가이드 바로가기 (docs/USER_GUIDE.md)](docs/USER_GUIDE.md)**
+
 ---
 
 ## 🚀 RAG ETL 핵심 기능

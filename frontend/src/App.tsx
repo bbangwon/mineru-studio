@@ -51,10 +51,17 @@ import type {
 
 export function App() {
   const { theme, setTheme } = useTheme();
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const searchParams = new URLSearchParams(window.location.search);
+  const initialTab = searchParams.get('tab') as ActiveTab;
+  const initialModal = searchParams.get('modal');
+  const initialPdf = searchParams.get('pdf') || '';
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(
+    initialTab === 'studio' || initialTab === 'search' || initialTab === 'dashboard' ? initialTab : 'dashboard'
+  );
   const [pdfList, setPdfList] = useState<PdfItem[]>([]);
   const [globalStats, setGlobalStats] = useState<GlobalStats | undefined>(undefined);
-  const [selectedPdf, setSelectedPdf] = useState<string>('');
+  const [selectedPdf, setSelectedPdf] = useState<string>(initialPdf);
   const selectedPdfRef = useRef(selectedPdf);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -92,13 +99,13 @@ export function App() {
   const [toast, setToast] = useState<{ message: string; isError?: boolean } | null>(null);
 
   // LLM Refine & Config States
-  const [isLLMConfigOpen, setIsLLMConfigOpen] = useState(false);
+  const [isLLMConfigOpen, setIsLLMConfigOpen] = useState(initialModal === 'llm');
 
   // Backup & Restore State
-  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(initialModal === 'backup');
 
   // Qdrant & Indexing States
-  const [isQdrantConfigOpen, setIsQdrantConfigOpen] = useState(false);
+  const [isQdrantConfigOpen, setIsQdrantConfigOpen] = useState(initialModal === 'qdrant');
   const [qdrantCollection, setQdrantCollection] = useState<string>('');
   const [isIndexingQdrant, setIsIndexingQdrant] = useState(false);
   const [qdrantIndexProgress, setQdrantIndexProgress] = useState<{ msg: string; pct: number } | null>(null);

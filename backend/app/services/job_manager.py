@@ -10,6 +10,7 @@ from backend.app.common import (
     DOCS_DIR,
     _doc_stats_cache,
     find_latest_content_list,
+    find_pdf_path,
     get_pdf_page_count,
     normalize_text,
 )

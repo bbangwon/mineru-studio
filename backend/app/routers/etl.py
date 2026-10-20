@@ -333,8 +333,7 @@ async def start_etl_job(req: ParseRequest, background_tasks: BackgroundTasks):
     """비동기 백그라운드 태스크 등록: 즉시 task_id 반환"""
     pdf_path = None
     if req.filename:
-        p1 = DOCS_DIR / req.filename
-        pdf_path = p1 if p1.exists() else None
+        pdf_path = find_pdf_path(req.filename)
 
     if not pdf_path:
         pdf_path = job_manager.get_active_pdf_path()

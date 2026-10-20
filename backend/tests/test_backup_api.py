@@ -50,12 +50,22 @@ def test_backup_create_and_list():
         assert dl_res.headers["content-type"] == "application/zip"
         assert dl_res.content.startswith(b"PK\x03\x04")
 
-        # 5. Restore backup with safety backup enabled
-        restore_res = client.post(f"/api/backup/{backup_id}/restore", json={"create_safety_backup": True})
+        # 5. Restore backup with safety backup enabled and wipe_existing
+        # Create a temporary dummy file to ensure wipe_existing removes it
+        dummy_extra = Path(BASE_DIR) / "pdfs" / "temp_dummy_to_be_wiped.pdf"
+        dummy_extra.write_text("dummy to be wiped")
+        assert dummy_extra.exists()
+
+        restore_res = client.post(
+            f"/api/backup/{backup_id}/restore",
+            json={"create_safety_backup": True, "wipe_existing": True},
+        )
         assert restore_res.status_code == 200
         restore_data = restore_res.json()
         assert restore_data["success"] is True
         assert restore_data["result"]["backup_id"] == backup_id
+        assert restore_data["result"]["wipe_existing"] is True
+        assert not dummy_extra.exists()  # Ensure it was wiped!
         safety_id = restore_data["result"]["safety_backup_id"]
         assert safety_id is not None
         assert safety_id.startswith("safety_")

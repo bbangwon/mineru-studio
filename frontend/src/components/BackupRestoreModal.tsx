@@ -62,6 +62,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
   // Restore confirm modal state
   const [restoreTarget, setRestoreTarget] = useState<BackupItem | null>(null);
   const [createSafetyBeforeRestore, setCreateSafetyBeforeRestore] = useState(true);
+  const [wipeExistingBeforeRestore, setWipeExistingBeforeRestore] = useState(true);
   const [isRestoring, setIsRestoring] = useState(false);
 
   // Delete confirm state
@@ -175,7 +176,11 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
     setActionSuccess(null);
 
     try {
-      const res = await restoreBackup(restoreTarget.backup_id, createSafetyBeforeRestore);
+      const res = await restoreBackup(
+        restoreTarget.backup_id,
+        createSafetyBeforeRestore,
+        wipeExistingBeforeRestore
+      );
       if (res.success) {
         setActionSuccess(
           `'${restoreTarget.name}' 백업으로 원복되었습니다. (복원 파일: ${res.result.restored_files_count}개)`
@@ -222,7 +227,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
     setActionSuccess(null);
 
     try {
-      const res = await uploadBackup(uploadFile, restoreImmediately);
+      const res = await uploadBackup(uploadFile, restoreImmediately, wipeExistingBeforeRestore);
       if (res.success) {
         setActionSuccess(
           restoreImmediately
@@ -762,7 +767,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
               </div>
 
               {/* Immediate Restore Option */}
-              <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 space-y-2.5">
                 <label className="flex items-start gap-2.5 cursor-pointer">
                   <input
                     type="checkbox"
@@ -780,6 +785,25 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                     </p>
                   </div>
                 </label>
+
+                {restoreImmediately && (
+                  <label className="flex items-start gap-2.5 cursor-pointer pt-2 border-t border-slate-200/60 dark:border-slate-800/60">
+                    <input
+                      type="checkbox"
+                      checked={wipeExistingBeforeRestore}
+                      onChange={(e) => setWipeExistingBeforeRestore(e.target.checked)}
+                      className="mt-0.5 rounded text-rose-600 focus:ring-rose-500"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-rose-800 dark:text-rose-300">
+                        기존 파일 완전히 삭제 후 덮어쓰기 (클린 원복)
+                      </span>
+                      <p className="text-[11px] text-rose-600/80 dark:text-rose-400 mt-0.5">
+                        기존 PDF 및 산출물을 완전히 삭제하여 백업 파일과 중복되지 않도록 깔끔하게 덮어씁니다.
+                      </p>
+                    </div>
+                  </label>
+                )}
               </div>
 
               {/* Submit Button */}
@@ -857,6 +881,25 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                     </span>
                     <p className="text-[11px] text-amber-700/80 dark:text-amber-400 mt-0.5">
                       원복 직전 현재 데이터를 별도 백업하므로 언제든 원복 이전으로 되돌릴 수 있습니다.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/50">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={wipeExistingBeforeRestore}
+                    onChange={(e) => setWipeExistingBeforeRestore(e.target.checked)}
+                    className="mt-0.5 rounded text-rose-600 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-rose-900 dark:text-rose-200">
+                      기존 파일 완전히 삭제 후 덮어쓰기 (클린 원복)
+                    </span>
+                    <p className="text-[11px] text-rose-700/80 dark:text-rose-400 mt-0.5">
+                      백업 시점 상태와 100% 동일하게 일치시키기 위해 기존 PDF 및 산출물을 완전히 삭제한 후 복원합니다. (기존 잔여 파일과의 중복 방지)
                     </p>
                   </div>
                 </label>

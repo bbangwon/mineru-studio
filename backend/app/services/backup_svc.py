@@ -271,13 +271,82 @@ class BackupService:
             logger.error(f"백업 삭제 실패 ({backup_id}): {e}")
             return False
 
+    def _wipe_existing_files(self, manifest: Optional[Dict[str, Any]]):
+        """
+        원복 전 기존 파일들을 완전히 삭제(클린업).
+        백업 타입에 따라 안전하고 정확하게 정리합니다.
+        """
+        backup_type = manifest.get("backup_type", "workspace") if manifest else "workspace"
+        target_doc = manifest.get("target_doc") if manifest else None
+        includes_vector_db = manifest.get("includes_vector_db", False) if manifest else False
+
+        if backup_type == "document" and target_doc:
+            target_norm = self._normalize_name(Path(target_doc).name)
+            target_stem = self._normalize_name(Path(target_doc).stem)
+
+            # 1) pdfs 디렉터리 내 해당 문서 삭제
+            if self.docs_dir.exists():
+                for p in list(self.docs_dir.rglob("*.pdf")):
+                    if self._normalize_name(p.name) == target_norm:
+                        try:
+                            p.unlink()
+                            logger.info(f"단일 문서 복원 전 기존 PDF 삭제: {p}")
+                        except Exception as e:
+                            logger.warning(f"기존 PDF 삭제 실패 ({p}): {e}")
+
+            # 2) output 디렉터리 내 해당 문서 파이프라인 결과 삭제
+            if self.output_dir.exists():
+                for item in self.output_dir.iterdir():
+                    if item.is_dir() and item.name not in {"qdrant_db", "test_qdrant_db"}:
+                        for sub in list(item.iterdir()):
+                            if sub.is_dir() and self._normalize_name(sub.name) == target_stem:
+                                try:
+                                    shutil.rmtree(sub)
+                                    logger.info(f"단일 문서 복원 전 기존 산출물 폴더 삭제: {sub}")
+                                except Exception as e:
+                                    logger.warning(f"기존 산출물 폴더 삭제 실패 ({sub}): {e}")
+        else:
+            # 작업공간 전체 백업 복원
+            # 1) pdfs 디렉터리 정리
+            if self.docs_dir.exists():
+                for item in self.docs_dir.iterdir():
+                    if item.name == ".gitkeep":
+                        continue
+                    try:
+                        if item.is_dir():
+                            shutil.rmtree(item)
+                        else:
+                            item.unlink()
+                        logger.info(f"작업공간 복원 전 기존 PDF 항목 삭제: {item}")
+                    except Exception as e:
+                        logger.warning(f"기존 PDF 항목 삭제 실패 ({item}): {e}")
+
+            # 2) output 디렉터리 정리
+            if self.output_dir.exists():
+                for item in self.output_dir.iterdir():
+                    if item.name == ".gitkeep":
+                        continue
+                    # 백업에 벡터 DB가 포함되어 있지 않다면 기존 벡터 DB 보존
+                    if item.name in {"qdrant_db", "test_qdrant_db"} and not includes_vector_db:
+                        continue
+                    try:
+                        if item.is_dir():
+                            shutil.rmtree(item)
+                        else:
+                            item.unlink()
+                        logger.info(f"작업공간 복원 전 기존 산출물 항목 삭제: {item}")
+                    except Exception as e:
+                        logger.warning(f"기존 산출물 항목 삭제 실패 ({item}): {e}")
+
     def restore_backup(
         self,
         backup_id: str,
         create_safety_backup: bool = True,
+        wipe_existing: bool = False,
     ) -> Dict[str, Any]:
         """
         선택한 백업으로부터 작업공간 또는 문서 상태 원복(복원)
+        - wipe_existing: True일 경우 기존 파일들을 완전히 삭제하고 백업 상태로 덮어씁니다.
         """
         zip_path = self.get_backup_path(backup_id)
         if not zip_path or not zip_path.exists():
@@ -306,7 +375,12 @@ class BackupService:
             except Exception as e:
                 logger.warning(f"안전 백업 생성 중 경고 발생 (원복은 계속 진행): {e}")
 
-        # 3. 파일 압축 해제 및 복원
+        # 3. 기존 파일 완전 삭제(wipe) 수행 (옵션 지정 시)
+        if wipe_existing:
+            logger.info(f"백업 복원 전 기존 파일 삭제(wipe_existing) 수행: {backup_id}")
+            self._wipe_existing_files(manifest)
+
+        # 4. 파일 압축 해제 및 복원
         restored_files_count = 0
         base_dir_resolved = self.base_dir.resolve()
 
@@ -329,7 +403,7 @@ class BackupService:
                     shutil.copyfileobj(source, target)
                 restored_files_count += 1
 
-        logger.info(f"백업 복원 완료: {backup_id} (복원된 파일: {restored_files_count}개)")
+        logger.info(f"백업 복원 완료: {backup_id} (복원된 파일: {restored_files_count}개, 기존 파일 삭제: {wipe_existing})")
 
         return {
             "success": True,
@@ -337,7 +411,8 @@ class BackupService:
             "restored_files_count": restored_files_count,
             "safety_backup_id": safety_manifest.get("backup_id") if safety_manifest else None,
             "manifest": manifest,
-            "message": f"성공적으로 복원되었습니다. (복원 파일: {restored_files_count}개)",
+            "wipe_existing": wipe_existing,
+            "message": f"성공적으로 복원되었습니다. (복원 파일: {restored_files_count}개" + (", 기존 파일 클린업 완료)" if wipe_existing else ")"),
         }
 
     def import_backup_file(
@@ -345,6 +420,7 @@ class BackupService:
         file_bytes: bytes,
         original_filename: str,
         restore_immediately: bool = False,
+        wipe_existing: bool = False,
     ) -> Dict[str, Any]:
         """
         외부에서 업로드된 백업 ZIP 파일을 저장하고 필요시 즉시 복원
@@ -414,7 +490,7 @@ class BackupService:
 
         restore_result = None
         if restore_immediately:
-            restore_result = self.restore_backup(backup_id, create_safety_backup=True)
+            restore_result = self.restore_backup(backup_id, create_safety_backup=True, wipe_existing=wipe_existing)
 
         return {
             "success": True,

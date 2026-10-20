@@ -26,6 +26,7 @@ class CreateBackupRequest(BaseModel):
 
 class RestoreBackupRequest(BaseModel):
     create_safety_backup: Optional[bool] = True
+    wipe_existing: Optional[bool] = False
 
 
 @router.get("/list")
@@ -68,9 +69,14 @@ async def api_get_backup(backup_id: str):
 async def api_restore_backup(backup_id: str, req: Optional[RestoreBackupRequest] = None):
     """선택한 백업으로부터 작업공간 또는 문서 원복(복원)"""
     create_safety = True if req is None else bool(req.create_safety_backup)
+    wipe_existing = False if req is None else bool(req.wipe_existing)
 
     try:
-        res = backup_svc.restore_backup(backup_id=backup_id, create_safety_backup=create_safety)
+        res = backup_svc.restore_backup(
+            backup_id=backup_id,
+            create_safety_backup=create_safety,
+            wipe_existing=wipe_existing,
+        )
         # Reset in-memory cache
         job_manager.latest_etl_result = None
         job_manager.latest_content_list_path = None
@@ -108,7 +114,11 @@ async def api_download_backup(backup_id: str):
 
 
 @router.post("/upload")
-async def api_upload_backup(file: UploadFile = File(...), restore_immediately: bool = False):
+async def api_upload_backup(
+    file: UploadFile = File(...),
+    restore_immediately: bool = False,
+    wipe_existing: bool = False,
+):
     """외부 백업 ZIP 파일을 업로드하여 등록하고, 필요 시 즉시 원복"""
     if not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="ZIP 형식의 백업 파일만 업로드할 수 있습니다.")
@@ -119,6 +129,7 @@ async def api_upload_backup(file: UploadFile = File(...), restore_immediately: b
             file_bytes=content,
             original_filename=file.filename,
             restore_immediately=restore_immediately,
+            wipe_existing=wipe_existing,
         )
 
         if restore_immediately:

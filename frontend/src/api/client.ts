@@ -503,12 +503,16 @@ export async function createBackup(
 
 export async function restoreBackup(
   backupId: string,
-  createSafetyBackup: boolean = true
+  createSafetyBackup: boolean = true,
+  wipeExisting: boolean = false
 ): Promise<RestoreBackupResponse> {
   const res = await fetch(`/api/backup/${encodeURIComponent(backupId)}/restore`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ create_safety_backup: createSafetyBackup }),
+    body: JSON.stringify({
+      create_safety_backup: createSafetyBackup,
+      wipe_existing: wipeExisting,
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -532,15 +536,19 @@ export async function deleteBackup(
 
 export async function uploadBackup(
   file: File,
-  restoreImmediately: boolean = false
+  restoreImmediately: boolean = false,
+  wipeExisting: boolean = false
 ): Promise<{ success: boolean; backup_id: string; manifest: BackupItem; restored: boolean; message: string }> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await fetch(`/api/backup/upload?restore_immediately=${restoreImmediately}`, {
-    method: 'POST',
-    body: formData,
-  });
+  const res = await fetch(
+    `/api/backup/upload?restore_immediately=${restoreImmediately}&wipe_existing=${wipeExisting}`,
+    {
+      method: 'POST',
+      body: formData,
+    }
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || '백업 파일 업로드에 실패했습니다.');

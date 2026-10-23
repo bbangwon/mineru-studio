@@ -114,6 +114,16 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
             </span>
           ) : null}
 
+          {chunk.summary && (
+            <span
+              className="bg-purple-50 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
+              title={chunk.summary}
+            >
+              <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+              요약 보유
+            </span>
+          )}
+
           <CopyableBadge
             id={chunk.chunk_id}
             type="chunk"
@@ -218,6 +228,18 @@ export const ChunkCard: React.FC<ChunkCardProps> = ({
       </div>
 
       {/* Content */}
+      {chunk.summary && (
+        <div className="mt-2.5 p-2.5 rounded-lg bg-purple-50/60 dark:bg-purple-950/40 border border-purple-200/80 dark:border-purple-900/60 text-xs">
+          <div className="flex items-center gap-1 text-[10px] font-bold text-purple-800 dark:text-purple-300 mb-1">
+            <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+            <span>핵심 요약</span>
+          </div>
+          <p className="text-slate-700 dark:text-slate-300 leading-relaxed font-sans line-clamp-2">
+            {chunk.summary}
+          </p>
+        </div>
+      )}
+
       {isTable ? (
         <div className="space-y-2 mt-2.5">
           <div

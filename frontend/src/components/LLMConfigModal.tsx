@@ -20,6 +20,7 @@ import {
   getLLMConfig,
   saveLLMConfig,
   getDefaultSystemPrompt,
+  getDefaultSummaryPrompt,
   testLLMConnection,
   getLLMModels,
 } from '../api/client';
@@ -50,8 +51,10 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
     max_tokens: 2048,
     timeout: 60,
     system_prompt: '',
+    summary_prompt: '',
   });
 
+  const [promptTab, setPromptTab] = useState<'refine' | 'summary'>('refine');
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -84,10 +87,21 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
     try {
       const res = await getDefaultSystemPrompt();
       setConfig((prev) => ({ ...prev, system_prompt: res.default_prompt }));
-      setSuccessMsg('기본 권장 시스템 프롬프트로 복원되었습니다.');
+      setSuccessMsg('기본 권장 교정 시스템 프롬프트로 복원되었습니다.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err.message || '기본 프롬프트를 불러오지 못했습니다.');
+    }
+  };
+
+  const handleRestoreDefaultSummaryPrompt = async () => {
+    try {
+      const res = await getDefaultSummaryPrompt();
+      setConfig((prev) => ({ ...prev, summary_prompt: res.default_prompt }));
+      setSuccessMsg('기본 권장 청크 요약 시스템 프롬프트로 복원되었습니다.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || '기본 요약 프롬프트를 불러오지 못했습니다.');
     }
   };
 
@@ -376,32 +390,86 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
             </p>
           </div>
 
-          {/* 5. System Prompt Editor */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="font-bold text-slate-700 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-indigo-600" />
-                텍스트 정제 시스템 프롬프트 (System Prompt)
-              </label>
-              <button
-                type="button"
-                onClick={handleRestoreDefaultPrompt}
-                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer hover:underline"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>기본 권장 프롬프트로 복원</span>
-              </button>
+          {/* 5. System Prompt Editor (Tabs: Refine / Summary) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPromptTab('refine')}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                    promptTab === 'refine'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>본문 교정 프롬프트</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPromptTab('summary')}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                    promptTab === 'summary'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>청크 요약 프롬프트</span>
+                </button>
+              </div>
+
+              {promptTab === 'refine' ? (
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaultPrompt}
+                  className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer hover:underline"
+                  title="기본 권장 교정 프롬프트로 복원합니다"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>교정 기본값 복원</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaultSummaryPrompt}
+                  className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer hover:underline"
+                  title="기본 권장 청크 요약 프롬프트로 복원합니다"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>요약 기본값 복원</span>
+                </button>
+              )}
             </div>
-            <textarea
-              rows={8}
-              value={config.system_prompt}
-              onChange={(e) => setConfig({ ...config, system_prompt: e.target.value })}
-              className="w-full font-sans text-xs p-3 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 leading-relaxed text-slate-800"
-              placeholder="시스템 프롬프트를 입력하세요..."
-            />
-            <p className="text-[11px] text-slate-400">
-              규칙: 원문 100% 보존, 단어 중간 개행 병합, 국립국어원 표준 띄어쓰기, 표 서식 보존
-            </p>
+
+            {promptTab === 'refine' ? (
+              <div className="space-y-1.5">
+                <textarea
+                  rows={8}
+                  value={config.system_prompt}
+                  onChange={(e) => setConfig({ ...config, system_prompt: e.target.value })}
+                  className="w-full font-sans text-xs p-3 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 leading-relaxed text-slate-800"
+                  placeholder="텍스트 교정 시스템 프롬프트를 입력하세요..."
+                />
+                <p className="text-[11px] text-slate-400">
+                  규칙: 원문 100% 보존, 단어 중간 개행 병합, 국립국어원 표준 띄어쓰기, 표 서식 보존
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <textarea
+                  rows={8}
+                  value={config.summary_prompt || ''}
+                  onChange={(e) => setConfig({ ...config, summary_prompt: e.target.value })}
+                  className="w-full font-sans text-xs p-3 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 leading-relaxed text-slate-800"
+                  placeholder="청크 요약 시스템 프롬프트를 입력하세요..."
+                />
+                <p className="text-[11px] text-slate-400">
+                  규칙: 핵심 정보 집약, 2~3문장(100~200자) 간결 요약, 마크다운 제목/불릿 지양하고 읽기 쉬운 줄글 출력
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Connection Test Result Card */}

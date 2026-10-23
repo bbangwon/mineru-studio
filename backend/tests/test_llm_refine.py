@@ -7,7 +7,9 @@ from backend.app.services.llm_config_svc import (
     get_llm_config,
     save_llm_config,
     get_default_system_prompt,
+    get_default_summary_prompt,
     DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_SUMMARY_PROMPT,
 )
 from backend.app.services.llm_refine_svc import (
     LLMRefineService,
@@ -23,6 +25,8 @@ def test_llm_config_defaults():
     assert cfg.max_tokens == 2048
     assert cfg.system_prompt == DEFAULT_SYSTEM_PROMPT
     assert get_default_system_prompt() == DEFAULT_SYSTEM_PROMPT
+    assert cfg.summary_prompt == DEFAULT_SUMMARY_PROMPT
+    assert get_default_summary_prompt() == DEFAULT_SUMMARY_PROMPT
 
 
 def test_clean_markdown_fence():
@@ -65,6 +69,66 @@ async def test_llm_refine_service_mocked():
         assert res["refined_text"] == "이것은 정상적으로 교정된 본문입니다."
         assert res["original_chars"] > 0
         assert res["refined_chars"] > 0
+
+
+@pytest.mark.anyio
+async def test_llm_refine_service_empty_response_guard():
+    svc = LLMRefineService()
+    cfg = LLMConfig(base_url="http://mock-llm/v1", model_name="gemma4:12b-mlx")
+
+    mock_response = httpx.Response(
+        status_code=200,
+        json={
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": ""},
+                    "finish_reason": "length",
+                }
+            ]
+        },
+        request=httpx.Request("POST", "http://mock-llm/v1/chat/completions"),
+    )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_response
+        with pytest.raises(RuntimeError) as exc_info:
+            await svc.refine_chunk_text(
+                text="정상적인 원문 텍스트가 있습니다.",
+                config=cfg,
+            )
+        assert "추론 토큰(max_tokens) 한도 초과" in str(exc_info.value)
+
+
+@pytest.mark.anyio
+async def test_llm_summarize_service_mocked():
+    svc = LLMRefineService()
+    cfg = LLMConfig(base_url="http://mock-llm/v1", model_name="gemma4:12b-mlx", temperature=0.0)
+
+    mock_response = httpx.Response(
+        status_code=200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "이 청크는 근골격계 질병의 조사 및 판정 지침을 요약한 내용입니다.",
+                    }
+                }
+            ]
+        },
+        request=httpx.Request("POST", "http://mock-llm/v1/chat/completions"),
+    )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_response
+        res = await svc.summarize_chunk_text(
+            text="제1장 총칙 본 지침은 산업재해보상보험법에 따른 근골격계 질병의 신속 공정한 처리를 목적으로 한다.",
+            config=cfg,
+        )
+        assert res["success"] is True
+        assert res["summary_text"] == "이 청크는 근골격계 질병의 조사 및 판정 지침을 요약한 내용입니다."
+        assert res["original_chars"] > 0
+        assert res["summary_chars"] > 0
 
 
 @pytest.mark.anyio

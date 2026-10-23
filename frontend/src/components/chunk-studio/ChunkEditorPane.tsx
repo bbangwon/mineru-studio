@@ -31,6 +31,7 @@ import {
   Download,
   CheckCircle2,
   ListPlus,
+  FileText,
 } from 'lucide-react';
 import type {
   ChildChunk,
@@ -124,6 +125,10 @@ export function ChunkEditorPane() {
     studioRefineError,
     studioDiffData,
     handleStudioRunAiRefine,
+    isStudioSummarizing,
+    studioSummarizeError,
+    handleStudioRunAiSummarize,
+    setSummarizeError,
     setOpenDiffChunkId,
   } = useChunkStudio();
 
@@ -868,6 +873,40 @@ export function ChunkEditorPane() {
                         </button>
                       )}
 
+                      {editorTab !== 'preview' && (
+                        <button
+                          type="button"
+                          onClick={handleStudioRunAiSummarize}
+                          disabled={isStudioSummarizing}
+                          className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shadow-2xs flex items-center gap-1 cursor-pointer disabled:opacity-50 transition"
+                          title="로컬 LLM을 사용하여 청크 본문의 핵심 내용을 요약합니다"
+                        >
+                          {isStudioSummarizing ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>AI 요약 중...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-3 h-3 text-pink-200" />
+                              <span>📝 AI 요약</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      {editorTab !== 'preview' && (activeChunk.summary === undefined || activeChunk.summary === null) && (
+                        <button
+                          type="button"
+                          onClick={() => handleFieldChange('summary', '')}
+                          className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                          title="요약 입력란을 열어 수동으로 작성합니다"
+                        >
+                          <Plus className="w-3 h-3 text-purple-500" />
+                          <span>+ 요약 입력</span>
+                        </button>
+                      )}
+
                       {editorTab !== 'preview' && !hasTableData(activeChunk) && (
                         <button
                           type="button"
@@ -906,6 +945,72 @@ export function ChunkEditorPane() {
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
+                    </div>
+                  )}
+
+                  {studioSummarizeError && (
+                    <div className="p-2 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-lg flex items-center justify-between text-xs">
+                      <span>{studioSummarizeError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSummarizeError(null)}
+                        className="text-rose-400 hover:text-rose-600 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Chunk Summary Card (Only shown when summary data exists or manually added) */}
+                  {activeChunk.summary !== undefined && activeChunk.summary !== null && (
+                    <div className="p-3 bg-purple-50/50 dark:bg-purple-950/30 rounded-xl border border-purple-200/80 dark:border-purple-900/50 space-y-1.5 animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                          <span className="text-xs font-bold text-purple-900 dark:text-purple-200">
+                            청크 핵심 요약 (Summary)
+                          </span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-semibold">
+                            {(activeChunk.summary || '').length}자
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={handleStudioRunAiSummarize}
+                            disabled={isStudioSummarizing}
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-purple-900/50 hover:bg-purple-100 dark:hover:bg-purple-800 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                            title="현재 본문 텍스트를 바탕으로 AI 요약을 다시 생성합니다"
+                          >
+                            {isStudioSummarizing ? (
+                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-2.5 h-2.5" />
+                            )}
+                            <span>재요약</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm('청크 요약을 삭제하시겠습니까?')) {
+                                handleFieldChange('summary', undefined);
+                              }
+                            }}
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-purple-900/50 hover:bg-rose-50 dark:hover:bg-rose-950 text-rose-600 dark:text-rose-400 border border-purple-200 dark:border-purple-800 flex items-center gap-0.5 cursor-pointer transition"
+                            title="요약 텍스트란 닫기 및 데이터 삭제"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                            <span>삭제</span>
+                          </button>
+                        </div>
+                      </div>
+                      <textarea
+                        value={activeChunk.summary || ''}
+                        onChange={(e) => handleFieldChange('summary', e.target.value)}
+                        rows={3}
+                        className="w-full text-xs p-2.5 bg-white dark:bg-slate-950 rounded-lg border border-purple-200 dark:border-purple-800/80 focus:outline-hidden focus:ring-2 focus:ring-purple-500 leading-relaxed text-slate-800 dark:text-slate-100 resize-y font-sans shadow-2xs placeholder-purple-300 dark:placeholder-purple-700"
+                        placeholder="청크 핵심 요약문을 입력하세요... (LLM 자동 생성 또는 직접 수정)"
+                      />
                     </div>
                   )}
 

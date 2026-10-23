@@ -141,41 +141,51 @@ class LLMRefineService:
             logger.warning(f"모델 목록 조회 중 오류 발생: {e}")
             return []
 
-    async def refine_chunk_text(
+    async def _post_chat(
         self,
-        text: str,
-        custom_prompt: Optional[str] = None,
-        config: Optional[LLMConfig] = None,
-    ) -> Dict[str, Any]:
-        """시스템 프롬프트 주입 후 청크 텍스트를 OpenAI 호환 LLM으로 교정합니다."""
-        cfg = config or get_llm_config()
+        cfg: LLMConfig,
+        messages: List[Dict[str, str]],
+    ) -> str:
+        """Ollama의 think=False 최적화 및 OpenAI 호환 API를 지원하는 공통 챗 호출 헬퍼"""
         base_url = cfg.base_url.rstrip("/")
         headers = self._build_headers(cfg.api_key)
 
-        system_prompt = (
-            custom_prompt.strip()
-            if (custom_prompt and custom_prompt.strip())
-            else cfg.system_prompt
-        )
+        # 1. Ollama 네이티브 엔드포인트 지원 (Thinking 모델의 무한 생각 루프 방지: think=False 적용)
+        if "11434" in base_url or "ollama" in base_url.lower():
+            ollama_url = re.sub(r"/v1/?$", "", base_url) + "/api/chat"
+            ollama_payload = {
+                "model": cfg.model_name,
+                "messages": messages,
+                "stream": False,
+                "think": False,
+                "options": {
+                    "temperature": cfg.temperature,
+                    "num_predict": cfg.max_tokens,
+                },
+            }
+            try:
+                async with httpx.AsyncClient(timeout=cfg.timeout) as client:
+                    res = await client.post(ollama_url, json=ollama_payload, headers=headers)
+                    if res.status_code == 200:
+                        data = res.json()
+                        raw = data.get("message", {}).get("content", "")
+                        if raw:
+                            return raw
+            except Exception as e:
+                logger.debug(f"Ollama 네이티브 /api/chat 호출 실패, OpenAI 호환 엔드포인트로 폴백: {e}")
 
+        # 2. 표준 OpenAI 호환 엔드포인트 호출 (/v1/chat/completions)
+        openai_url = f"{base_url}/chat/completions" if not base_url.endswith("/chat/completions") else base_url
         payload = {
             "model": cfg.model_name,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text},
-            ],
+            "messages": messages,
             "temperature": cfg.temperature,
             "max_tokens": cfg.max_tokens,
+            "think": False,
         }
 
-        start_time = time.perf_counter()
         async with httpx.AsyncClient(timeout=cfg.timeout) as client:
-            res = await client.post(
-                f"{base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-
+            res = await client.post(openai_url, json=payload, headers=headers)
             if res.status_code != 200:
                 err_msg = res.text
                 try:
@@ -184,28 +194,102 @@ class LLMRefineService:
                         err_msg = str(err_data["error"])
                 except Exception:
                     pass
-                raise RuntimeError(
-                    f"LLM 텍스트 교정 실패 (HTTP {res.status_code}): {err_msg}"
-                )
+                raise RuntimeError(f"LLM API 호출 실패 (HTTP {res.status_code}): {err_msg}")
 
             data = res.json()
-            elapsed_sec = time.perf_counter() - start_time
-
             choices = data.get("choices", [])
             if not choices or "message" not in choices[0]:
                 raise RuntimeError(f"LLM 응답에 텍스트가 없습니다: {data}")
 
+            finish_reason = choices[0].get("finish_reason")
             raw_content = choices[0]["message"].get("content", "")
-            refined = _clean_markdown_fence(raw_content)
 
-            return {
-                "success": True,
-                "original_text": text,
-                "refined_text": refined,
-                "elapsed_seconds": round(elapsed_sec, 2),
-                "original_chars": len(text),
-                "refined_chars": len(refined),
-            }
+            if not raw_content and finish_reason == "length":
+                raise RuntimeError(
+                    "LLM 추론 토큰(max_tokens) 한도 초과로 인해 텍스트가 생성되지 못했습니다. "
+                    "max_tokens를 늘리거나 비-추론 모델을 사용해 주세요."
+                )
+
+            return raw_content
+
+    async def refine_chunk_text(
+        self,
+        text: str,
+        custom_prompt: Optional[str] = None,
+        config: Optional[LLMConfig] = None,
+    ) -> Dict[str, Any]:
+        """시스템 프롬프트 주입 후 청크 텍스트를 OpenAI 호환 LLM으로 교정합니다."""
+        cfg = config or get_llm_config()
+
+        system_prompt = (
+            custom_prompt.strip()
+            if (custom_prompt and custom_prompt.strip())
+            else cfg.system_prompt
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ]
+
+        start_time = time.perf_counter()
+        raw_content = await self._post_chat(cfg, messages)
+        elapsed_sec = time.perf_counter() - start_time
+
+        refined = _clean_markdown_fence(raw_content)
+
+        # 안전 가드: 원문이 존재하는데 교정 결과가 빈 문자열인 경우 본문 전체 삭제 방지
+        if text.strip() and not refined.strip():
+            raise RuntimeError(
+                "LLM이 빈 교정 결과를 반환했습니다. 원문 유실(전체 삭제) 방지를 위해 교정을 중단했습니다."
+            )
+
+        return {
+            "success": True,
+            "original_text": text,
+            "refined_text": refined,
+            "elapsed_seconds": round(elapsed_sec, 2),
+            "original_chars": len(text),
+            "refined_chars": len(refined),
+        }
+
+    async def summarize_chunk_text(
+        self,
+        text: str,
+        custom_prompt: Optional[str] = None,
+        config: Optional[LLMConfig] = None,
+    ) -> Dict[str, Any]:
+        """요약 시스템 프롬프트 주입 후 청크 텍스트의 핵심 요약을 생성합니다."""
+        cfg = config or get_llm_config()
+
+        summary_prompt = (
+            custom_prompt.strip()
+            if (custom_prompt and custom_prompt.strip())
+            else cfg.summary_prompt
+        )
+
+        messages = [
+            {"role": "system", "content": summary_prompt},
+            {"role": "user", "content": text},
+        ]
+
+        start_time = time.perf_counter()
+        raw_content = await self._post_chat(cfg, messages)
+        elapsed_sec = time.perf_counter() - start_time
+
+        summary = _clean_markdown_fence(raw_content)
+
+        if text.strip() and not summary.strip():
+            raise RuntimeError("LLM이 빈 요약 결과를 반환했습니다.")
+
+        return {
+            "success": True,
+            "original_text": text,
+            "summary_text": summary,
+            "elapsed_seconds": round(elapsed_sec, 2),
+            "original_chars": len(text),
+            "summary_chars": len(summary),
+        }
 
     @staticmethod
     def build_rag_context(

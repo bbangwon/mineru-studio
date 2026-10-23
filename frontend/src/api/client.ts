@@ -278,6 +278,12 @@ export async function getDefaultSystemPrompt(): Promise<{ default_prompt: string
   return res.json();
 }
 
+export async function getDefaultSummaryPrompt(): Promise<{ default_prompt: string }> {
+  const res = await fetch('/api/llm/config/default-summary-prompt');
+  if (!res.ok) throw new Error('기본 요약 프롬프트를 불러오지 못했습니다.');
+  return res.json();
+}
+
 export async function getLLMModels(
   baseUrl?: string,
   apiKey?: string
@@ -318,6 +324,22 @@ export async function refineChunkText(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || '청크 텍스트 교정 실패');
+  }
+  return res.json();
+}
+
+export async function summarizeChunkText(
+  text: string,
+  customPrompt?: string
+): Promise<import('../types').LLMSummarizeResponse> {
+  const res = await fetch('/api/llm/summarize-chunk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, custom_prompt: customPrompt }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || '청크 요약 생성 실패');
   }
   return res.json();
 }

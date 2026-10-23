@@ -47,7 +47,7 @@ import {
   getChunkKind,
   hasTableData,
 } from '../utils/chunkKindUtils';
-import { refineChunkText } from '../api/client';
+import { refineChunkText, summarizeChunkText } from '../api/client';
 
 interface ChunkStudioProps {
   parentSections: ParentSection[];
@@ -1496,12 +1496,17 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   const [studioDiffDataByChunk, setStudioDiffDataByChunk] = useState<Record<string, LLMRefineResponse>>({});
   const [openDiffChunkId, setOpenDiffChunkId] = useState<string | null>(null);
 
+  // AI Summarization State
+  const [isStudioSummarizing, setIsStudioSummarizing] = useState(false);
+  const [summarizeError, setSummarizeError] = useState<{ chunkId: string; message: string } | null>(null);
+
   // 현재 활성 청크의 교정 Diff 데이터 (교정 이력이 있는 경우에만 유효)
   const studioDiffData = activeChunk ? studioDiffDataByChunk[activeChunk.chunk_id] || null : null;
   // 활성 청크의 Diff 모달 열림 여부
   const isStudioDiffOpen = Boolean(activeChunk && openDiffChunkId === activeChunk.chunk_id && studioDiffData);
   // 활성 청크의 에러 메시지
   const studioRefineError = activeChunk && refineError?.chunkId === activeChunk.chunk_id ? refineError.message : null;
+  const studioSummarizeError = activeChunk && summarizeError?.chunkId === activeChunk.chunk_id ? summarizeError.message : null;
 
   const handleStudioRunAiRefine = async () => {
     if (!activeChunk) return;
@@ -1524,6 +1529,26 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       setRefineError({ chunkId: currentChunkId, message: err.message || 'AI 교정 중 오류가 발생했습니다.' });
     } finally {
       setIsStudioRefining(false);
+    }
+  };
+
+  const handleStudioRunAiSummarize = async () => {
+    if (!activeChunk) return;
+    const currentChunkId = activeChunk.chunk_id;
+    const targetText = editorTab === 'raw_html' ? (activeChunk.raw_html || '') : (activeChunk.text || '');
+    if (!targetText.trim()) {
+      setSummarizeError({ chunkId: currentChunkId, message: '요약할 본문 텍스트가 비어 있습니다.' });
+      return;
+    }
+    setIsStudioSummarizing(true);
+    setSummarizeError(null);
+    try {
+      const res = await summarizeChunkText(targetText);
+      handleFieldChange('summary', res.summary_text);
+    } catch (err: any) {
+      setSummarizeError({ chunkId: currentChunkId, message: err.message || 'AI 요약 생성 중 오류가 발생했습니다.' });
+    } finally {
+      setIsStudioSummarizing(false);
     }
   };
 
@@ -1600,6 +1625,10 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     studioRefineError,
     studioDiffData,
     handleStudioRunAiRefine,
+    isStudioSummarizing,
+    studioSummarizeError,
+    handleStudioRunAiSummarize,
+    setSummarizeError,
     setOpenDiffChunkId,
     setRefineError,
     setIsBulkMetaModalOpen,

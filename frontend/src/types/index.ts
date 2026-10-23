@@ -102,6 +102,7 @@ export interface ParentChunk {
   child_chunk_ids: string[];       // 소속된 Child 청크 ID 목록
   page_range: [number, number];
   breadcrumbs?: string[];
+  summary?: string;                // 부모 청크 핵심 요약문
   is_edited?: boolean;
 }
 
@@ -169,6 +170,7 @@ export interface ChildChunk {
   is_edited?: boolean;
   is_ignored?: boolean;            // Vector DB 임베딩 제외 플래그
   parent_text?: string;            // 부모 청크 전체 문맥 텍스트
+  summary?: string;                // 청크 핵심 요약문
   metadata?: Record<string, any>;
 }
 
@@ -321,6 +323,7 @@ export interface LLMConfig {
   max_tokens: number;
   timeout?: number;
   system_prompt: string;
+  summary_prompt?: string;
 }
 
 export interface LLMTestResponse {
@@ -338,6 +341,15 @@ export interface LLMRefineResponse {
   elapsed_seconds: number;
   original_chars: number;
   refined_chars: number;
+}
+
+export interface LLMSummarizeResponse {
+  success: boolean;
+  original_text: string;
+  summary_text: string;
+  elapsed_seconds: number;
+  original_chars: number;
+  summary_chars: number;
 }
 
 // 6-1. RAG 질의응답 및 스트리밍 타입

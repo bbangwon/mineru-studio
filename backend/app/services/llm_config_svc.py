@@ -2,6 +2,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,19 @@ DEFAULT_SYSTEM_PROMPT = """당신은 학술/기술 문서 및 법률/비즈니�
 1. 원문의 모든 내용, 단어, 어휘, 기술 용어, 고유명사, 숫자, 어순을 100% 그대로 보존하십시오. 절대로 내용을 요약, 부연 설명, 해석, 삭제, 추가하지 마십시오.
 2. PDF 레이아웃으로 인해 단어 중간이나 문장 중간에서 부자연스럽게 잘린 비정상적인 줄바꿈(하이픈 개행 포함)을 찾아 자연스러운 한 줄 문단으로 병합하십시오.
 3. 의미상 문단 구분이 명확한 경우에만 적절한 빈 줄(Paragraph Break)을 유지하십시오.
-4. 국립국어원 표준 맞춤법 및 띄어쓰기 규정에 맞추어 비정상적인 띄어쓰기(붙여 쓰인 조사, 띄어 쓰인 복합명사 등)를 교정하십시오.
+4. 국립국어원 표준 맞춤법 및 띄어쓰기 규정에 맞추어 비정상적인 띄어쓰기(붙여 쓰인 조사, 띄어 쓰인 복합명사 등)를 교정하십시오. 단, 원문에 누락된 쉼표(,) 등의 문장부호는 임의로 추가하지 말고 원형을 유지하십시오.
 5. 표(Markdown Table / HTML Table), 코드 블록, 수식(LaTeX), 특수 기호는 서식을 깨뜨리지 말고 원형 그대로 유지하십시오.
-6. 출력은 어떠한 인사말, 설명, 마크다운 코드블록 따옴표(``` 등)도 포함하지 말고, 오직 교정된 순수 텍스트만 출력하십시오."""
+6. 중간 초안 작성(Drafting)이나 재검토를 반복하지 말고, 즉시 1회의 교정으로 최종 텍스트만 출력하십시오.
+7. 출력은 어떠한 인사말, 설명, 마크다운 코드블록 따옴표(``` 등)도 포함하지 말고, 오직 교정된 순수 텍스트만 출력하십시오."""
+
+DEFAULT_SUMMARY_PROMPT = """당신은 학술/기술 및 법률/비즈니스 문서 청크의 핵심 내용을 집약적으로 압축 요약하는 전문 AI 어시스턴트입니다.
+주어진 청크 텍스트를 분석하여 검색 증강 생성(RAG) 및 빠른 내용 파악을 위한 2~3문장(100~200자 내외)의 고품질 핵심 요약을 작성하십시오.
+
+[요약 규칙]
+1. 원문의 핵심 주제, 주요 규정/수치, 적용 대상을 정확히 포함하되, 원문을 그대로 재나열하지 말고 핵심 위주로 집약하여 서술하십시오.
+2. 분량은 반드시 2~3문장(100~200자 내외)으로 간결하게 작성하십시오. 원문과 분량이 비슷할 정도로 장황하게 늘려 쓰지 마십시오.
+3. 마크다운 제목(#, **굵은글씨 제목**)이나 불필요한 번호 매기기를 지양하고, 읽기 쉬운 완성된 줄글(문단)로 출력하십시오.
+4. 원문에 없는 사실을 지어내거나 추측하지 마십시오."""
 
 
 class LLMConfig(BaseModel):
@@ -52,11 +63,20 @@ class LLMConfig(BaseModel):
         default=DEFAULT_SYSTEM_PROMPT,
         description="텍스트 교정 전용 시스템 프롬프트",
     )
+    summary_prompt: str = Field(
+        default=DEFAULT_SUMMARY_PROMPT,
+        description="청크 요약 전용 시스템 프롬프트",
+    )
 
 
 def get_default_system_prompt() -> str:
     """기본 권장 시스템 프롬프트를 반환합니다."""
     return DEFAULT_SYSTEM_PROMPT
+
+
+def get_default_summary_prompt() -> str:
+    """기본 권장 청크 요약 시스템 프롬프트를 반환합니다."""
+    return DEFAULT_SUMMARY_PROMPT
 
 
 def get_llm_config() -> LLMConfig:

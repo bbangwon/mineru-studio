@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from backend.app.services.llm_config_svc import (
     LLMConfig,
     get_default_system_prompt,
+    get_default_summary_prompt,
     get_llm_config,
     save_llm_config,
 )
@@ -26,6 +27,11 @@ class LLMTestRequest(BaseModel):
 
 
 class RefineChunkRequest(BaseModel):
+    text: str
+    custom_prompt: Optional[str] = None
+
+
+class SummarizeChunkRequest(BaseModel):
     text: str
     custom_prompt: Optional[str] = None
 
@@ -50,6 +56,12 @@ async def api_save_llm_config(config: LLMConfig):
 async def api_get_default_prompt():
     """기본 시스템 프롬프트 텍스트 조회"""
     return {"default_prompt": get_default_system_prompt()}
+
+
+@router.get("/config/default-summary-prompt")
+async def api_get_default_summary_prompt():
+    """기본 청크 요약 시스템 프롬프트 텍스트 조회"""
+    return {"default_prompt": get_default_summary_prompt()}
 
 
 @router.get("/models")
@@ -103,6 +115,25 @@ async def api_refine_chunk(req: RefineChunkRequest):
         raise HTTPException(
             status_code=500,
             detail=f"텍스트 교정 중 오류가 발생했습니다: {str(e)}",
+        )
+
+
+@router.post("/summarize-chunk")
+async def api_summarize_chunk(req: SummarizeChunkRequest):
+    """단일 청크 텍스트 LLM 자동 요약 생성"""
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="요약할 텍스트가 비어 있습니다.")
+
+    try:
+        result = await llm_refine_svc.summarize_chunk_text(
+            text=req.text,
+            custom_prompt=req.custom_prompt,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"청크 요약 중 오류가 발생했습니다: {str(e)}",
         )
 
 

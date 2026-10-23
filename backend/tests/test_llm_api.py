@@ -50,6 +50,14 @@ def test_api_default_prompt():
     assert "교정 전문가" in data["default_prompt"]
 
 
+def test_api_default_summary_prompt():
+    response = client.get("/api/llm/config/default-summary-prompt")
+    assert response.status_code == 200
+    data = response.json()
+    assert "default_prompt" in data
+    assert "요약하는 전문 AI 어시스턴트" in data["default_prompt"]
+
+
 def test_api_refine_chunk_empty():
     response = client.post("/api/llm/refine-chunk", json={"text": ""})
     assert response.status_code == 400
@@ -76,6 +84,34 @@ def test_api_refine_chunk_mocked():
         data = response.json()
         assert data["success"] is True
         assert data["refined_text"] == "원문 띄어쓰기"
+
+
+def test_api_summarize_chunk_empty():
+    response = client.post("/api/llm/summarize-chunk", json={"text": ""})
+    assert response.status_code == 400
+
+
+def test_api_summarize_chunk_mocked():
+    with patch(
+        "backend.app.services.llm_refine_svc.llm_refine_svc.summarize_chunk_text",
+        new_callable=AsyncMock,
+    ) as mock_summarize:
+        mock_summarize.return_value = {
+            "success": True,
+            "original_text": "원문 긴 텍스트 내용",
+            "summary_text": "핵심 요약본",
+            "elapsed_seconds": 0.52,
+            "original_chars": 11,
+            "summary_chars": 6,
+        }
+        response = client.post(
+            "/api/llm/summarize-chunk",
+            json={"text": "원문 긴 텍스트 내용"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["summary_text"] == "핵심 요약본"
 
 
 def test_api_test_connection_mocked():

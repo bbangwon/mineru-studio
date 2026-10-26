@@ -94,6 +94,8 @@ export const JsonlModal: React.FC<JsonlModalProps> = ({
     pages: pages,
     token_estimate: chunk.token_estimate,
     parent_token_estimate: parent?.token_estimate || 0,
+    ...(chunk.summary ? { summary: chunk.summary } : {}),
+    ...(parent?.summary ? { parent_summary: parent.summary } : {}),
     metadata: cleanMeta,
   };
 

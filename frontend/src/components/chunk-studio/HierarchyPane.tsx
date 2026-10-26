@@ -21,6 +21,7 @@ import {
   FileText,
   Info,
   Layers,
+  Sparkles,
 } from 'lucide-react';
 import {
   formatDisplayParentId,
@@ -340,6 +341,11 @@ export function HierarchyPane() {
                                       ? parent.text.trim().split('\n')[0].slice(0, 24)
                                       : '부모 문맥')}
                                 </span>
+                                {parent.summary && (
+                                  <span title={`부모 요약:\n${parent.summary}`} className="shrink-0 inline-flex items-center">
+                                    <Sparkles className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400" />
+                                  </span>
+                                )}
                               </div>
 
                               <div className="flex items-center gap-1 shrink-0 font-mono text-[9px]">

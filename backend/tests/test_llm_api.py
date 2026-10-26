@@ -58,6 +58,14 @@ def test_api_default_summary_prompt():
     assert "요약하는 전문 AI 어시스턴트" in data["default_prompt"]
 
 
+def test_api_default_parent_summary_prompt():
+    response = client.get("/api/llm/config/default-parent-summary-prompt")
+    assert response.status_code == 200
+    data = response.json()
+    assert "default_prompt" in data
+    assert "거시적 문맥(Parent Chunk)" in data["default_prompt"]
+
+
 def test_api_refine_chunk_empty():
     response = client.post("/api/llm/refine-chunk", json={"text": ""})
     assert response.status_code == 400

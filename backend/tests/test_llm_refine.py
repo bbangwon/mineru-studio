@@ -8,12 +8,15 @@ from backend.app.services.llm_config_svc import (
     save_llm_config,
     get_default_system_prompt,
     get_default_summary_prompt,
+    get_default_parent_summary_prompt,
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_SUMMARY_PROMPT,
+    DEFAULT_PARENT_SUMMARY_PROMPT,
 )
 from backend.app.services.llm_refine_svc import (
     LLMRefineService,
     _clean_markdown_fence,
+    get_adaptive_summary_params,
 )
 
 
@@ -149,3 +152,61 @@ async def test_test_connection_mocked():
         assert "성공적" in res["message"]
         assert res["model"] == "gemma4:12b-mlx"
         assert res["latency_ms"] >= 0
+
+
+def test_adaptive_summary_params():
+    p1 = get_adaptive_summary_params(300)
+    assert p1["tier"] == 1
+    assert p1["target_sentences"] == "2~3문장"
+    assert p1["max_tokens"] == 256
+
+    p2 = get_adaptive_summary_params(800)
+    assert p2["tier"] == 2
+    assert p2["target_sentences"] == "3~5문장"
+    assert p2["max_tokens"] == 512
+
+    p3 = get_adaptive_summary_params(1800)
+    assert p3["tier"] == 3
+    assert p3["target_sentences"] == "5~7문장"
+    assert p3["max_tokens"] == 768
+
+    p4 = get_adaptive_summary_params(3200)
+    assert p4["tier"] == 4
+    assert p4["target_sentences"] == "7~10문장"
+    assert p4["max_tokens"] == 1024
+
+
+@pytest.mark.anyio
+async def test_parent_summary_adaptive_execution():
+    svc = LLMRefineService()
+    cfg = LLMConfig(base_url="http://mock-llm/v1", model_name="gemma4:12b-mlx")
+
+    mock_response = httpx.Response(
+        status_code=200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "이 부모 청크는 상병 판단 기준과 절차를 포괄적으로 설명하는 핵심 문맥입니다.",
+                    }
+                }
+            ]
+        },
+        request=httpx.Request("POST", "http://mock-llm/v1/chat/completions"),
+    )
+
+    long_text = "제1조(목적) 본 규정은 ... " * 200  # 약 1000자 이상
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_response
+        res = await svc.summarize_chunk_text(
+            text=long_text,
+            config=cfg,
+            is_parent=True,
+        )
+        assert res["success"] is True
+        assert res["is_parent"] is True
+        assert res["token_estimate"] > 0
+        assert "target_sentences" in res
+        assert "tier" in res
+        assert res["summary_text"].startswith("이 부모 청크는")

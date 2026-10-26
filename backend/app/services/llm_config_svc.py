@@ -23,13 +23,22 @@ DEFAULT_SYSTEM_PROMPT = """당신은 학술/기술 문서 및 법률/비즈니�
 7. 출력은 어떠한 인사말, 설명, 마크다운 코드블록 따옴표(``` 등)도 포함하지 말고, 오직 교정된 순수 텍스트만 출력하십시오."""
 
 DEFAULT_SUMMARY_PROMPT = """당신은 학술/기술 및 법률/비즈니스 문서 청크의 핵심 내용을 집약적으로 압축 요약하는 전문 AI 어시스턴트입니다.
-주어진 청크 텍스트를 분석하여 검색 증강 생성(RAG) 및 빠른 내용 파악을 위한 2~3문장(100~200자 내외)의 고품질 핵심 요약을 작성하십시오.
+주어진 청크 텍스트를 분석하여 검색 증강 생성(RAG) 및 빠른 내용 파악을 위한 완성도 높은 핵심 요약을 작성하십시오.
 
 [요약 규칙]
 1. 원문의 핵심 주제, 주요 규정/수치, 적용 대상을 정확히 포함하되, 원문을 그대로 재나열하지 말고 핵심 위주로 집약하여 서술하십시오.
-2. 분량은 반드시 2~3문장(100~200자 내외)으로 간결하게 작성하십시오. 원문과 분량이 비슷할 정도로 장황하게 늘려 쓰지 마십시오.
+2. 분량은 반드시 {target_sentences} ({target_chars} 내외)로 간결하고 완성도 높은 줄글 문단으로 작성하십시오.
 3. 마크다운 제목(#, **굵은글씨 제목**)이나 불필요한 번호 매기기를 지양하고, 읽기 쉬운 완성된 줄글(문단)로 출력하십시오.
 4. 원문에 없는 사실을 지어내거나 추측하지 마십시오."""
+
+DEFAULT_PARENT_SUMMARY_PROMPT = """당신은 학술/기술 및 법률/비즈니스 문서의 거시적 문맥(Parent Chunk)을 총괄 요약하는 전문 AI 어시스턴트입니다.
+하위 자식 청크들을 아우르는 전체 부모 문맥 텍스트를 분석하여, 핵심 취지와 주요 규정 내용을 균형 있게 요약하십시오.
+
+[요약 규칙]
+1. 세부 사항의 단순 나열을 지양하고, 전체 흐름과 핵심 규정/데이터의 결론을 명확히 압축하십시오.
+2. 분량은 반드시 {target_sentences} ({target_chars} 내외)로 완성도 높은 문단 형태로 작성하십시오.
+3. 마크다운 제목(#, **굵은글씨 제목**)이나 불필요한 번호 매기기를 지양하고 읽기 편한 줄글로 출력하십시오.
+4. 원문에 없는 사실을 지어내거나 왜곡하지 마십시오."""
 
 
 class LLMConfig(BaseModel):
@@ -67,6 +76,10 @@ class LLMConfig(BaseModel):
         default=DEFAULT_SUMMARY_PROMPT,
         description="청크 요약 전용 시스템 프롬프트",
     )
+    parent_summary_prompt: Optional[str] = Field(
+        default=None,
+        description="부모 청크(Parent Chunk) 전용 요약 시스템 프롬프트 (미지정 시 summary_prompt 기반 작동)",
+    )
 
 
 def get_default_system_prompt() -> str:
@@ -77,6 +90,11 @@ def get_default_system_prompt() -> str:
 def get_default_summary_prompt() -> str:
     """기본 권장 청크 요약 시스템 프롬프트를 반환합니다."""
     return DEFAULT_SUMMARY_PROMPT
+
+
+def get_default_parent_summary_prompt() -> str:
+    """기본 권장 부모 청크 요약 시스템 프롬프트를 반환합니다."""
+    return DEFAULT_PARENT_SUMMARY_PROMPT
 
 
 def get_llm_config() -> LLMConfig:

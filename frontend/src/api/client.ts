@@ -284,6 +284,12 @@ export async function getDefaultSummaryPrompt(): Promise<{ default_prompt: strin
   return res.json();
 }
 
+export async function getDefaultParentSummaryPrompt(): Promise<{ default_prompt: string }> {
+  const res = await fetch('/api/llm/config/default-parent-summary-prompt');
+  if (!res.ok) throw new Error('기본 부모 요약 프롬프트를 불러오지 못했습니다.');
+  return res.json();
+}
+
 export async function getLLMModels(
   baseUrl?: string,
   apiKey?: string
@@ -330,12 +336,17 @@ export async function refineChunkText(
 
 export async function summarizeChunkText(
   text: string,
-  customPrompt?: string
+  customPrompt?: string,
+  isParent?: boolean
 ): Promise<import('../types').LLMSummarizeResponse> {
   const res = await fetch('/api/llm/summarize-chunk', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, custom_prompt: customPrompt }),
+    body: JSON.stringify({
+      text,
+      custom_prompt: customPrompt,
+      is_parent: isParent ?? false,
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

@@ -226,6 +226,14 @@ class TestHierarchicalChunker(unittest.TestCase):
             self.assertFalse(record["metadata"]["has_tables"])
             self.assertEqual(record["metadata"]["table_count"], 0)
 
+        # Test summary and parent_summary in JSONL export
+        etl_res["child_chunks"][0]["summary"] = "자식 청크 요약본"
+        etl_res["parent_chunks"][0]["summary"] = "부모 청크 요약본"
+        jsonl_with_summary = chunker.export_to_jsonl(etl_res)
+        summary_record = json.loads(jsonl_with_summary.split("\n")[0])
+        self.assertEqual(summary_record.get("summary"), "자식 청크 요약본")
+        self.assertEqual(summary_record.get("parent_summary"), "부모 청크 요약본")
+
     def test_export_to_jsonl_table_footnote(self):
         chunker = HierarchicalChunker(doc_id="tbl_jsonl_test")
         sample_content_list = [

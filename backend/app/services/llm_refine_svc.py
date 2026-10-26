@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from backend.app.services.chunker.text_normalizer import estimate_korean_tokens
 from backend.app.services.llm_config_svc import LLMConfig, get_llm_config
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,48 @@ DEFAULT_RAG_SYSTEM_PROMPT = """당신은 주어진 참고 문서를 바탕으로
 def get_default_rag_prompt() -> str:
     """기본 RAG 시스템 프롬프트 텍스트 반환"""
     return DEFAULT_RAG_SYSTEM_PROMPT
+
+
+def get_adaptive_summary_params(token_count: int) -> Dict[str, Any]:
+    """
+    청크(Child/Parent)의 추정 토큰 수에 비례하여 권장 문장 수, 글자 수, 생성 max_tokens 및 Ollama num_ctx를 동적으로 산출합니다.
+    - Tier 1 (~512 tokens): 2~3문장, 120~200자, max_tokens=256, num_ctx=4096
+    - Tier 2 (513~1500 tokens): 3~5문장, 200~350자, max_tokens=512, num_ctx=4096
+    - Tier 3 (1501~2500 tokens): 5~7문장, 350~550자, max_tokens=768, num_ctx=max(4096, token_count + 1024)
+    - Tier 4 (2501+ tokens): 7~10문장, 500~800자, max_tokens=1024, num_ctx=max(8192, token_count + 2048)
+    """
+    if token_count <= 512:
+        return {
+            "tier": 1,
+            "target_sentences": "2~3문장",
+            "target_chars": "120~200자",
+            "max_tokens": 256,
+            "num_ctx": 4096,
+        }
+    elif token_count <= 1500:
+        return {
+            "tier": 2,
+            "target_sentences": "3~5문장",
+            "target_chars": "200~350자",
+            "max_tokens": 512,
+            "num_ctx": 4096,
+        }
+    elif token_count <= 2500:
+        return {
+            "tier": 3,
+            "target_sentences": "5~7문장",
+            "target_chars": "350~550자",
+            "max_tokens": 768,
+            "num_ctx": max(4096, token_count + 1024),
+        }
+    else:
+        return {
+            "tier": 4,
+            "target_sentences": "7~10문장",
+            "target_chars": "500~800자",
+            "max_tokens": 1024,
+            "num_ctx": max(8192, token_count + 2048),
+        }
 
 
 class LLMRefineService:
@@ -145,23 +188,30 @@ class LLMRefineService:
         self,
         cfg: LLMConfig,
         messages: List[Dict[str, str]],
+        max_tokens_override: Optional[int] = None,
+        num_ctx_override: Optional[int] = None,
     ) -> str:
         """Ollama의 think=False 최적화 및 OpenAI 호환 API를 지원하는 공통 챗 호출 헬퍼"""
         base_url = cfg.base_url.rstrip("/")
         headers = self._build_headers(cfg.api_key)
+        gen_tokens = max_tokens_override or cfg.max_tokens
 
         # 1. Ollama 네이티브 엔드포인트 지원 (Thinking 모델의 무한 생각 루프 방지: think=False 적용)
         if "11434" in base_url or "ollama" in base_url.lower():
             ollama_url = re.sub(r"/v1/?$", "", base_url) + "/api/chat"
+            ollama_options: Dict[str, Any] = {
+                "temperature": cfg.temperature,
+                "num_predict": gen_tokens,
+            }
+            if num_ctx_override:
+                ollama_options["num_ctx"] = num_ctx_override
+
             ollama_payload = {
                 "model": cfg.model_name,
                 "messages": messages,
                 "stream": False,
                 "think": False,
-                "options": {
-                    "temperature": cfg.temperature,
-                    "num_predict": cfg.max_tokens,
-                },
+                "options": ollama_options,
             }
             try:
                 async with httpx.AsyncClient(timeout=cfg.timeout) as client:
@@ -180,7 +230,7 @@ class LLMRefineService:
             "model": cfg.model_name,
             "messages": messages,
             "temperature": cfg.temperature,
-            "max_tokens": cfg.max_tokens,
+            "max_tokens": gen_tokens,
             "think": False,
         }
 
@@ -258,15 +308,33 @@ class LLMRefineService:
         text: str,
         custom_prompt: Optional[str] = None,
         config: Optional[LLMConfig] = None,
+        is_parent: bool = False,
     ) -> Dict[str, Any]:
-        """요약 시스템 프롬프트 주입 후 청크 텍스트의 핵심 요약을 생성합니다."""
+        """토큰 적응형 시스템 프롬프트 주입 후 청크(Child/Parent) 텍스트의 핵심 요약을 생성합니다."""
         cfg = config or get_llm_config()
 
-        summary_prompt = (
-            custom_prompt.strip()
-            if (custom_prompt and custom_prompt.strip())
-            else cfg.summary_prompt
-        )
+        token_estimate = estimate_korean_tokens(text)
+        params = get_adaptive_summary_params(token_estimate)
+
+        if custom_prompt and custom_prompt.strip():
+            raw_prompt = custom_prompt.strip()
+        elif is_parent and cfg.parent_summary_prompt and cfg.parent_summary_prompt.strip():
+            raw_prompt = cfg.parent_summary_prompt.strip()
+        else:
+            raw_prompt = cfg.summary_prompt
+
+        # 템플릿 치환: {target_sentences}, {target_chars}
+        if "{target_sentences}" in raw_prompt or "{target_chars}" in raw_prompt:
+            summary_prompt = raw_prompt.replace(
+                "{target_sentences}", params["target_sentences"]
+            ).replace("{target_chars}", params["target_chars"])
+        else:
+            # 구버전 프롬프트 호환: '2~3문장(100~200자 내외)' 패턴이 있으면 스마트 치환
+            summary_prompt = re.sub(
+                r'2~3\s*문장\s*\(\s*100~200\s*자\s*내외\s*\)',
+                f'{params["target_sentences"]}({params["target_chars"]} 내외)',
+                raw_prompt,
+            )
 
         messages = [
             {"role": "system", "content": summary_prompt},
@@ -274,7 +342,12 @@ class LLMRefineService:
         ]
 
         start_time = time.perf_counter()
-        raw_content = await self._post_chat(cfg, messages)
+        raw_content = await self._post_chat(
+            cfg,
+            messages,
+            max_tokens_override=params["max_tokens"],
+            num_ctx_override=params["num_ctx"],
+        )
         elapsed_sec = time.perf_counter() - start_time
 
         summary = _clean_markdown_fence(raw_content)
@@ -289,6 +362,11 @@ class LLMRefineService:
             "elapsed_seconds": round(elapsed_sec, 2),
             "original_chars": len(text),
             "summary_chars": len(summary),
+            "token_estimate": token_estimate,
+            "target_sentences": params["target_sentences"],
+            "target_chars": params["target_chars"],
+            "tier": params["tier"],
+            "is_parent": is_parent,
         }
 
     @staticmethod
@@ -320,12 +398,25 @@ class LLMRefineService:
 
             child_text = (chunk.get("text") or "").strip()
             parent_text = (chunk.get("parent_text") or "").strip()
+            parent_summary = (chunk.get("parent_summary") or "").strip()
+            chunk_summary = (chunk.get("summary") or "").strip()
 
             block_lines = [
                 f"[참조 #{idx}] 청크 ID: {chunk_id} ({location_info})",
+            ]
+            if chunk_summary:
+                block_lines.append(f"--- [자식 청크 요약] ---\n{chunk_summary}")
+
+            block_lines.extend([
                 "--- [검색된 자식 청크 본문] ---",
                 child_text,
-            ]
+            ])
+
+            if use_parent_context and parent_summary:
+                block_lines.extend([
+                    "--- [상위 부모 핵심 요약] ---",
+                    parent_summary,
+                ])
 
             if use_parent_context and parent_text and parent_text != child_text:
                 block_lines.extend([

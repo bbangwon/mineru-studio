@@ -337,6 +337,19 @@ export function ChunkEditorPane() {
                             · {activeParentChunk.title}
                           </span>
                         )}
+                        {activeParentChunk.summary && (
+                          <span
+                            className="bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-1 cursor-pointer shrink-0"
+                            onClick={() => {
+                              setTargetParentForEdit(activeParentChunk);
+                              setIsEditParentModalOpen(true);
+                            }}
+                            title={`부모 요약:\n${activeParentChunk.summary}`}
+                          >
+                            <Sparkles className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400" />
+                            Parent 요약 보유
+                          </span>
+                        )}
                         {onUpdateParent && (
                           <button
                             type="button"
@@ -1004,6 +1017,37 @@ export function ChunkEditorPane() {
                           </button>
                         </div>
                       </div>
+
+                      {/* Dynamic Token-Adaptive Length Guide Banner */}
+                      {(() => {
+                        const cTokens = activeChunk.token_estimate || 0;
+                        let hint = '권장: 2~3문장 (약 150자)';
+                        let isExtended = false;
+                        if (cTokens > 2500) {
+                          hint = `초대형 청크 (~${cTokens} tok) -> 권장: 7~10문장 (약 650자)`;
+                          isExtended = true;
+                        } else if (cTokens > 1500) {
+                          hint = `대형 청크 (~${cTokens} tok) -> 권장: 5~7문장 (약 450자)`;
+                          isExtended = true;
+                        } else if (cTokens > 512) {
+                          hint = `확장 요약 기준 (~${cTokens} tok) -> 권장: 3~5문장 (약 280자)`;
+                          isExtended = true;
+                        }
+                        return (
+                          <div className={`flex items-center justify-between text-[11px] px-2 py-1 rounded-lg ${
+                            isExtended
+                              ? 'bg-purple-100/80 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300 font-semibold'
+                              : 'bg-purple-50/80 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 font-medium'
+                          }`}>
+                            <span className="flex items-center gap-1">
+                              <Sparkles className="w-3 h-3 text-purple-500 shrink-0" />
+                              <span>토큰 맞춤 권장 분량:</span>
+                            </span>
+                            <span>{hint}</span>
+                          </div>
+                        );
+                      })()}
+
                       <textarea
                         value={activeChunk.summary || ''}
                         onChange={(e) => handleFieldChange('summary', e.target.value)}

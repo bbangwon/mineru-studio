@@ -83,7 +83,7 @@ export interface ChunkStudioModalsProps {
 
   onUpdateParent?: (
     parentChunkId: string,
-    updates: { title: string; sectionId: string }
+    updates: { title?: string; sectionId?: string; summary?: string }
   ) => void;
   onDeleteParent?: (parentChunkId: string) => void;
   isEditParentModalOpen: boolean;

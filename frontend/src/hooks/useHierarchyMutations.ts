@@ -2400,7 +2400,7 @@ export function useHierarchyMutations({
   // 10-3. Update Parent Chunk Handler
   const handleUpdateParent = (
     parentChunkId: string,
-    updates: { title: string; sectionId: string }
+    updates: { title?: string; sectionId?: string; summary?: string }
   ) => {
     if (!etlData) return;
     const parentChunks = etlData.parent_chunks || [];
@@ -2414,7 +2414,7 @@ export function useHierarchyMutations({
     }
 
     const oldSectionId = targetParent.section_id;
-    const newSectionId = updates.sectionId;
+    const newSectionId = updates.sectionId || oldSectionId;
     const targetSection = sections.find((s) => s.id === newSectionId);
     if (!targetSection) {
       showToast(`선택한 섹션을 찾을 수 없습니다.`, true);
@@ -2432,11 +2432,18 @@ export function useHierarchyMutations({
     // 1) Parent 업데이트
     const updatedParents = parentChunks.map((p) => {
       if ((p.parent_chunk_id || p.id) === pid) {
+        const nextSummary =
+          updates.summary !== undefined
+            ? updates.summary.trim()
+              ? updates.summary.trim()
+              : undefined
+            : p.summary;
         return {
           ...p,
-          title: updates.title,
+          title: updates.title !== undefined ? updates.title : p.title,
           section_id: newSectionId,
           breadcrumbs: [...secBreadcrumbs],
+          summary: nextSummary,
           is_edited: true,
         };
       }

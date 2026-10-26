@@ -8,6 +8,7 @@ from backend.app.services.llm_config_svc import (
     LLMConfig,
     get_default_system_prompt,
     get_default_summary_prompt,
+    get_default_parent_summary_prompt,
     get_llm_config,
     save_llm_config,
 )
@@ -34,6 +35,7 @@ class RefineChunkRequest(BaseModel):
 class SummarizeChunkRequest(BaseModel):
     text: str
     custom_prompt: Optional[str] = None
+    is_parent: Optional[bool] = False
 
 
 @router.get("/config")
@@ -62,6 +64,12 @@ async def api_get_default_prompt():
 async def api_get_default_summary_prompt():
     """기본 청크 요약 시스템 프롬프트 텍스트 조회"""
     return {"default_prompt": get_default_summary_prompt()}
+
+
+@router.get("/config/default-parent-summary-prompt")
+async def api_get_default_parent_summary_prompt():
+    """기본 부모 청크 요약 시스템 프롬프트 텍스트 조회"""
+    return {"default_prompt": get_default_parent_summary_prompt()}
 
 
 @router.get("/models")
@@ -120,7 +128,7 @@ async def api_refine_chunk(req: RefineChunkRequest):
 
 @router.post("/summarize-chunk")
 async def api_summarize_chunk(req: SummarizeChunkRequest):
-    """단일 청크 텍스트 LLM 자동 요약 생성"""
+    """단일 청크(Child/Parent) 텍스트 LLM 동적 적응형 요약 생성"""
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="요약할 텍스트가 비어 있습니다.")
 
@@ -128,6 +136,7 @@ async def api_summarize_chunk(req: SummarizeChunkRequest):
         result = await llm_refine_svc.summarize_chunk_text(
             text=req.text,
             custom_prompt=req.custom_prompt,
+            is_parent=bool(req.is_parent),
         )
         return result
     except Exception as e:

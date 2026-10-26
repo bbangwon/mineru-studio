@@ -21,6 +21,7 @@ import {
   saveLLMConfig,
   getDefaultSystemPrompt,
   getDefaultSummaryPrompt,
+  getDefaultParentSummaryPrompt,
   testLLMConnection,
   getLLMModels,
 } from '../api/client';
@@ -52,9 +53,10 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
     timeout: 60,
     system_prompt: '',
     summary_prompt: '',
+    parent_summary_prompt: '',
   });
 
-  const [promptTab, setPromptTab] = useState<'refine' | 'summary'>('refine');
+  const [promptTab, setPromptTab] = useState<'refine' | 'summary' | 'parent_summary'>('refine');
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -102,6 +104,17 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err.message || '기본 요약 프롬프트를 불러오지 못했습니다.');
+    }
+  };
+
+  const handleRestoreDefaultParentSummaryPrompt = async () => {
+    try {
+      const res = await getDefaultParentSummaryPrompt();
+      setConfig((prev) => ({ ...prev, parent_summary_prompt: res.default_prompt }));
+      setSuccessMsg('기본 권장 부모 청크 요약 시스템 프롬프트로 복원되었습니다.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || '기본 부모 요약 프롬프트를 불러오지 못했습니다.');
     }
   };
 
@@ -416,7 +429,19 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
                   }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>청크 요약 프롬프트</span>
+                  <span>청크 요약</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPromptTab('parent_summary')}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                    promptTab === 'parent_summary'
+                      ? 'bg-purple-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>부모 요약</span>
                 </button>
               </div>
 
@@ -430,7 +455,7 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
                   <RotateCcw className="w-3 h-3" />
                   <span>교정 기본값 복원</span>
                 </button>
-              ) : (
+              ) : promptTab === 'summary' ? (
                 <button
                   type="button"
                   onClick={handleRestoreDefaultSummaryPrompt}
@@ -439,6 +464,16 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
                 >
                   <RotateCcw className="w-3 h-3" />
                   <span>요약 기본값 복원</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaultParentSummaryPrompt}
+                  className="text-[11px] text-purple-600 hover:text-purple-800 font-semibold flex items-center gap-1 cursor-pointer hover:underline"
+                  title="기본 권장 부모 요약 프롬프트로 복원합니다"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>부모 요약 기본값 복원</span>
                 </button>
               )}
             </div>
@@ -456,7 +491,7 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
                   규칙: 원문 100% 보존, 단어 중간 개행 병합, 국립국어원 표준 띄어쓰기, 표 서식 보존
                 </p>
               </div>
-            ) : (
+            ) : promptTab === 'summary' ? (
               <div className="space-y-1.5">
                 <textarea
                   rows={8}
@@ -466,7 +501,20 @@ export const LLMConfigModal: React.FC<LLMConfigModalProps> = ({
                   placeholder="청크 요약 시스템 프롬프트를 입력하세요..."
                 />
                 <p className="text-[11px] text-slate-400">
-                  규칙: 핵심 정보 집약, 2~3문장(100~200자) 간결 요약, 마크다운 제목/불릿 지양하고 읽기 쉬운 줄글 출력
+                  동적 플레이스홀더: {'{target_sentences}'}, {'{target_chars}'} (토큰 크기에 비례하여 자동 치환됨)
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <textarea
+                  rows={8}
+                  value={config.parent_summary_prompt || ''}
+                  onChange={(e) => setConfig({ ...config, parent_summary_prompt: e.target.value })}
+                  className="w-full font-sans text-xs p-3 bg-slate-50 border border-purple-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-purple-500 leading-relaxed text-slate-800"
+                  placeholder="부모 청크(Parent Chunk) 요약 시스템 프롬프트를 입력하세요... (비워둘 시 기본 청크 요약 프롬프트 적용)"
+                />
+                <p className="text-[11px] text-purple-600 font-medium">
+                  부모 청크 특화 프롬프트. 동적 플레이스홀더: {'{target_sentences}'}, {'{target_chars}'}
                 </p>
               </div>
             )}

@@ -276,7 +276,8 @@ class EmbeddingService:
                 "is_table", "is_atomic_table", "has_tables", "table_count", "tables",
                 "table_type", "table_caption", "table_footnote", "raw_html",
                 "has_image", "image_path", "image_url", "token_count", "token_estimate", "char_length",
-                "text", "parent_text", "title", "chunk_type", "breadcrumbs", "heading_hierarchy", "type"
+                "text", "parent_text", "title", "chunk_type", "breadcrumbs", "heading_hierarchy", "type",
+                "summary", "parent_summary"
             }
             payload_meta = {k: v for k, v in chunk_meta.items() if k not in reserved_keys}
             payload_meta["doc_id"] = doc_id_val
@@ -293,12 +294,17 @@ class EmbeddingService:
                 else ""
             )
 
+            p_summary = parent_map[pid].get("summary", "") if pid in parent_map else ""
+            c_summary = chunk.get("summary") or chunk_meta.get("summary") or ""
+
             payload = {
                 "chunk_id": cid,
                 "doc_id": doc_id_val,
                 "doc_title": doc_title_val,
                 "parent_chunk_id": pid,
                 "parent_text": p_text,
+                "parent_summary": p_summary,
+                "summary": c_summary,
                 "section_id": chunk.get("section_id", ""),
                 "chunk_type": chunk_kind,
                 "title": chunk.get("title") or (first_tbl_cap if is_atomic_table else "") or chunk.get("table_caption") or "",

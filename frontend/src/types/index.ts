@@ -324,6 +324,7 @@ export interface LLMConfig {
   timeout?: number;
   system_prompt: string;
   summary_prompt?: string;
+  parent_summary_prompt?: string;
 }
 
 export interface LLMTestResponse {
@@ -350,6 +351,11 @@ export interface LLMSummarizeResponse {
   elapsed_seconds: number;
   original_chars: number;
   summary_chars: number;
+  token_estimate?: number;
+  target_sentences?: string;
+  target_chars?: string;
+  tier?: number;
+  is_parent?: boolean;
 }
 
 // 6-1. RAG 질의응답 및 스트리밍 타입

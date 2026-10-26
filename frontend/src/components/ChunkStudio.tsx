@@ -79,7 +79,7 @@ interface ChunkStudioProps {
   onAddChild?: (data: AddChildData) => void;
   onUpdateParent?: (
     parentChunkId: string,
-    updates: { title: string; sectionId: string }
+    updates: { title?: string; sectionId?: string; summary?: string }
   ) => void;
   onDeleteParent?: (parentChunkId: string) => void;
   onMoveParent?: (parentChunkId: string, direction: 'up' | 'down') => void;

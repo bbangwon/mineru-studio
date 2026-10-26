@@ -133,6 +133,11 @@ def export_to_jsonl(etl_result: Dict[str, Any], default_doc_id: Optional[str] = 
             "metadata": meta,
         }
 
+        if chunk.get("summary"):
+            record["summary"] = chunk.get("summary")
+        if parent.get("summary"):
+            record["parent_summary"] = parent.get("summary")
+
         if end_page > start_page:
             record["page_end"] = end_page
         if has_tables and clean_tables:

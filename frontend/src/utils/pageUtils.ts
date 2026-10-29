@@ -515,6 +515,41 @@ export function buildOuterTableHtml(
 }
 
 /**
+ * raw_html 문자열 내의 개행 문자(\n)를 HTML 렌더링에 적합하게 <br/> 태그로 변환합니다.
+ * - table 셀(td, th) 내부의 개행은 <br/>로 변환합니다.
+ * - table 구조 태그(table, thead, tbody, tfoot, tr 등) 사이의 개행은 불필요한 줄바꿈 버그를 방지하기 위해 제거합니다.
+ * - table 바깥 영역의 \n\n은 <br/><br/>로, 단일 \n은 <br/>로 변환합니다.
+ */
+export function normalizeRawHtmlNewlines(htmlStr: string): string {
+  if (!htmlStr || !htmlStr.includes('\n')) return htmlStr || '';
+
+  const tables: string[] = [];
+  const processedHtml = htmlStr.replace(/<table\b[\s\S]*?<\/table>/gi, (match) => {
+    let tbl = match;
+    // 1. td/th 셀 내부의 \n을 <br/>로 변환
+    tbl = tbl.replace(/<(td|th)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (_m, tag, attrs, content) => {
+      const fixedContent = content.replace(/\r?\n/g, '<br/>');
+      return `<${tag}${attrs}>${fixedContent}</${tag}>`;
+    });
+    // 2. table 내부 구조 태그 사이 개행 제거
+    tbl = tbl.replace(/>\s*\r?\n\s*</g, '><');
+    tables.push(tbl);
+    return `__TABLE_PLACEHOLDER_${tables.length - 1}__`;
+  });
+
+  // table 바깥 영역 변환
+  let temp = processedHtml.replace(/(\r?\n\s*){2,}/g, '<br/><br/>');
+  temp = temp.replace(/\r?\n/g, '<br/>');
+
+  // table 복원
+  tables.forEach((tbl, idx) => {
+    temp = temp.replace(`__TABLE_PLACEHOLDER_${idx}__`, tbl);
+  });
+
+  return temp;
+}
+
+/**
  * 복합(composite) 청크의 raw_html에 문단 태그(<p>)가 누락되어 있거나 표만 존재하는 경우,
  * chunk.text(마크다운 본문)와 chunk.tables(표 HTML)를 매칭하여
  * 원본 문서 순서(문단 + 표 + 문단 + 표 ...) 그대로 복원된 통합 HTML 문자열을 생성합니다.
@@ -525,9 +560,9 @@ export function reconstructCompositeHtml(
   force: boolean = false
 ): string {
   const raw = chunk.raw_html || '';
-  // force가 false이고 이미 문단 태그(<p>, <div>, <span>)가 포함되어 있다면 원형 그대로 유지
+  // force가 false이고 이미 문단 태그(<p>, <div>, <span>)가 포함되어 있다면 개행만 정규화하여 반환
   if (!force && raw && /<p\b|<div\b|<span\b/i.test(raw)) {
-    return raw;
+    return normalizeRawHtmlNewlines(raw);
   }
 
   const tables: EmbeddedTableItem[] = chunk.tables || chunk.metadata?.tables || [];
@@ -542,7 +577,8 @@ export function reconstructCompositeHtml(
   }
 
   if (!chunk.text) {
-    return (tableHtmls.length > 0 ? tableHtmls.join('\n\n') : raw) || '<p>내용 없음</p>';
+    const fallback = (tableHtmls.length > 0 ? tableHtmls.join('\n\n') : raw) || '<p>내용 없음</p>';
+    return normalizeRawHtmlNewlines(fallback);
   }
 
   const blocks = chunk.text.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
@@ -585,7 +621,8 @@ export function reconstructCompositeHtml(
     tblIdx++;
   }
 
-  return parts.join('\n\n') || raw || chunk.text || '<p>내용 없음</p>';
+  const combined = parts.join('\n\n') || raw || chunk.text || '<p>내용 없음</p>';
+  return normalizeRawHtmlNewlines(combined);
 }
 
 /**

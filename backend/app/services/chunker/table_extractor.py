@@ -232,6 +232,44 @@ def sanitize_table_colspans(html_str: str) -> str:
     return re.sub(r"<table\b[\s\S]*?</table>", _replace_table, html_str, flags=re.I)
 
 
+def normalize_raw_html_newlines(html_str: str) -> str:
+    """
+    raw_html 문자열 내의 개행 문자(\\n)를 HTML 렌더링에 적합하게 <br/> 태그로 변환합니다.
+    - table 셀(td, th) 내부의 개행은 <br/>로 변환합니다.
+    - table 구조 태그(table, thead, tbody, tfoot, tr 등) 사이의 개행은 불필요한 줄바꿈 버그를 방지하기 위해 제거합니다.
+    - table 바깥 영역의 \\n\\n은 <br/><br/>로, 단일 \\n은 <br/>로 변환합니다.
+    """
+    if not html_str or "\n" not in html_str:
+        return html_str or ""
+
+    def _process_table(match: re.Match) -> str:
+        tbl = match.group(0)
+        def _process_cell(m: re.Match) -> str:
+            tag = m.group(1)
+            attrs = m.group(2)
+            content = m.group(3)
+            content = re.sub(r"\r?\n", "<br/>", content)
+            return f"<{tag}{attrs}>{content}</{tag}>"
+
+        tbl = re.sub(r"<(td|th)\b([^>]*)>([\s\S]*?)</\1>", _process_cell, tbl, flags=re.I)
+        tbl = re.sub(r">\s*\r?\n\s*<", "><", tbl)
+        return tbl
+
+    tables = []
+    def _save_table(m: re.Match) -> str:
+        tables.append(_process_table(m))
+        return f"__TABLE_PLACEHOLDER_{len(tables)-1}__"
+
+    temp = re.sub(r"<table\b[\s\S]*?</table>", _save_table, html_str, flags=re.I)
+    temp = re.sub(r"(\r?\n\s*){2,}", "<br/><br/>", temp)
+    temp = re.sub(r"\r?\n", "<br/>", temp)
+
+    for idx, tbl in enumerate(tables):
+        temp = temp.replace(f"__TABLE_PLACEHOLDER_{idx}__", tbl)
+
+    return temp
+
+
 def reconstruct_composite_raw_html(chunk: Dict[str, Any], force: bool = False) -> str:
     """
     복합(composite) 청크의 raw_html에 문단 태그가 누락된 경우,
@@ -239,7 +277,7 @@ def reconstruct_composite_raw_html(chunk: Dict[str, Any], force: bool = False) -
     """
     raw_html = chunk.get("raw_html") or ""
     if not force and raw_html and re.search(r"<(?:p|div|span)\b", raw_html, re.I):
-        return raw_html
+        return normalize_raw_html_newlines(raw_html)
 
     tables = chunk.get("tables") or (chunk.get("metadata", {}).get("tables") if isinstance(chunk.get("metadata"), dict) else []) or []
     table_htmls = [
@@ -251,7 +289,8 @@ def reconstruct_composite_raw_html(chunk: Dict[str, Any], force: bool = False) -
 
     text = chunk.get("text") or ""
     if not text:
-        return ("\n\n".join(table_htmls) if table_htmls else raw_html) or "<p>내용 없음</p>"
+        res_empty = ("\n\n".join(table_htmls) if table_htmls else raw_html) or "<p>내용 없음</p>"
+        return normalize_raw_html_newlines(res_empty)
 
     blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
     reconstructed_parts: List[str] = []
@@ -278,7 +317,8 @@ def reconstruct_composite_raw_html(chunk: Dict[str, Any], force: bool = False) -
             reconstructed_parts.append(table_htmls[tbl_idx])
         tbl_idx += 1
 
-    return "\n\n".join(reconstructed_parts) or raw_html
+    combined = "\n\n".join(reconstructed_parts) or raw_html
+    return normalize_raw_html_newlines(combined)
 
 
 def get_chunk_kind(chunk: Dict[str, Any]) -> str:

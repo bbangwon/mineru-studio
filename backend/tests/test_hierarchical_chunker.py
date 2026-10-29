@@ -1674,6 +1674,19 @@ class TestHierarchicalChunker(unittest.TestCase):
         self.assertIn('<td colspan="7">* 자해행위 제외</td>', outer)
         self.assertNotIn('colspan="100%"', outer)
 
+    def test_normalize_raw_html_newlines(self):
+        """raw_html 내의 개행 문자가 HTML 안전하게 <br/>로 치환되는지 검증"""
+        raw = "<p>문단 1</p>\n\n<table>\n<tr>\n<td>셀 1\n셀 2</td>\n</tr>\n</table>\n\n<p>문단 2</p>"
+        res = HierarchicalChunker.normalize_raw_html_newlines(raw)
+        # 1. 문단과 표 사이의 \n\n이 <br/><br/>로 변환되었는지
+        self.assertIn("<p>문단 1</p><br/><br/><table>", res)
+        self.assertIn("</table><br/><br/><p>문단 2</p>", res)
+        # 2. td 내부의 줄바꿈이 <br/>로 변환되었는지
+        self.assertIn("<td>셀 1<br/>셀 2</td>", res)
+        # 3. table 구조 태그 사이에 불필요한 개행이나 태그 밖 밀려남이 없는지
+        self.assertNotIn("<table>\n<tr>", res)
+        self.assertNotIn("\n", res)
+
     def test_outer_vs_inner_table_raw_html_separation(self):
         """단독 표 청크에서 chunk.tables[0].raw_html은 순수 HTML, chunk.raw_html은 caption/tfoot 포함 HTML인지 검증"""
         chunker = HierarchicalChunker(doc_id="single_table_test")

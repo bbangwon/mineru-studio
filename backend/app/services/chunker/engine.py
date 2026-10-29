@@ -45,6 +45,7 @@ from backend.app.services.chunker.table_extractor import (
     get_table_max_cols,
     heal_composite_chunks,
     html_table_to_markdown,
+    normalize_raw_html_newlines,
     reconstruct_composite_raw_html,
     strip_table_meta_tags,
 )
@@ -102,6 +103,7 @@ class HierarchicalChunker:
     _format_text_unit_as_html = staticmethod(format_text_unit_as_html)
     strip_table_meta_tags = classmethod(lambda cls, html_str: strip_table_meta_tags(html_str))
     get_table_max_cols = classmethod(lambda cls, html_str: get_table_max_cols(html_str))
+    normalize_raw_html_newlines = classmethod(lambda cls, html_str: normalize_raw_html_newlines(html_str))
     build_outer_table_html = classmethod(lambda cls, raw_html, caption="", footnote="": build_outer_table_html(raw_html, caption, footnote))
     reconstruct_composite_raw_html = classmethod(lambda cls, chunk, force=False: reconstruct_composite_raw_html(chunk, force))
     get_chunk_kind = classmethod(lambda cls, chunk: get_chunk_kind(chunk))
@@ -468,11 +470,11 @@ class HierarchicalChunker:
                     full_child_text = self.generate_table_search_text(combined_raw_html, tbl_caption or "", tbl_footnote or "")
                 else:
                     # 복합 청크: 문단(<p>)과 표(<table>)가 문서 순서대로 결합된 완성형 HTML
-                    combined_raw_html = "\n\n".join(u for u in current_html_units if u.strip())
+                    combined_raw_html = self.normalize_raw_html_newlines("\n\n".join(u for u in current_html_units if u.strip()))
                     if not combined_raw_html:
-                        combined_raw_html = "\n<hr class=\"table-sep my-2\"/>\n".join(
+                        combined_raw_html = self.normalize_raw_html_newlines("\n<hr class=\"table-sep my-2\"/>\n".join(
                             t["raw_html"] for t in current_tables if t.get("raw_html")
-                        )
+                        ))
                     chunk_type = "composite"
                     is_table = True
                     is_atomic_table = False

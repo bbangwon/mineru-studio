@@ -161,6 +161,31 @@ def strip_table_meta_tags(html_str: str) -> str:
     return res
 
 
+def get_table_max_cols(html_str: str) -> int:
+    """HTML 테이블에서 행별 colspan을 합산하여 실제 최대 열(column) 수를 계산합니다."""
+    if not html_str or not re.search(r"<table\b", html_str, re.I):
+        return 1
+
+    max_cols = 1
+    # 각주 태그(tfoot, footnote)는 열 수 계산에서 제외
+    clean_html = re.sub(r"<(?:tfoot|footnote)\b[\s\S]*?</(?:tfoot|footnote)>", "", html_str, flags=re.I)
+    tr_chunks = re.split(r"<tr\b[^>]*>", clean_html, flags=re.I)[1:]
+
+    for tr in tr_chunks:
+        # tr 닫는 태그 이후의 잔여물 제거
+        tr_body = re.split(r"</tr>", tr, maxsplit=1, flags=re.I)[0]
+        cells = re.findall(r"<(?:td|th)\b([^>]*)>", tr_body, flags=re.I)
+        cols = 0
+        for attrs in cells:
+            m = re.search(r'\bcolspan\s*=\s*["\']?(\d+)', attrs, flags=re.I)
+            span = int(m.group(1)) if m else 1
+            cols += span if span > 0 else 1
+        if cols > max_cols:
+            max_cols = cols
+
+    return max_cols
+
+
 def build_outer_table_html(raw_html: str, caption: str = "", footnote: str = "") -> str:
     """
     순수 table HTML에 HTML5 표준인 <caption>과 <tfoot> 태그를 주입하여 완성형 table HTML을 생성합니다.
@@ -181,14 +206,30 @@ def build_outer_table_html(raw_html: str, caption: str = "", footnote: str = "")
             res = res[:idx] + caption_tag + res[idx:]
 
     if fn_text:
+        max_cols = get_table_max_cols(res)
         escaped_fn = html.escape(fn_text)
-        tfoot_tag = f"<tfoot><tr><td colspan=\"100%\">{escaped_fn}</td></tr></tfoot>"
+        tfoot_tag = f"<tfoot><tr><td colspan=\"{max_cols}\">{escaped_fn}</td></tr></tfoot>"
         m = list(re.finditer(r"</table>", res, re.I))
         if m:
             idx = m[-1].start()
             res = res[:idx] + tfoot_tag + res[idx:]
 
     return res.strip()
+
+
+def sanitize_table_colspans(html_str: str) -> str:
+    """HTML 문자열 내의 table들 중 tfoot의 colspan="100%"를 실제 표의 max_cols로 실시간 치환합니다."""
+    if not html_str or "100%" not in html_str:
+        return html_str or ""
+
+    def _replace_table(match: re.Match) -> str:
+        tbl = match.group(0)
+        if re.search(r'colspan=["\']?100%', tbl, re.I):
+            max_cols = get_table_max_cols(tbl)
+            tbl = re.sub(r'colspan=["\']?100%["\']?', f'colspan="{max_cols}"', tbl, flags=re.I)
+        return tbl
+
+    return re.sub(r"<table\b[\s\S]*?</table>", _replace_table, html_str, flags=re.I)
 
 
 def reconstruct_composite_raw_html(chunk: Dict[str, Any], force: bool = False) -> str:

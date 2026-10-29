@@ -6,6 +6,7 @@ from backend.app.services.chunker.table_extractor import (
     build_outer_table_html,
     get_chunk_kind,
     reconstruct_composite_raw_html,
+    sanitize_table_colspans,
     strip_table_meta_tags,
 )
 from backend.app.services.chunker.text_normalizer import estimate_korean_tokens
@@ -154,7 +155,7 @@ def export_to_jsonl(etl_result: Dict[str, Any], default_doc_id: Optional[str] = 
             raw_val = chunk.get("raw_html", "")
 
         if raw_val:
-            record["raw_html"] = raw_val
+            record["raw_html"] = sanitize_table_colspans(raw_val)
 
         lines.append(json.dumps(record, ensure_ascii=False))
 

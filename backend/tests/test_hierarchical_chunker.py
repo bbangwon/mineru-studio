@@ -1649,10 +1649,30 @@ class TestHierarchicalChunker(unittest.TestCase):
         updated_outer = HierarchicalChunker.build_outer_table_html(outer_html, caption="새 제목", footnote="새 각주")
         self.assertIn("<caption>새 제목</caption>", updated_outer)
         self.assertNotIn("표 1", updated_outer)
-        self.assertIn('<td colspan="100%">새 각주</td>', updated_outer)
+        self.assertIn('<td colspan="2">새 각주</td>', updated_outer)
         self.assertNotIn("※ 각주 1", updated_outer)
         self.assertEqual(updated_outer.count("<caption>"), 1)
         self.assertEqual(updated_outer.count("<tfoot>"), 1)
+
+    def test_get_table_max_cols_calculation(self):
+        """표의 실제 최대 열 개수(max_cols) 계산 및 각주 colspan 자동 반영 검증"""
+        # 1. 단순 3열 테이블
+        table_html = "<table><tr><td>A</td><td>B</td><td>C</td></tr></table>"
+        self.assertEqual(HierarchicalChunker.get_table_max_cols(table_html), 3)
+
+        # 2. colspan이 포함된 복합 테이블 (구분(2) + 5열 = 7열)
+        complex_table = """
+        <table>
+          <tr><td colspan="2">구분</td><td>2014</td><td>2015</td><td>2016</td><td>2017</td><td>2018</td></tr>
+          <tr><td rowspan="6">질병</td><td>우울증</td><td>11</td><td>11</td><td>21</td><td>32</td><td>29</td></tr>
+        </table>
+        """
+        self.assertEqual(HierarchicalChunker.get_table_max_cols(complex_table), 7)
+
+        # 3. build_outer_table_html 주입 시 실제 7개 열로 colspan이 설정되는지 검증
+        outer = HierarchicalChunker.build_outer_table_html(complex_table, caption="현황", footnote="* 자해행위 제외")
+        self.assertIn('<td colspan="7">* 자해행위 제외</td>', outer)
+        self.assertNotIn('colspan="100%"', outer)
 
     def test_outer_vs_inner_table_raw_html_separation(self):
         """단독 표 청크에서 chunk.tables[0].raw_html은 순수 HTML, chunk.raw_html은 caption/tfoot 포함 HTML인지 검증"""

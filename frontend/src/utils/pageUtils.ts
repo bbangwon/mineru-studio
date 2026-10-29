@@ -453,6 +453,36 @@ export function stripTableMetaTags(rawHtml: string): string {
 }
 
 /**
+ * HTML 테이블에서 행별 colspan을 합산하여 실제 최대 열(column) 수를 계산합니다.
+ */
+export function getTableMaxCols(htmlStr: string): number {
+  if (!htmlStr || !/<table\b/i.test(htmlStr)) return 1;
+
+  let maxCols = 1;
+  // 각주 태그(tfoot, footnote)는 열 수 계산에서 제외
+  const cleanHtml = htmlStr.replace(/<(?:tfoot|footnote)\b[\s\S]*?<\/(?:tfoot|footnote)>/gi, '');
+  const trChunks = cleanHtml.split(/<tr\b[^>]*>/i).slice(1);
+
+  for (const tr of trChunks) {
+    const trBody = tr.split(/<\/tr>/i)[0];
+    const cellMatches = trBody.match(/<(?:td|th)\b[^>]*>/gi);
+    let cols = 0;
+    if (cellMatches) {
+      for (const cell of cellMatches) {
+        const m = cell.match(/\bcolspan\s*=\s*["']?(\d+)/i);
+        const span = m ? parseInt(m[1], 10) : 1;
+        cols += !isNaN(span) && span > 0 ? span : 1;
+      }
+    }
+    if (cols > maxCols) {
+      maxCols = cols;
+    }
+  }
+
+  return maxCols;
+}
+
+/**
  * 순수 table HTML(안쪽 raw_html)에 HTML5 표준인 <caption>과 <tfoot>(footnote) 태그를
  * 주입하여 청크 최상위(바깥쪽) 및 RAG 검색용 완성형 table HTML을 생성합니다.
  */
@@ -473,7 +503,8 @@ export function buildOuterTableHtml(
   }
 
   if (fnText) {
-    const tfootTag = `<tfoot><tr><td colspan="100%">${escapeHtml(fnText)}</td></tr></tfoot>`;
+    const maxCols = getTableMaxCols(res);
+    const tfootTag = `<tfoot><tr><td colspan="${maxCols}">${escapeHtml(fnText)}</td></tr></tfoot>`;
     const lastCloseIndex = res.toLowerCase().lastIndexOf('</table>');
     if (lastCloseIndex !== -1) {
       res = res.slice(0, lastCloseIndex) + tfootTag + res.slice(lastCloseIndex);

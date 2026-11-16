@@ -351,7 +351,13 @@ export function App() {
           const isViewingCompletedDoc = !selectedPdfRef.current || selectedPdfRef.current === job.filename;
 
           if (job.result) {
-            if (isViewingCompletedDoc) {
+            if (job.mode === 'part' || job.result.mode === 'part') {
+              const ps = job.result.parts_status;
+              const progressLabel = ps ? `${ps.parsed_count}/${ps.total_pages}p 완료` : `${job.result.batch_pages?.length || 0}p 완료`;
+              showToast(
+                `🧩 [${job.filename || '문서'}] 분할 파싱 완료! (${progressLabel}, 소요: ${job.elapsed_time || 0}초)`
+              );
+            } else if (isViewingCompletedDoc) {
               const normalized = normalizeEtlData(job.result);
               setEtlData(normalized);
               const firstSec = normalized.sections?.find((s) => (s.child_chunk_ids?.length || 0) > 0) || normalized.sections?.[0];
@@ -581,6 +587,7 @@ export function App() {
     let overrideStartPage: number | null = allPages ? null : startPage;
     let overrideEndPage: number | null = allPages ? null : endPage;
     let overridePreserveNewlines = preserveNewlines;
+    let overrideMode: 'full' | 'part' | 'merge_chunk' = 'full';
 
     if (typeof targetOrParams === 'string') {
       docToParse = targetOrParams;
@@ -594,6 +601,7 @@ export function App() {
       if (targetOrParams.start_page !== undefined) overrideStartPage = targetOrParams.start_page;
       if (targetOrParams.end_page !== undefined) overrideEndPage = targetOrParams.end_page;
       if (targetOrParams.preserve_newlines !== undefined) overridePreserveNewlines = targetOrParams.preserve_newlines;
+      if (targetOrParams.mode !== undefined) overrideMode = targetOrParams.mode;
     }
 
     if (!docToParse) {
@@ -649,6 +657,7 @@ export function App() {
         formula: overrideFormula,
         strategy: overrideStrategy,
         preserve_newlines: overridePreserveNewlines,
+        mode: overrideMode,
         lang: 'korean',
       });
 

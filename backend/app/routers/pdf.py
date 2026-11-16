@@ -26,7 +26,7 @@ from backend.app.common import (
 from backend.app.services.embedding_svc import embedding_svc
 from backend.app.services.hierarchical_chunker import HierarchicalChunker
 from backend.app.services.job_manager import job_manager
-from backend.app.services.mineru_svc import normalize_mineru_tier
+from backend.app.services.mineru_svc import find_all_parts_statuses, normalize_mineru_tier
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +344,15 @@ async def list_pdfs():
         except ValueError:
             rel_path = p.name
 
+        parts_list = find_all_parts_statuses(OUTPUT_DIR, stem)
+        parts_info = parts_list[0] if parts_list else None
+        if etl_status == "not_started" and parts_info and parts_info.get("parsed_count", 0) > 0:
+            etl_status = "partial"
+            if not doc_backend and parts_info.get("tier"):
+                doc_backend = normalize_mineru_tier(parts_info["tier"])
+            if not doc_method and parts_info.get("method"):
+                doc_method = parts_info["method"]
+
         items.append(
             {
                 "filename": p.name,
@@ -361,6 +370,7 @@ async def list_pdfs():
                 "is_embedded": is_embedded,
                 "active_job": active_job_info,
                 "stats": stats_info,
+                "parts_info": parts_info,
                 "last_modified": last_modified,
             }
         )

@@ -26,6 +26,7 @@ import {
   RotateCcw,
   Loader2,
   Archive,
+  GitMerge,
 } from 'lucide-react';
 import type { PdfItem, GlobalStats, JobStatusResponse, ParseRequestParams, FolderNode } from '../types';
 import { RunEtlModal } from './RunEtlModal';
@@ -1089,6 +1090,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                             <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             파싱 완료
                           </span>
+                        ) : item.etl_status === 'partial' ? (
+                          <div className="space-y-1">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                              <Layers className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                              분할 파싱 ({item.parts_info?.parsed_count || 0}/{item.parts_info?.total_pages || item.total_pages}p)
+                            </span>
+                          </div>
                         ) : item.etl_status === 'failed' ? (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30">
                             <AlertCircle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
@@ -1182,6 +1190,30 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                           >
                             <FolderIcon className="w-3.5 h-3.5" />
                           </button>
+
+                          {/* Merge & Chunk Button (when split parts exist) */}
+                          {item.parts_info && item.parts_info.parsed_count > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onRunEtl({
+                                  filename: item.filename,
+                                  backend: item.parts_info?.tier || item.backend || engine,
+                                  method: item.parts_info?.method || item.method || method,
+                                  strategy: item.strategy || strategy,
+                                  preserve_newlines: preserveNewlines,
+                                  all_pages: true,
+                                  mode: 'merge_chunk',
+                                  lang: 'korean',
+                                })
+                              }
+                              disabled={isParsing}
+                              className="p-1.5 rounded-xl bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 transition-colors shadow-2xs cursor-pointer disabled:opacity-40"
+                              title={`분할 파싱된 ${item.parts_info.parsed_count}p 병합 및 청킹 실행`}
+                            >
+                              <GitMerge className="w-3.5 h-3.5" />
+                            </button>
+                          )}
 
                           {/* ETL Parse Button */}
                           <button

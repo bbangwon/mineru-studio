@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   X,
   Play,
@@ -8,9 +8,13 @@ import {
   BookOpen,
   Cpu,
   Bookmark,
+  GitMerge,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
-import type { PdfItem, ParseRequestParams } from '../types';
+import type { PdfItem, ParseRequestParams, PartsStatusInfo } from '../types';
 import { MINERU_TIER_OPTIONS, normalizeMineruTier } from '../utils/etlUtils';
+import { getEtlPartsStatus, clearEtlParts } from '../api/client';
 
 interface RunEtlModalProps {
   isOpen: boolean;
@@ -53,24 +57,82 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
   const [endPage, setEndPage] = useState(defaultEndPage);
   const [preserveNewlines, setPreserveNewlines] = useState(defaultPreserveNewlines);
   const [saveAsDefault, setSaveAsDefault] = useState(false);
+  const [execMode, setExecMode] = useState<'full' | 'part'>('full');
+  const [partsStatus, setPartsStatus] = useState<PartsStatusInfo | null>(null);
+  const [isLoadingParts, setIsLoadingParts] = useState(false);
+
+  const findNextUnparsedRange = useCallback((parsedPages: number[], totalP: number, batchSize: number): [number, number] => {
+    const parsedSet = new Set(parsedPages);
+    const maxIdx = Math.max(0, totalP - 1);
+    let firstMissing = 0;
+    while (firstMissing <= maxIdx && parsedSet.has(firstMissing)) {
+      firstMissing++;
+    }
+    if (firstMissing > maxIdx) {
+      return [0, Math.min(maxIdx, batchSize - 1)];
+    }
+    let endIdx = firstMissing;
+    while (endIdx + 1 <= maxIdx && !parsedSet.has(endIdx + 1) && (endIdx - firstMissing + 1) < batchSize) {
+      endIdx++;
+    }
+    return [firstMissing, endIdx];
+  }, []);
+
+  const refreshPartsStatus = useCallback(async (filename: string, tier: string, ocrMethod: string, totalP: number, autoSelectNext: boolean = false) => {
+    setIsLoadingParts(true);
+    try {
+      const res = await getEtlPartsStatus(filename, tier, ocrMethod);
+      setPartsStatus(res.parts_status);
+      if (autoSelectNext && res.parts_status && res.parts_status.parsed_count > 0) {
+        const [ns, ne] = findNextUnparsedRange(res.parts_status.parsed_pages, totalP, 10);
+        setStartPage(ns);
+        setEndPage(ne);
+      }
+    } catch {
+      setPartsStatus(null);
+    } finally {
+      setIsLoadingParts(false);
+    }
+  }, [findNextUnparsedRange]);
 
   // Whenever modal opens or target item changes, sync with default or previous doc settings
   useEffect(() => {
     if (isOpen && targetItem) {
-      // If the document has existing parse settings, we can default to them or fallback to top global defaults
-      setEngine(normalizeMineruTier(targetItem.backend || defaultEngine));
-      setMethod(targetItem.method || defaultMethod || 'auto');
+      const initEngine = normalizeMineruTier(targetItem.backend || defaultEngine);
+      const initMethod = targetItem.method || defaultMethod || 'auto';
+      setEngine(initEngine);
+      setMethod(initMethod);
       setStrategy(targetItem.strategy || defaultStrategy || 'general');
       setFormula(defaultFormula);
-      setAllPages(defaultAllPages);
       setPreserveNewlines(defaultPreserveNewlines);
-      
-      const maxPage = Math.max(0, targetItem.total_pages - 1);
-      setStartPage(Math.min(defaultStartPage, maxPage));
-      setEndPage(defaultAllPages ? maxPage : Math.min(defaultEndPage, maxPage));
       setSaveAsDefault(false);
+
+      const isPartialDoc = targetItem.etl_status === 'partial' || (targetItem.parts_info && targetItem.parts_info.parsed_count > 0);
+      const maxPage = Math.max(0, targetItem.total_pages - 1);
+
+      if (targetItem.etl_status === 'partial') {
+        setExecMode('part');
+        setAllPages(false);
+        const parsed = targetItem.parts_info?.parsed_pages || [];
+        const [ns, ne] = findNextUnparsedRange(parsed, targetItem.total_pages, 10);
+        setStartPage(ns);
+        setEndPage(ne);
+      } else {
+        setExecMode('full');
+        setAllPages(defaultAllPages);
+        setStartPage(Math.min(defaultStartPage, maxPage));
+        setEndPage(defaultAllPages ? maxPage : Math.min(defaultEndPage, maxPage));
+      }
+
+      refreshPartsStatus(targetItem.filename, initEngine, initMethod, targetItem.total_pages, Boolean(isPartialDoc && targetItem.etl_status === 'partial'));
     }
-  }, [isOpen, targetItem, defaultEngine, defaultMethod, defaultFormula, defaultStrategy, defaultAllPages, defaultStartPage, defaultEndPage, defaultPreserveNewlines]);
+  }, [isOpen, targetItem, defaultEngine, defaultMethod, defaultFormula, defaultStrategy, defaultAllPages, defaultStartPage, defaultEndPage, defaultPreserveNewlines, findNextUnparsedRange, refreshPartsStatus]);
+
+  useEffect(() => {
+    if (isOpen && targetItem) {
+      refreshPartsStatus(targetItem.filename, engine, method, targetItem.total_pages, false);
+    }
+  }, [engine, method]);
 
   if (!isOpen || !targetItem) return null;
 
@@ -92,15 +154,51 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
       method: method,
       strategy: strategy,
       formula: formula,
-      all_pages: allPages,
-      start_page: allPages ? null : startPage,
-      end_page: allPages ? null : endPage,
+      all_pages: execMode === 'part' ? false : allPages,
+      start_page: (execMode === 'part' || !allPages) ? startPage : null,
+      end_page: (execMode === 'part' || !allPages) ? endPage : null,
       preserve_newlines: preserveNewlines,
+      mode: execMode,
       lang: 'korean',
     };
 
     await onRun(params, saveAsDefault);
     onClose();
+  };
+
+  const handleMergeAndChunk = async () => {
+    const params: ParseRequestParams = {
+      filename: targetItem.filename,
+      backend: engine,
+      method: method,
+      strategy: strategy,
+      formula: formula,
+      all_pages: true,
+      preserve_newlines: preserveNewlines,
+      mode: 'merge_chunk',
+      lang: 'korean',
+    };
+    await onRun(params, saveAsDefault);
+    onClose();
+  };
+
+  const handleClearParts = async () => {
+    if (!window.confirm('저장된 분할 파싱 임시 데이터를 모두 초기화하시겠습니까?')) return;
+    try {
+      await clearEtlParts(targetItem.filename, engine, method);
+      setPartsStatus(null);
+    } catch (err) {
+      console.error('Failed to clear parts:', err);
+    }
+  };
+
+  const handleSelectNextBatch = (batchSize: number) => {
+    setExecMode('part');
+    setAllPages(false);
+    const parsed = partsStatus?.parsed_pages || [];
+    const [ns, ne] = findNextUnparsedRange(parsed, totalPages, batchSize);
+    setStartPage(ns);
+    setEndPage(ne);
   };
 
   return (
@@ -334,8 +432,130 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
               </label>
             </div>
 
-            {/* 5. Page Range */}
+            {/* 5. Execution Mode & Page Range */}
             <div className="sm:col-span-2 bg-slate-50 dark:bg-slate-950/70 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
+              {/* Execution Mode Toggle */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-200/80 dark:border-slate-800">
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  실행 방식
+                </span>
+                <div className="inline-flex rounded-xl bg-slate-200/70 dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setExecMode('full')}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                      execMode === 'full'
+                        ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    일괄 파싱 + 청킹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExecMode('part');
+                      setAllPages(false);
+                    }}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                      execMode === 'part'
+                        ? 'bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 shadow-2xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    분할 파싱 (틈틈히 부분 저장)
+                  </button>
+                </div>
+              </div>
+
+              {/* Split Parse Progress Card */}
+              {(execMode === 'part' || (partsStatus && partsStatus.parsed_count > 0)) && (
+                <div className="bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-800/60 rounded-xl p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                        분할 파싱 진행 현황 ({engine} / {method})
+                      </span>
+                      {isLoadingParts && <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />}
+                    </div>
+                    {partsStatus && partsStatus.parsed_count > 0 && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-mono font-bold text-amber-700 dark:text-amber-300">
+                          {partsStatus.parsed_count} / {partsStatus.total_pages || totalPages}p (
+                          {Math.round((partsStatus.parsed_count / Math.max(1, partsStatus.total_pages || totalPages)) * 100)}%)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleClearParts}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
+                          title="분할 파싱 임시 데이터 초기화"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Progress bar */}
+                  {partsStatus && partsStatus.parsed_count > 0 ? (
+                    <>
+                      <div className="w-full h-2 bg-amber-200/60 dark:bg-amber-900/40 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-amber-500 dark:bg-amber-400 transition-all duration-300"
+                          style={{
+                            width: `${Math.min(100, Math.round((partsStatus.parsed_count / Math.max(1, partsStatus.total_pages || totalPages)) * 100))}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                        <span className="text-amber-800 dark:text-amber-300 font-semibold">완료 구간:</span>
+                        {partsStatus.parsed_ranges.map(([s, e], idx) => (
+                          <span
+                            key={idx}
+                            className="px-1.5 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 border border-amber-200 dark:border-amber-800 font-mono text-amber-800 dark:text-amber-200"
+                          >
+                            {s === e ? `${s}p` : `${s}~${e}p`}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
+                      아직 분할 저장된 페이지가 없습니다. 원하는 페이지 구간만 먼저 파싱해 두고, 나중에 최종 병합·청킹할 수 있습니다.
+                    </p>
+                  )}
+
+                  {/* Quick Next Batch Buttons + Merge & Chunk Button */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">빠른 구간 선택:</span>
+                      {[5, 10, 20].map((size) => (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() => handleSelectNextBatch(size)}
+                          className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[11px] font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
+                        >
+                          다음 {size}p
+                        </button>
+                      ))}
+                    </div>
+
+                    {partsStatus && partsStatus.parsed_count > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleMergeAndChunk}
+                        disabled={isParsing}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[11px] font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                      >
+                        <GitMerge className="w-3.5 h-3.5" />
+                        <span>파싱본 병합 & 청킹 ({partsStatus.parsed_count}p)</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Layers className="w-4 h-4 text-indigo-500" />
@@ -343,18 +563,20 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
                     파싱 대상 페이지 범위
                   </span>
                 </div>
-                <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-indigo-700 dark:text-indigo-400">
-                  <input
-                    type="checkbox"
-                    checked={allPages}
-                    onChange={(e) => setAllPages(e.target.checked)}
-                    className="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700 cursor-pointer"
-                  />
-                  <span>전체 페이지 파싱 (0 ~ {maxPageIndex}p)</span>
-                </label>
+                {execMode === 'full' && (
+                  <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-indigo-700 dark:text-indigo-400">
+                    <input
+                      type="checkbox"
+                      checked={allPages}
+                      onChange={(e) => setAllPages(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700 cursor-pointer"
+                    />
+                    <span>전체 페이지 파싱 (0 ~ {maxPageIndex}p)</span>
+                  </label>
+                )}
               </div>
 
-              {!allPages && (
+              {(execMode === 'part' || !allPages) && (
                 <div className="flex items-center gap-3 pt-1 text-xs">
                   <div className="flex items-center gap-2 flex-1">
                     <span className="text-slate-500 font-medium whitespace-nowrap">시작 페이지:</span>
@@ -415,7 +637,13 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>{targetItem.etl_status === 'completed' ? '재파싱 실행' : 'ETL 파싱 시작'}</span>
+              <span>
+                {execMode === 'part'
+                  ? `분할 파싱 실행 (${startPage}~${endPage}p)`
+                  : targetItem.etl_status === 'completed'
+                  ? '재파싱 실행'
+                  : 'ETL 파싱 시작'}
+              </span>
             </button>
           </div>
         </div>

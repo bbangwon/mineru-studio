@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from backend.app.common import (
     BASE_DIR,
     DOCS_DIR,
+    OUTPUT_DIR,
     _doc_stats_cache,
     find_latest_content_list,
     find_pdf_path,
@@ -22,7 +23,7 @@ from backend.app.common import (
 from backend.app.routers.pdf import clean_document_artifacts
 from backend.app.services.hierarchical_chunker import HierarchicalChunker
 from backend.app.services.job_manager import job_manager
-from backend.app.services.mineru_svc import MineruService, normalize_mineru_tier
+from backend.app.services.mineru_svc import MineruService, find_all_parts_statuses, normalize_mineru_tier
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,22 @@ class ParseRequest(BaseModel):
     formula: Optional[bool] = True
     strategy: Optional[str] = "general"
     preserve_newlines: Optional[bool] = True
+    mode: Optional[str] = "full"  # "full" | "part" | "merge_chunk"
+
+
+class MergePartsRequest(BaseModel):
+    filename: str
+    backend: Optional[str] = "standard"
+    method: Optional[str] = "ocr"
+    lang: Optional[str] = "korean"
+    strategy: Optional[str] = "general"
+    preserve_newlines: Optional[bool] = True
+
+
+class RechunkRequest(BaseModel):
+    filename: str
+    strategy: Optional[str] = "general"
+    preserve_newlines: Optional[bool] = True
 
 
 class ResetRequest(BaseModel):
@@ -51,6 +68,34 @@ class ResetRequest(BaseModel):
 
 class MergedExportRequest(BaseModel):
     filenames: List[str]
+
+
+@router.delete("/parts")
+async def clear_etl_parts(
+    filename: str,
+    backend: Optional[str] = None,
+    method: Optional[str] = None,
+    lang: str = "korean",
+):
+    """문서의 분할 파싱 임시 데이터(_parts)를 삭제합니다."""
+    pdf_path = find_pdf_path(filename)
+    if not pdf_path or not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"문서 '{filename}'을 찾을 수 없습니다.")
+
+    stem_nfc = unicodedata.normalize("NFC", pdf_path.stem)
+    deleted = False
+    if backend and method:
+        tier = normalize_mineru_tier(backend)
+        ocr_mode = (method or "auto").strip().lower()
+        output_dir = OUTPUT_DIR / f"mineru_{tier}_{ocr_mode}_{lang}"
+        deleted = mineru_svc.clear_pdf_parts(output_dir, stem_nfc, ocr_mode)
+    else:
+        for st in find_all_parts_statuses(OUTPUT_DIR, stem_nfc):
+            output_dir = OUTPUT_DIR / f"mineru_{st['tier']}_{st['method']}_{st.get('lang', 'korean')}"
+            if mineru_svc.clear_pdf_parts(output_dir, stem_nfc, st["method"]):
+                deleted = True
+
+    return {"success": True, "deleted": deleted, "filename": pdf_path.name}
 
 
 @router.delete("/{filename}")
@@ -346,9 +391,11 @@ async def start_etl_job(req: ParseRequest, background_tasks: BackgroundTasks):
     task_id = f"job_{uuid.uuid4().hex[:8]}"
 
     tier = normalize_mineru_tier(req.backend)
+    mode = (req.mode or "full").strip().lower()
     job_manager.jobs_db[task_id] = {
         "task_id": task_id,
         "status": "pending",
+        "mode": mode,
         "progress_msg": "태스크가 백그라운드 대기열에 등록되었습니다...",
         "filename": pdf_path.name,
         "backend": tier,
@@ -364,9 +411,119 @@ async def start_etl_job(req: ParseRequest, background_tasks: BackgroundTasks):
     return {
         "success": True,
         "task_id": task_id,
+        "mode": mode,
         "status": "pending",
         "message": "백그라운드 파싱 작업이 등록되었습니다."
     }
+
+
+@router.get("/parts/status")
+async def get_etl_parts_status(
+    filename: str,
+    backend: Optional[str] = None,
+    method: Optional[str] = None,
+    lang: str = "korean",
+):
+    """문서의 분할 파싱(_parts) 진행 현황을 조회합니다."""
+    pdf_path = find_pdf_path(filename)
+    if not pdf_path or not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"문서 '{filename}'을 찾을 수 없습니다.")
+
+    total_pages = get_pdf_page_count(pdf_path)
+    stem_nfc = unicodedata.normalize("NFC", pdf_path.stem)
+
+    if backend and method:
+        tier = normalize_mineru_tier(backend)
+        ocr_mode = (method or "auto").strip().lower()
+        output_dir = OUTPUT_DIR / f"mineru_{tier}_{ocr_mode}_{lang}"
+        status = mineru_svc.get_parts_status(output_dir, stem_nfc, ocr_mode)
+        return {
+            "filename": pdf_path.name,
+            "total_pages": total_pages,
+            "parts_status": status,
+            "all_pipelines": find_all_parts_statuses(OUTPUT_DIR, stem_nfc),
+        }
+
+    all_statuses = find_all_parts_statuses(OUTPUT_DIR, stem_nfc)
+    return {
+        "filename": pdf_path.name,
+        "total_pages": total_pages,
+        "parts_status": all_statuses[0] if all_statuses else None,
+        "all_pipelines": all_statuses,
+    }
+
+
+@router.post("/parts/merge")
+async def merge_etl_parts(req: MergePartsRequest):
+    """분할 파싱된 페이지들을 병합하고 계층 청킹을 수행합니다."""
+    pdf_path = find_pdf_path(req.filename)
+    if not pdf_path or not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"문서 '{req.filename}'을 찾을 수 없습니다.")
+
+    tier = normalize_mineru_tier(req.backend)
+    ocr_mode = (req.method or "auto").strip().lower()
+    lang = req.lang or "korean"
+    strategy = req.strategy or "general"
+    preserve_newlines = True if req.preserve_newlines is None else req.preserve_newlines
+    output_dir = OUTPUT_DIR / f"mineru_{tier}_{ocr_mode}_{lang}"
+    stem_nfc = unicodedata.normalize("NFC", pdf_path.stem)
+    total_pages = get_pdf_page_count(pdf_path)
+
+    t0 = time.time()
+    merge_res = mineru_svc.merge_pdf_parts(
+        output_dir=output_dir,
+        pdf_name=stem_nfc,
+        ocr_mode=ocr_mode,
+        total_pages=total_pages,
+    )
+    if not merge_res.get("success"):
+        raise HTTPException(status_code=400, detail=merge_res.get("error", "병합할 분할 파싱 데이터가 없습니다."))
+
+    content_list = merge_res.get("content_list", [])
+    content_list_path = Path(merge_res["content_list_path"])
+    etl_res = job_manager._chunk_and_persist(
+        pdf_path=pdf_path,
+        content_list=content_list,
+        target_content_list_path=content_list_path,
+        backend=tier,
+        method=ocr_mode,
+        strategy=strategy,
+        preserve_newlines=preserve_newlines,
+        elapsed_time=round(time.time() - t0, 2),
+    )
+    etl_res["merged_pages"] = merge_res.get("merged_pages")
+    return etl_res
+
+
+@router.post("/rechunk")
+async def rechunk_existing_document(req: RechunkRequest):
+    """이미 파싱/병합된 content_list_v2.json을 바탕으로 OCR 재실행 없이 청킹만 다시 수행합니다."""
+    pdf_path = find_pdf_path(req.filename)
+    if not pdf_path or not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"문서 '{req.filename}'을 찾을 수 없습니다.")
+
+    found = find_latest_content_list(pdf_path.stem)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"문서 '{req.filename}'의 파싱 산출물이 없습니다.")
+
+    c_path, content_list = found
+    from backend.app.common import extract_pipeline_meta_from_path
+    b_cand, m_cand = extract_pipeline_meta_from_path(c_path)
+    strategy = req.strategy or "general"
+    preserve_newlines = True if req.preserve_newlines is None else req.preserve_newlines
+
+    t0 = time.time()
+    etl_res = job_manager._chunk_and_persist(
+        pdf_path=pdf_path,
+        content_list=content_list,
+        target_content_list_path=c_path,
+        backend=b_cand or "basic",
+        method=m_cand or "auto",
+        strategy=strategy,
+        preserve_newlines=preserve_newlines,
+        elapsed_time=round(time.time() - t0, 2),
+    )
+    return etl_res
 
 
 @router.get("/jobs/active")

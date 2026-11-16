@@ -8,6 +8,7 @@ import type {
   CreateBackupRequest,
   RestoreBackupResponse,
   FolderTreeResponse,
+  PartsStatusInfo,
 } from '../types';
 
 export async function getPdfList(): Promise<PdfListResponse> {
@@ -153,6 +154,84 @@ export async function reindexEtlResult(data?: EtlResult): Promise<EtlResult> {
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.detail || 'ID 재정렬에 실패했습니다.');
+  }
+  return res.json();
+}
+
+export async function getEtlPartsStatus(
+  filename: string,
+  backend?: string,
+  method?: string,
+  lang: string = 'korean'
+): Promise<{
+  filename: string;
+  total_pages: number;
+  parts_status: PartsStatusInfo | null;
+  all_pipelines: PartsStatusInfo[];
+}> {
+  const params = new URLSearchParams({ filename, lang });
+  if (backend) params.set('backend', backend);
+  if (method) params.set('method', method);
+  const res = await fetch(`/api/etl/parts/status?${params.toString()}`);
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || '분할 파싱 상태 조회에 실패했습니다.');
+  }
+  return res.json();
+}
+
+export async function mergeEtlParts(params: {
+  filename: string;
+  backend?: string;
+  method?: string;
+  lang?: string;
+  strategy?: string;
+  preserve_newlines?: boolean;
+}): Promise<EtlResult> {
+  const res = await fetch('/api/etl/parts/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || '분할 파싱 결과 병합 및 청킹에 실패했습니다.');
+  }
+  return res.json();
+}
+
+export async function clearEtlParts(
+  filename: string,
+  backend?: string,
+  method?: string,
+  lang: string = 'korean'
+): Promise<{ success: boolean; deleted: boolean; filename: string }> {
+  const params = new URLSearchParams({ filename, lang });
+  if (backend) params.set('backend', backend);
+  if (method) params.set('method', method);
+  const res = await fetch(`/api/etl/parts?${params.toString()}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || '분할 파싱 임시 데이터 삭제에 실패했습니다.');
+  }
+  return res.json();
+}
+
+export async function rechunkDocument(params: {
+  filename: string;
+  strategy?: string;
+  preserve_newlines?: boolean;
+}): Promise<EtlResult> {
+  const res = await fetch('/api/etl/rechunk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || '재청킹에 실패했습니다.');
   }
   return res.json();
 }

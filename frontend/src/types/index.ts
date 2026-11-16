@@ -6,6 +6,28 @@ export interface PdfItemStats {
   estimated_tokens: number;
 }
 
+export interface PartsBatchInfo {
+  start_page: number;
+  end_page: number;
+  pages_count: number;
+  elapsed_time: number;
+  parsed_at: number;
+}
+
+export interface PartsStatusInfo {
+  tier?: string;
+  method?: string;
+  lang?: string;
+  total_pages: number;
+  parsed_pages: number[];
+  parsed_count: number;
+  remaining_count: number;
+  parsed_ranges: [number, number][];
+  batches: PartsBatchInfo[];
+  has_merged_output?: boolean;
+  last_updated?: number;
+}
+
 export interface PdfItem {
   filename: string;
   folder?: string;
@@ -14,7 +36,7 @@ export interface PdfItem {
   total_pages: number;
   is_current: boolean;
   mtime?: number;
-  etl_status?: 'not_started' | 'running' | 'completed' | 'failed';
+  etl_status?: 'not_started' | 'partial' | 'running' | 'completed' | 'failed';
   backend?: string;
   method?: string;
   strategy?: string;
@@ -27,6 +49,7 @@ export interface PdfItem {
     elapsed_time?: number;
   } | null;
   stats?: PdfItemStats | null;
+  parts_info?: PartsStatusInfo | null;
   last_modified?: string | null;
 }
 
@@ -223,16 +246,22 @@ export interface ParseRequestParams {
   formula?: boolean;
   strategy?: 'general' | 'legal' | string;
   preserve_newlines?: boolean;
+  mode?: 'full' | 'part' | 'merge_chunk';
 }
 
 export interface JobStatusResponse {
   task_id: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
+  mode?: 'full' | 'part' | 'merge_chunk';
   progress_msg?: string;
   elapsed_time?: number;
   filename?: string;
   strategy?: string;
-  result?: HierarchicalEtlResult;
+  result?: HierarchicalEtlResult & {
+    mode?: string;
+    parts_status?: PartsStatusInfo;
+    batch_pages?: number[];
+  };
   error?: string;
   active?: boolean;
 }

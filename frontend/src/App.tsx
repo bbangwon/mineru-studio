@@ -36,7 +36,7 @@ import {
   movePdfFiles,
 } from './api/client';
 import { reindexEtlData } from './utils/idUtils';
-import { normalizeEtlData, isLegalDoc } from './utils/etlUtils';
+import { normalizeEtlData, isLegalDoc, normalizeMineruTier } from './utils/etlUtils';
 import { useHierarchyMutations } from './hooks/useHierarchyMutations';
 import type {
   PdfItem,
@@ -70,7 +70,7 @@ export function App() {
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [isLoadingFolders, setIsLoadingFolders] = useState(false);
 
-  const [engine, setEngine] = useState('pipeline');
+  const [engine, setEngine] = useState('basic');
   const [method, setMethod] = useState('auto');
   const [formula, setFormula] = useState(true);
   const [strategy, setStrategy] = useState<string>('general');
@@ -314,7 +314,7 @@ export function App() {
       getParserConfig()
         .then((cfg) => {
           if (!isMounted) return;
-          if (cfg.backend) setEngine(cfg.backend);
+          if (cfg.backend) setEngine(normalizeMineruTier(cfg.backend));
           if (cfg.method) setMethod(cfg.method);
           if (cfg.formula !== undefined) setFormula(cfg.formula);
           if (cfg.strategy) setStrategy(cfg.strategy);
@@ -396,7 +396,7 @@ export function App() {
         setMethod(item.method);
       }
       if (item.backend) {
-        setEngine(item.backend);
+        setEngine(normalizeMineruTier(item.backend));
       }
       setEndPage(Math.max(0, item.total_pages - 1));
     } else if (isLegalDoc(filename)) {
@@ -531,7 +531,7 @@ export function App() {
     setIsSavingParserConfig(true);
     try {
       const cfgToSave = {
-        backend: override?.backend ?? engine,
+        backend: normalizeMineruTier(override?.backend ?? engine),
         method: override?.method ?? method,
         formula: override?.formula ?? formula,
         strategy: override?.strategy ?? strategy,
@@ -553,7 +553,7 @@ export function App() {
     try {
       const res = await resetParserConfig();
       const cfg = res.config;
-      setEngine(cfg.backend);
+      setEngine(normalizeMineruTier(cfg.backend));
       setMethod(cfg.method);
       setFormula(cfg.formula);
       setStrategy(cfg.strategy);
@@ -611,6 +611,7 @@ export function App() {
     }
 
     // 현재 세션의 활성 파싱 옵션을 화면 state에 즉시 동기화 (saveAsDefault 체크 여부와 무관)
+    overrideBackend = normalizeMineruTier(overrideBackend);
     setEngine(overrideBackend);
     setMethod(overrideMethod);
     setFormula(overrideFormula);

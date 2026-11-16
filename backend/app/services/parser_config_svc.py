@@ -1,7 +1,11 @@
 import json
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+
+from backend.app.services.mineru_svc import normalize_mineru_tier
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +15,8 @@ CONFIG_FILE_PATH = BASE_DIR / "output" / "parser_config.json"
 
 class ParserConfig(BaseModel):
     backend: str = Field(
-        default="pipeline",
-        description="MinerU 파싱 엔진 ('pipeline' | 'hybrid-engine')",
+        default="basic",
+        description="MinerU 파싱 티어 ('flash' | 'basic' | 'standard' | 'advanced')",
     )
     method: str = Field(
         default="auto",
@@ -45,11 +49,17 @@ class ParserConfig(BaseModel):
         description="파싱/문장 단위 줄바꿈 보존 여부",
     )
 
+    @field_validator("backend", mode="before")
+    @classmethod
+    def _normalize_backend_tier(cls, value: Any) -> str:
+        """레거시 값('pipeline', 'hybrid-engine')을 MinerU 4.x 티어로 자동 정규화합니다."""
+        return normalize_mineru_tier(value)
+
 
 def get_default_parser_config() -> ParserConfig:
     """기본 권장 파서 설정을 생성하여 반환합니다."""
     return ParserConfig(
-        backend="pipeline",
+        backend="basic",
         method="auto",
         formula=True,
         strategy="general",
@@ -66,7 +76,10 @@ def get_parser_config() -> ParserConfig:
         try:
             with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return ParserConfig(**data)
+            config = ParserConfig(**data)
+            if isinstance(data, dict) and data.get("backend") != config.backend:
+                save_parser_config(config)
+            return config
         except Exception as e:
             logger.warning(f"파서 설정 파일 로딩 실패, 기본값 사용: {e}")
 

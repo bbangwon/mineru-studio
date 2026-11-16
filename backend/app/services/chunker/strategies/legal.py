@@ -55,23 +55,51 @@ class LegalChunkingStrategy(BaseChunkingStrategy):
             for block in page_blocks:
                 b_type = block.get("type", "").lower()
                 b_content = block.get("content", {})
+                b_dict = b_content if isinstance(b_content, dict) else {}
 
-                if self.filter_headers_footers and b_type in ["page_header", "page_footer", "header", "footer", "page_number"]:
+                if self.filter_headers_footers and b_type in [
+                    "page_header",
+                    "page_footer",
+                    "header",
+                    "footer",
+                    "page_number",
+                    "page_footnote",
+                    "page_aside_text",
+                    "aside_text",
+                ]:
                     continue
 
-                if b_type == "title":
-                    raw_text = extract_text_from_content(b_content.get("title_content", []))
+                if b_type in ["title", "doc_title"]:
+                    raw_text = (
+                        extract_text_from_content(b_dict.get("title_content", []))
+                        or extract_text_from_content(b_dict.get("paragraph_content", []))
+                        or str(block.get("text", "") or "")
+                    )
                 elif b_type in ["paragraph", "text"]:
-                    raw_text = extract_text_from_content(b_content.get("paragraph_content", []))
+                    raw_text = extract_text_from_content(b_dict.get("paragraph_content", []))
                     if not raw_text.strip():
                         if isinstance(b_content, str):
                             raw_text = b_content
-                        elif isinstance(b_content.get("content"), str):
-                            raw_text = b_content.get("content")
+                        elif isinstance(b_dict.get("content"), str):
+                            raw_text = b_dict.get("content")
                 elif b_type in ["index", "list"]:
                     raw_text = extract_text_from_list_block(b_content, block)
                 elif b_type in ["equation", "equation_interline"]:
-                    raw_text = b_content.get("math_content", "") or b_content.get("text", "") or block.get("text", "")
+                    raw_text = b_dict.get("math_content", "") or b_dict.get("text", "") or block.get("text", "")
+                elif b_type == "code":
+                    raw_text = (
+                        extract_text_from_content(b_dict.get("code_content", []))
+                        or (b_dict.get("content") if isinstance(b_dict.get("content"), str) else "")
+                        or b_dict.get("text", "")
+                        or block.get("text", "")
+                    )
+                elif b_type == "algorithm":
+                    raw_text = (
+                        extract_text_from_content(b_dict.get("algorithm_content", []))
+                        or (b_dict.get("content") if isinstance(b_dict.get("content"), str) else "")
+                        or b_dict.get("text", "")
+                        or block.get("text", "")
+                    )
                 elif b_type == "table":
                     raw_text = ""
                 else:
@@ -80,11 +108,11 @@ class LegalChunkingStrategy(BaseChunkingStrategy):
                 clean_text = raw_text.strip()
 
                 if b_type == "table":
-                    html_table = b_content.get("html", "")
-                    caption = extract_text_from_content(b_content.get("table_caption", []))
-                    footnote = extract_text_from_content(b_content.get("table_footnote", []))
-                    img_path = b_content.get("image_source", {}).get("path", "")
-                    table_type = b_content.get("table_type", "simple_table")
+                    html_table = b_dict.get("html", "")
+                    caption = extract_text_from_content(b_dict.get("table_caption", []))
+                    footnote = extract_text_from_content(b_dict.get("table_footnote", []))
+                    img_path = (b_dict.get("image_source") or {}).get("path", "")
+                    table_type = b_dict.get("table_type", "simple_table")
 
                     current_breadcrumbs = [h[1] for h in hierarchy_stack]
                     section_items.setdefault(current_sec_id, []).append({

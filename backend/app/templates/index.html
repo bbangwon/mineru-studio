@@ -133,12 +133,14 @@
         <!-- Row 2: Parsing Engine & Page Range Configuration -->
         <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
           <div class="flex flex-wrap items-center gap-3">
-            <!-- Engine Select -->
+            <!-- Engine (Tier) Select -->
             <div class="flex items-center gap-1.5 text-xs text-slate-600">
-              <span class="font-medium text-slate-500">엔진:</span>
+              <span class="font-medium text-slate-500">파싱 티어:</span>
               <select id="etlBackend" class="text-xs bg-slate-50 border border-slate-300 rounded px-2 py-1">
-                <option value="pipeline" selected>Pipeline (한국어 최적화)</option>
-                <option value="hybrid-engine">Hybrid-Engine (VLM 레이아웃)</option>
+                <option value="basic" selected>Basic (소형 모델/OCR 고속 파이프라인 - 권장)</option>
+                <option value="standard">Standard (소형 모델 + VLM 하이브리드)</option>
+                <option value="advanced">Advanced (고정밀 VLM 심층 레이아웃)</option>
+                <option value="flash">Flash (초고속 디지털 텍스트 추출)</option>
               </select>
             </div>
 

@@ -15,7 +15,7 @@ from backend.app.common import (
     normalize_text,
 )
 from backend.app.services.hierarchical_chunker import HierarchicalChunker
-from backend.app.services.mineru_svc import MineruService
+from backend.app.services.mineru_svc import MineruService, normalize_mineru_tier
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class JobManager:
         end_p = None if all_pages else req_data.get("end_page", 2)
         method = req_data.get("method") or "auto"
         formula = True if req_data.get("formula") is None else req_data.get("formula")
-        backend = req_data.get("backend") or "pipeline"
+        backend = normalize_mineru_tier(req_data.get("backend"))
         lang = req_data.get("lang") or "korean"
         strategy = req_data.get("strategy") or "general"
         preserve_newlines = True if req_data.get("preserve_newlines") is None else req_data.get("preserve_newlines")

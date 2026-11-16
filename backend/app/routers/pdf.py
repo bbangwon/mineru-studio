@@ -26,6 +26,7 @@ from backend.app.common import (
 from backend.app.services.embedding_svc import embedding_svc
 from backend.app.services.hierarchical_chunker import HierarchicalChunker
 from backend.app.services.job_manager import job_manager
+from backend.app.services.mineru_svc import normalize_mineru_tier
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,9 @@ async def list_pdfs():
         if etl_status == "completed" and not doc_strategy:
             doc_strategy = "legal" if any(k in stem for k in ["규정", "지침", "기준", "법률", "조례", "훈령", "전문"]) else "general"
         if etl_status == "completed" and not doc_backend:
-            doc_backend = "pipeline"
+            doc_backend = "basic"
+        if doc_backend:
+            doc_backend = normalize_mineru_tier(doc_backend)
         if etl_status == "completed" and not doc_method:
             doc_method = "auto"
 

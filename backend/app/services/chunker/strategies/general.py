@@ -52,15 +52,29 @@ class GeneralChunkingStrategy(BaseChunkingStrategy):
             for block in page_blocks:
                 b_type = block.get("type", "").lower()
                 b_content = block.get("content", {})
+                b_dict = b_content if isinstance(b_content, dict) else {}
 
-                if self.filter_headers_footers and b_type in ["page_header", "page_footer", "header", "footer"]:
+                if self.filter_headers_footers and b_type in [
+                    "page_header",
+                    "page_footer",
+                    "header",
+                    "footer",
+                    "page_number",
+                    "page_footnote",
+                    "page_aside_text",
+                    "aside_text",
+                ]:
                     continue
 
-                if b_type == "title":
-                    title_text = extract_text_from_content(b_content.get("title_content", []))
+                if b_type in ["title", "doc_title"]:
+                    title_text = (
+                        extract_text_from_content(b_dict.get("title_content", []))
+                        or extract_text_from_content(b_dict.get("paragraph_content", []))
+                        or str(block.get("text", "") or "")
+                    )
                     if not title_text.strip():
                         continue
-                    level = b_content.get("level", 1)
+                    level = b_dict.get("level", 1)
 
                     clean_title = title_text.strip()
                     if RE_ROMAN_NUM.match(clean_title) or RE_PART.match(clean_title) or RE_CHAPTER.match(clean_title):
@@ -107,18 +121,32 @@ class GeneralChunkingStrategy(BaseChunkingStrategy):
                             "breadcrumbs": current_breadcrumbs,
                         })
 
-                elif b_type in ["paragraph", "text", "index", "list", "equation", "equation_interline"]:
+                elif b_type in ["paragraph", "text", "index", "list", "equation", "equation_interline", "code", "algorithm"]:
                     if b_type in ["index", "list"]:
                         para_text = extract_text_from_list_block(b_content, block)
                     elif b_type in ["equation", "equation_interline"]:
-                        para_text = b_content.get("math_content", "") or b_content.get("text", "") or block.get("text", "")
+                        para_text = b_dict.get("math_content", "") or b_dict.get("text", "") or block.get("text", "")
+                    elif b_type == "code":
+                        para_text = (
+                            extract_text_from_content(b_dict.get("code_content", []))
+                            or (b_dict.get("content") if isinstance(b_dict.get("content"), str) else "")
+                            or b_dict.get("text", "")
+                            or block.get("text", "")
+                        )
+                    elif b_type == "algorithm":
+                        para_text = (
+                            extract_text_from_content(b_dict.get("algorithm_content", []))
+                            or (b_dict.get("content") if isinstance(b_dict.get("content"), str) else "")
+                            or b_dict.get("text", "")
+                            or block.get("text", "")
+                        )
                     else:
-                        para_text = extract_text_from_content(b_content.get("paragraph_content", []))
+                        para_text = extract_text_from_content(b_dict.get("paragraph_content", []))
                         if not para_text.strip():
                             if isinstance(b_content, str):
                                 para_text = b_content
-                            elif isinstance(b_content.get("content"), str):
-                                para_text = b_content.get("content")
+                            elif isinstance(b_dict.get("content"), str):
+                                para_text = b_dict.get("content")
                     if not para_text.strip():
                         continue
 
@@ -131,11 +159,11 @@ class GeneralChunkingStrategy(BaseChunkingStrategy):
                     })
 
                 elif b_type == "table":
-                    html_table = b_content.get("html", "")
-                    caption = extract_text_from_content(b_content.get("table_caption", []))
-                    footnote = extract_text_from_content(b_content.get("table_footnote", []))
-                    img_path = b_content.get("image_source", {}).get("path", "")
-                    table_type = b_content.get("table_type", "simple_table")
+                    html_table = b_dict.get("html", "")
+                    caption = extract_text_from_content(b_dict.get("table_caption", []))
+                    footnote = extract_text_from_content(b_dict.get("table_footnote", []))
+                    img_path = (b_dict.get("image_source") or {}).get("path", "")
+                    table_type = b_dict.get("table_type", "simple_table")
 
                     current_breadcrumbs = [h[1] for h in heading_stack]
                     section_items.setdefault(current_sec_id, []).append({

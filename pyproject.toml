@@ -5,7 +5,8 @@ description = "MinerU RAG ETL & Hierarchical Chunking Studio"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "mineru[all]>=3.4.0",
+    "mineru[torch]>=4.2.2,<5.0.0",
+    "opencv-python-headless>=4.10.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
     "jinja2>=3.1.4",

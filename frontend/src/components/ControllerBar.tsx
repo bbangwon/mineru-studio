@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { FileText, Upload, Zap, Layers, Loader2 } from 'lucide-react';
 import type { PdfItem } from '../types';
+import { MINERU_TIER_OPTIONS, normalizeMineruTier } from '../utils/etlUtils';
 
 interface ControllerBarProps {
   pdfList: PdfItem[];
@@ -151,16 +152,19 @@ export const ControllerBar: React.FC<ControllerBarProps> = ({
       {/* Row 2: Parsing Engine & Page Range Configuration */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
         <div className="flex flex-wrap items-center gap-3">
-          {/* Engine Select */}
+          {/* Engine (Tier) Select */}
           <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <span className="font-medium text-slate-500">엔진:</span>
+            <span className="font-medium text-slate-500">파싱 티어:</span>
             <select
-              value={engine}
+              value={normalizeMineruTier(engine)}
               onChange={(e) => setEngine(e.target.value)}
               className="text-xs bg-slate-50 border border-slate-300 rounded px-2 py-1 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             >
-              <option value="pipeline">Pipeline (기본)</option>
-              <option value="hybrid-engine">Hybrid-Engine (VLM 레이아웃)</option>
+              {MINERU_TIER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
 

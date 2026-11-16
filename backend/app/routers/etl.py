@@ -22,7 +22,7 @@ from backend.app.common import (
 from backend.app.routers.pdf import clean_document_artifacts
 from backend.app.services.hierarchical_chunker import HierarchicalChunker
 from backend.app.services.job_manager import job_manager
-from backend.app.services.mineru_svc import MineruService
+from backend.app.services.mineru_svc import MineruService, normalize_mineru_tier
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class ParseRequest(BaseModel):
     start_page: Optional[int] = 0
     end_page: Optional[int] = 2
     lang: Optional[str] = "korean"
-    backend: Optional[str] = "pipeline"
+    backend: Optional[str] = "basic"
     method: Optional[str] = "auto"
     formula: Optional[bool] = True
     strategy: Optional[str] = "general"
@@ -274,17 +274,18 @@ async def run_etl_parse(req: ParseRequest):
     start_p = None if req.all_pages else req.start_page
     end_p = None if req.all_pages else req.end_page
 
+    tier = normalize_mineru_tier(req.backend)
     method = req.method or "auto"
     formula = True if req.formula is None else req.formula
     preserve_newlines = True if req.preserve_newlines is None else req.preserve_newlines
-    output_dir = BASE_DIR / "output" / f"mineru_{req.backend}_{method}_{req.lang}"
+    output_dir = BASE_DIR / "output" / f"mineru_{tier}_{method}_{req.lang}"
     parse_res = mineru_svc.parse_pdf(
         pdf_path=pdf_path,
         output_dir=output_dir,
         start_page=start_p,
         end_page=end_p,
         lang=req.lang or "korean",
-        backend=req.backend or "pipeline",
+        backend=tier,
         method=method,
         formula=formula,
     )
@@ -309,7 +310,7 @@ async def run_etl_parse(req: ParseRequest):
     etl_res["elapsed_time"] = parse_res.get("elapsed_time", 0)
     etl_res["active_pdf"] = pdf_path.name
     etl_res["total_pages"] = get_pdf_page_count(pdf_path)
-    etl_res["backend"] = req.backend or "pipeline"
+    etl_res["backend"] = tier
     etl_res["method"] = method
     etl_res["strategy"] = chunk_strat
     etl_res["preserve_newlines"] = preserve_newlines
@@ -344,12 +345,13 @@ async def start_etl_job(req: ParseRequest, background_tasks: BackgroundTasks):
     job_manager.current_selected_pdf_name = pdf_path.name
     task_id = f"job_{uuid.uuid4().hex[:8]}"
 
+    tier = normalize_mineru_tier(req.backend)
     job_manager.jobs_db[task_id] = {
         "task_id": task_id,
         "status": "pending",
         "progress_msg": "태스크가 백그라운드 대기열에 등록되었습니다...",
         "filename": pdf_path.name,
-        "backend": req.backend or "pipeline",
+        "backend": tier,
         "method": req.method or "auto",
         "strategy": req.strategy or "general",
         "created_at": time.time(),

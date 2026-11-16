@@ -1,5 +1,65 @@
 import type { HierarchicalEtlResult, SectionNode, ParentChunk, ChildChunk } from '../types';
 
+export type MineruTier = 'flash' | 'basic' | 'standard' | 'advanced';
+
+export const MINERU_TIER_OPTIONS: ReadonlyArray<{
+  value: MineruTier;
+  label: string;
+  shortLabel: string;
+}> = [
+  {
+    value: 'basic',
+    label: 'Basic (소형 모델/OCR 고속 파이프라인 - 권장)',
+    shortLabel: 'Basic',
+  },
+  {
+    value: 'standard',
+    label: 'Standard (소형 모델 + VLM 하이브리드)',
+    shortLabel: 'Standard',
+  },
+  {
+    value: 'advanced',
+    label: 'Advanced (고정밀 VLM 심층 레이아웃)',
+    shortLabel: 'Advanced',
+  },
+  {
+    value: 'flash',
+    label: 'Flash (초고속 디지털 텍스트 추출)',
+    shortLabel: 'Flash',
+  },
+];
+
+const LEGACY_TIER_MAP: Record<string, MineruTier> = {
+  pipeline: 'basic',
+  'hybrid-engine': 'standard',
+  vlm: 'standard',
+};
+
+/**
+ * 레거시 backend 값('pipeline', 'hybrid-engine') 및 MinerU 4.x 티어를 정규화
+ */
+export function normalizeMineruTier(backend?: string | null): MineruTier {
+  if (!backend) return 'basic';
+  const normalized = backend.trim().toLowerCase();
+  if (normalized in LEGACY_TIER_MAP) {
+    return LEGACY_TIER_MAP[normalized];
+  }
+  if (
+    normalized === 'flash' ||
+    normalized === 'basic' ||
+    normalized === 'standard' ||
+    normalized === 'advanced'
+  ) {
+    return normalized;
+  }
+  return 'basic';
+}
+
+export function getMineruTierBadgeLabel(backend?: string | null): string {
+  const tier = normalizeMineruTier(backend);
+  return MINERU_TIER_OPTIONS.find((opt) => opt.value === tier)?.shortLabel || 'Basic';
+}
+
 /**
  * 문서명이 법률/규정 문서에 해당하는지 정규식 검사
  */

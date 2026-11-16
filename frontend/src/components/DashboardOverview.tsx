@@ -31,6 +31,7 @@ import type { PdfItem, GlobalStats, JobStatusResponse, ParseRequestParams, Folde
 import { RunEtlModal } from './RunEtlModal';
 import { FolderTreePane } from './FolderTreePane';
 import { GripVertical, Folder as FolderIcon } from 'lucide-react';
+import { MINERU_TIER_OPTIONS, getMineruTierBadgeLabel, normalizeMineruTier } from '../utils/etlUtils';
 
 interface DashboardOverviewProps {
   pdfList: PdfItem[];
@@ -412,16 +413,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
-            {/* 1. Engine */}
+            {/* 1. Engine (Tier) */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5">MinerU 엔진</label>
+              <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5">MinerU 파싱 티어 (Tier)</label>
               <select
-                value={engine}
+                value={normalizeMineruTier(engine)}
                 onChange={(e) => setEngine(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 font-medium"
               >
-                <option value="pipeline">Pipeline (MLX / 고속 파이프라인)</option>
-                <option value="hybrid-engine">Hybrid-Engine (VLM 레이아웃)</option>
+                {MINERU_TIER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -1007,7 +1011,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                                         ? 'bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30'
                                         : 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30'
                                     }`}
-                                    title={`MinerU 파싱 방식: ${item.method.toUpperCase()} (${item.backend || 'pipeline'})`}
+                                    title={`MinerU 파싱 방식: ${item.method.toUpperCase()} (${getMineruTierBadgeLabel(item.backend)})`}
                                   >
                                     {item.method === 'ocr'
                                       ? 'OCR 강제인식'
@@ -1036,11 +1040,25 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                                   </span>
                                 )}
 
-                                {item.backend && item.backend !== 'pipeline' && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-500/30 font-medium">
-                                    {item.backend}
-                                  </span>
-                                )}
+                                {item.backend && (() => {
+                                  const tier = normalizeMineruTier(item.backend);
+                                  const badgeStyle =
+                                    tier === 'advanced'
+                                      ? 'bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-500/30'
+                                      : tier === 'standard'
+                                      ? 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30'
+                                      : tier === 'flash'
+                                      ? 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30'
+                                      : 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/20';
+                                  return (
+                                    <span
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${badgeStyle}`}
+                                      title={`MinerU 파싱 티어: ${getMineruTierBadgeLabel(item.backend)}`}
+                                    >
+                                      {getMineruTierBadgeLabel(item.backend)}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             )}
 

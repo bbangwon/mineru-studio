@@ -10,6 +10,7 @@ import {
   Bookmark,
 } from 'lucide-react';
 import type { PdfItem, ParseRequestParams } from '../types';
+import { MINERU_TIER_OPTIONS, normalizeMineruTier } from '../utils/etlUtils';
 
 interface RunEtlModalProps {
   isOpen: boolean;
@@ -43,7 +44,7 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
   onRun,
   isParsing,
 }) => {
-  const [engine, setEngine] = useState(defaultEngine);
+  const [engine, setEngine] = useState(normalizeMineruTier(defaultEngine));
   const [method, setMethod] = useState(defaultMethod);
   const [formula, setFormula] = useState(defaultFormula);
   const [strategy, setStrategy] = useState(defaultStrategy);
@@ -57,7 +58,7 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
   useEffect(() => {
     if (isOpen && targetItem) {
       // If the document has existing parse settings, we can default to them or fallback to top global defaults
-      setEngine(targetItem.backend || defaultEngine || 'pipeline');
+      setEngine(normalizeMineruTier(targetItem.backend || defaultEngine));
       setMethod(targetItem.method || defaultMethod || 'auto');
       setStrategy(targetItem.strategy || defaultStrategy || 'general');
       setFormula(defaultFormula);
@@ -179,22 +180,25 @@ export const RunEtlModal: React.FC<RunEtlModalProps> = ({
 
           {/* Options Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* 1. Engine */}
+            {/* 1. Engine (Tier) */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
                 <Cpu className="w-3.5 h-3.5 text-indigo-500" />
-                <span>MinerU 엔진</span>
+                <span>MinerU 파싱 티어 (Tier)</span>
               </label>
               <select
                 value={engine}
-                onChange={(e) => setEngine(e.target.value)}
+                onChange={(e) => setEngine(normalizeMineruTier(e.target.value))}
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
               >
-                <option value="pipeline">Pipeline (MLX 고속 파이프라인)</option>
-                <option value="hybrid-engine">Hybrid-Engine (VLM 레이아웃 기반)</option>
+                {MINERU_TIER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
               <p className="text-[11px] text-slate-400 mt-1">
-                대부분의 PDF에는 Pipeline이 가장 빠르고 안정적입니다.
+                일반 PDF에는 Basic이 빠르고 안정적이며, 복잡한 레이아웃은 Standard/Advanced를 권장합니다.
               </p>
             </div>
 

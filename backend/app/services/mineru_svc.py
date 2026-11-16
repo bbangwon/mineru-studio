@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,115 @@ def normalize_mineru_tier(backend: Optional[str]) -> str:
     if val in VALID_MINERU_TIERS:
         return val
     return "basic"
+
+
+_SINGLE_FORM_CM_RE = re.compile(
+    rb"([0-9.+-]+)\s+0\s+0\s+([0-9.+-]+)\s+([0-9.+-]+)\s+([0-9.+-]+)\s+cm\s+/(\S+)\s+Do"
+)
+
+
+def _normalize_tiny_form_xobject_scales(pdf_path: Path, dest_path: Path) -> Optional[Path]:
+    """한컴오피스(rhwp) 등에서 생성된 PDF의 미세 축소 Form XObject /Matrix를 정규화합니다.
+
+    페이지 스트림이 `sx 0 0 sy tx ty cm /Name Do` 형태이고 참조하는 Form XObject의
+    `/Matrix`가 미세 스케일(< 0.05)로 축소된 경우, PDFium이 반각 숫자·특수문자를
+    노이즈(width < 0.01)로 필터링해 누락시키는 문제를 방지하기 위해
+    페이지 스케일을 Form `/Matrix`로 병합한 임시 PDF를 생성합니다.
+    정규화가 필요한 페이지가 없으면 None을 반환합니다.
+    """
+    try:
+        import pypdf
+        from pypdf.generic import (
+            ArrayObject,
+            DecodedStreamObject,
+            DictionaryObject,
+            FloatObject,
+            NameObject,
+        )
+    except ImportError:
+        return None
+
+    try:
+        reader = pypdf.PdfReader(str(pdf_path))
+        writer = pypdf.PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
+
+        modified_pages = 0
+        for page in writer.pages:
+            contents = page.get_contents()
+            if contents is None:
+                continue
+            raw_c = contents.get_data().strip()
+            match = _SINGLE_FORM_CM_RE.fullmatch(raw_c)
+            if not match:
+                continue
+
+            sx = float(match.group(1))
+            sy = float(match.group(2))
+            tx = float(match.group(3))
+            ty = float(match.group(4))
+            xobj_name = match.group(5).decode("latin1")
+            xobj_key = f"/{xobj_name}"
+
+            res = page.get("/Resources")
+            xobjs = res.get("/XObject") if res else None
+            if not xobjs or xobj_key not in xobjs:
+                continue
+
+            xobj = xobjs[xobj_key].get_object()
+            if xobj.get("/Subtype") != "/Form":
+                continue
+
+            mat = xobj.get("/Matrix")
+            if not mat or len(mat) != 6:
+                continue
+
+            m0, m1, m2, m3, m4, m5 = [float(v) for v in mat]
+            if not (
+                0 < abs(m0) < 0.05
+                and 0 < abs(m3) < 0.05
+                and abs(m0 * sx) >= 0.1
+                and abs(m3 * sy) >= 0.1
+            ):
+                continue
+
+            cloned_xobj = xobj.clone(writer)
+            cloned_xobj[NameObject("/Matrix")] = ArrayObject([
+                FloatObject(m0 * sx),
+                FloatObject(m1 * sy),
+                FloatObject(m2 * sx),
+                FloatObject(m3 * sy),
+                FloatObject(m4 * sx + tx),
+                FloatObject(m5 * sy + ty),
+            ])
+
+            new_xobjs = DictionaryObject(xobjs)
+            new_xobjs[NameObject(xobj_key)] = cloned_xobj.indirect_reference
+            new_res = DictionaryObject(res)
+            new_res[NameObject("/XObject")] = new_xobjs
+            page[NameObject("/Resources")] = new_res
+
+            new_stream = DecodedStreamObject()
+            new_stream.set_data(f"/{xobj_name} Do".encode("latin1"))
+            page[NameObject("/Contents")] = writer._add_object(new_stream)
+            modified_pages += 1
+
+        if modified_pages == 0:
+            return None
+
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest_path, "wb") as f_out:
+            writer.write(f_out)
+
+        logger.info(
+            f"Normalized tiny Form XObject scales for {modified_pages}/{len(writer.pages)} "
+            f"page(s) in {pdf_path.name}"
+        )
+        return dest_path
+    except Exception as exc:
+        logger.warning(f"Failed to normalize Form XObject scales for {pdf_path.name}, using original: {exc}")
+        return None
 
 
 def _format_pages_arg(start_page: Optional[int], end_page: Optional[int]) -> str:
@@ -179,10 +289,14 @@ class MineruService:
         pages_arg = _format_pages_arg(start_page, end_page)
 
         tmp_zip_path = output_dir / f".tmp_{uuid.uuid4().hex[:10]}.zip"
+        tmp_norm_pdf_path = output_dir / f".tmp_norm_{uuid.uuid4().hex[:10]}.pdf"
+        normalized_pdf_path = _normalize_tiny_form_xobject_scales(pdf_path, tmp_norm_pdf_path)
+        parse_input_path = normalized_pdf_path if normalized_pdf_path is not None else pdf_path
+
         cmd = [
             self.mineru_kit_cmd,
             "parse",
-            str(pdf_path),
+            str(parse_input_path),
             "-o", str(tmp_zip_path),
             "-f", "zip",
             "--tier", tier,
@@ -245,5 +359,10 @@ class MineruService:
             if tmp_zip_path.exists():
                 try:
                     tmp_zip_path.unlink()
+                except OSError:
+                    pass
+            if tmp_norm_pdf_path.exists():
+                try:
+                    tmp_norm_pdf_path.unlink()
                 except OSError:
                     pass

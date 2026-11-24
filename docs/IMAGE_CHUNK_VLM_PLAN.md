@@ -1,7 +1,7 @@
 # 이미지 청크 · Parent-Child 연계(방식 B) · VLM 설명 자동 생성 구현 계획서
 
-- **작성일**: 2026-11-23
-- **작업 브랜치**: `feat/image-chunk-vlm` (기준: `feat/migrate-mineru-v4` @ `28d2dd4`)
+- **작성일**: 2026-11-23 (최종 수정일: 2026-11-24 — `pdf-viewer` 반영 최신화)
+- **작업 브랜치**: `feat/image-chunk-vlm` (기준: `main` @ `6deab10`, 원본 PDF 뷰어 반영 이후)
 - **대상 프로젝트**: `mineru-studio` (FastAPI + React SPA + `rag_embed_core` / Qdrant Embedded·Remote + Ollama OpenAI 호환 API)
 
 ---
@@ -231,11 +231,9 @@
 3. **RAG 컨텍스트 강화 (`backend/app/services/llm_refine_svc.py`)**
    * `build_rag_context()`에서 `[참조 #N]` 조립 시 해당 청크가 이미지 청크(`images`)이거나 `parent_images`를 보유한 경우, 참조 헤더 및 보조 라인에 관련 이미지 개수·페이지·캡션 정보를 명시해 LLM이 출처 페이지를 정확히 안내할 수 있도록 보강.
 
-4. **원본 PDF 문서 지정 스트리밍 (`backend/app/routers/pdf.py`)**
-   * `GET /api/pdf`에 선택적 쿼리 파라미터 `filename: Optional[str] = None` 추가:
-     * `filename`이 전달되면 `find_pdf_path(filename)`로 해당 문서 경로를 찾아 `FileResponse`로 반환.
-     * `filename`이 생략되면 기존과 동일하게 `job_manager.get_active_pdf_path()` 반환(하위 호환 유지).
-   * 이를 통해 클라이언트나 검색 UI에서 `/api/pdf?filename=<문서명>#page=<N>` 형태로 언제든 원하는 문서의 해당 페이지 원본 PDF를 열 수 있습니다.
+4. **원본 PDF 문서 지정 스트리밍 연계 (`backend/app/routers/pdf.py` — 기구현 재사용)**:
+   * `GET /api/pdf?filename=...` (`_resolve_target_pdf_path()` + `_is_within_allowed_pdf_dirs()`) 및 `GET /api/pdf/page-image`가 `pdf-viewer` 작업으로 이미 구현되어 있으며, 프론트엔드 URL 헬퍼(`getOriginalPdfUrl()`, `getPdfPageImageUrl()` in `frontend/src/api/client.ts`)도 구비되어 있습니다.
+   * 따라서 별도 라우터 수정 없이 기존 엔드포인트·헬퍼를 재사용하되, JSONL/Qdrant의 `source_pdf`에는 `App.tsx`의 `activePdfForViewer`와 동일하게 가능하면 서브폴더 상대 경로까지 일관되게 보존하여 `find_pdf_path()`가 동명 파일도 정확히 해소하도록 맞춥니다.
 
 ---
 
@@ -281,15 +279,20 @@
    * `frontend/src/hooks/useHierarchyMutations.ts`:
      * `handleUpdateChunk`, 병합/분할/이동/삭제 시 상위 `ParentChunk.text`에 `[이미지: ... (p.N)]` 표식 반영 및 `ParentChunk.images`(`ParentImageRef[]`) 자동 재계산 헬퍼 연동.
 
-2. **Chunk Studio UI (`ChunkStudio.tsx`, `ChunkEditorPane.tsx`, `ChunkListPane.tsx`, `ChunkCard.tsx`, 모달들)**
+2. **Chunk Studio UI (`ChunkStudio.tsx`, `PdfViewerPane.tsx`, `ChunkEditorPane.tsx`, `ChunkListPane.tsx`, `ChunkCard.tsx`, 모달들)**
+   * **`ChunkStudio.tsx` & `PdfViewerPane.tsx` (`bbox` 하이라이트 연동)**:
+     * `PdfViewerPane`에 이미 예약된 `highlightBboxes` prop(MinerU 0~1000 정규화 좌표 `[x0, y0, x1, y1]`)에 `activeChunk.images`를 연결합니다.
+     * 다중 페이지 청크나 자유 페이지 탐색(`isPdfPageSynced === false`) 시 엉뚱한 페이지에 오버레이가 그려지지 않도록, **반드시 `img.page_number === pdfCurrentPage`인 항목만 필터링**하여 `highlightBboxes`로 전달합니다.
    * **`ChunkEditorPane.tsx`**:
      * 이미지 포함 청크(`hasImageData(activeChunk)`)일 때 상단 **이미지 프리뷰 및 편집 패널** 렌더링:
-       * 이미지 썸네일 카드, 페이지 번호 & `bbox` 좌표 표시, `caption` / `footnote` / `description` 입력 필드, 개별 이미지 제거 버튼.
-       * **`📄 원본 PDF p.N 열기`** 버튼(`/api/pdf?filename=...#page=N` 새 탭 열기).
+       * 이미지 썸네일 카드, 페이지 번호 & `bbox` 좌표 표시, `caption` / `footnote` / `description` 입력 필드(PDF 뷰어의 `Space` 패닝 및 `Alt+P` 단축키 충돌 방지를 위해 표준 `<input>`/`<textarea>` 사용), 개별 이미지 제거 버튼.
+       * **`📄 원본 PDF p.N 열기`** 버튼: 새 탭이 아닌 Chunk Studio 내장 `openPdfAtPage(img.page_number)`를 호출해 즉시 PDF 뷰어 해당 페이지 + `bbox` 하이라이트로 이동합니다(새 탭 열기는 `PdfViewerPane` 툴바에서 이미 지원).
        * 각 이미지별 **`🖼️ AI 설명 초안(VLM)`** 버튼: 생성된 설명을 바로 `description`에 채우고 `chunk.text` 동기화 버튼/자동 반영 지원.
+     * PDF 대조 모드에서 에디터 폭이 최대 `30%`까지 축소될 수 있으므로 이미지 프리뷰/편집 패널은 좁은 폭에서도 깨지지 않는 세로 스택·반응형 레이아웃으로 구성합니다.
      * `isImageChunk`가 포함될 때 토큰 한도 경고 대신 이미지 보존 안내 또는 적절한 길이 안내 표시.
    * **`ChunkListPane.tsx` & `ChunkCard.tsx`**:
      * 2열 필터에 `이미지` 필터 옵션 추가 및 툴바에 **`🖼️ 빈 이미지 일괄 설명 생성`** 액션(진행률 표시 + 중단 가능) 추가.
+     * PDF 대조 모드에서는 `ChunkListPane`이 `isOverlayMode`(`380~440px` 드로어)로 열리므로 툴바·필터 컨트롤은 `flex-wrap`으로 줄바꿈을 허용하고, 드로어를 닫아도 배치 진행 상태를 확인할 수 있게 유지합니다.
      * `ChunkCard.tsx`에 `IMAGE` / `COMPOSITE (이미지 N)` 뱃지 및 소형 썸네일 미리보기 표시.
    * **`ChunkMergeModal.tsx` & `ChunkSplitModal.tsx`**:
      * 병합 대상 청크들에 포함된 이미지 개수(`이미지 N개 결합 보존`) 및 분할 시 이미지 보존 안내 표시.
@@ -301,8 +304,8 @@
 
 3. **Retrieval Playground UI (`RetrievalPlayground.tsx`)**
    * 검색 결과 카드 및 상세 모달에 아래 두 영역 명확히 구분 표시:
-     * **해당 청크 이미지 (`item.images[]`)**: 유물 캡션·시각 설명·썸네일 미리보기 및 **`📄 원본 PDF p.N 열기`** 링크.
-     * **상위 Parent 관련 이미지 (`item.parent_images[]`)** *(방식 B)*: 텍스트 청크만 검색되었을 때도 `"이 섹션(Parent)에 포함된 이미지 N건"` 배지·목록(캡션, 페이지 번호, `bbox`, PDF 열기 링크)을 표시.
+     * **해당 청크 이미지 (`item.images[]`)**: 유물 캡션·시각 설명·썸네일 미리보기 및 `frontend/src/api/client.ts`의 `getOriginalPdfUrl(item.source_pdf, img.page_number)`를 활용한 **`📄 원본 PDF p.N 열기`** 링크(선택적으로 `/api/pdf/page-image` 경량 미리보기 연계 가능).
+     * **상위 Parent 관련 이미지 (`item.parent_images[]`)** *(방식 B)*: 텍스트 청크만 검색되었을 때도 `"이 섹션(Parent)에 포함된 이미지 N건"` 배지·목록(캡션, 페이지 번호, `bbox`, `getOriginalPdfUrl()` 기반 PDF 열기 링크)을 표시.
 
 ---
 
@@ -320,7 +323,7 @@
 | **백엔드 (수정)** | `backend/app/services/embedding_svc.py` | `reserved_keys`, Qdrant payload 이미지·`parent_images` 적재 및 `hybrid_search` 반환 |
 | **백엔드 (수정)** | `backend/app/services/job_manager.py` | 청킹 후 `image_url`·`source_pdf` 주입 |
 | **백엔드 (수정)** | `backend/app/routers/etl.py` | `/sample`, `/parse`, `/rechunk`, `/reset`, `/parts/merge` 이미지 URL·메타 동기화 |
-| **백엔드 (수정)** | `backend/app/routers/pdf.py` | `GET /api/pdf?filename=...` 문서 지정 원본 PDF 스트리밍 지원 |
+| **백엔드 (재사용)** | `backend/app/routers/pdf.py` | *(기구현 재사용)* `GET /api/pdf?filename=...` 및 `GET /api/pdf/page-image` 기존 구현 그대로 활용 |
 | **백엔드 (수정)** | `backend/app/services/llm_config_svc.py` | `vlm_model_name`, `image_description_prompt` 설정 및 기본 프롬프트 추가 |
 | **백엔드 (수정)** | `backend/app/services/llm_refine_svc.py` | 이미지 리사이즈/base64, `_post_vision_chat`, `describe_image_chunk`, `build_rag_context` 보강 |
 | **백엔드 (수정)** | `backend/app/routers/llm.py` | VLM 단건/배치/상태/취소 및 기본 이미지 프롬프트 API 추가 |
@@ -330,9 +333,9 @@
 | **프론트 (수정)** | `frontend/src/utils/tableChunkUtils.ts` | `mergeChunkAssets` / 분할 시 `images[]` 결합·보존 처리 |
 | **프론트 (수정)** | `frontend/src/hooks/useHierarchyMutations.ts` | 편집/병합/분할/삭제 시 `ParentChunk.text` 및 `ParentChunk.images` 동기화 |
 | **프론트 (수정)** | `frontend/src/api/client.ts` | VLM 단건/일괄 API 클라이언트 함수 추가 |
-| **프론트 (수정)** | `frontend/src/components/chunk-studio/ChunkEditorPane.tsx` | 이미지 프리뷰/편집 패널, VLM 초안 버튼, PDF 페이지 열기 버튼 |
-| **프론트 (수정)** | `frontend/src/components/chunk-studio/ChunkListPane.tsx` | `image` 필터 및 빈 이미지 일괄 설명 생성 컨트롤 |
-| **프론트 (수정)** | `frontend/src/components/ChunkStudio.tsx` | 이미지 업데이트·VLM 단건/배치 상태 핸들링 연동 |
+| **프론트 (수정)** | `frontend/src/components/chunk-studio/ChunkEditorPane.tsx` | 이미지 프리뷰/편집 패널, VLM 초안 버튼, `openPdfAtPage()` 내장 뷰어 이동 버튼(좁은 분할 폭 반응형 대응) |
+| **프론트 (수정)** | `frontend/src/components/chunk-studio/ChunkListPane.tsx` | `image` 필터 및 빈 이미지 일괄 설명 생성 컨트롤(`isOverlayMode` 좁은 드로어 대응) |
+| **프론트 (수정)** | `frontend/src/components/ChunkStudio.tsx` | 이미지 업데이트·VLM 단건/배치 상태 핸들링 연동, `PdfViewerPane` `highlightBboxes` (`page_number === pdfCurrentPage` 필터) 전달 |
 | **프론트 (수정)** | `frontend/src/components/ChunkCard.tsx` | 이미지 청크 뱃지 및 썸네일 미리보기 |
 | **프론트 (수정)** | `frontend/src/components/ChunkMergeModal.tsx` | 병합 대상 이미지 개수 보존 안내 |
 | **프론트 (수정)** | `frontend/src/components/ChunkSplitModal.tsx` | 분할 시 이미지 보존/배치 안내 |
@@ -358,7 +361,7 @@
      * Ollama 네이티브 `/api/chat` (`images: [...]`) 및 OpenAI 호환 폴백 payload 검증
      * `OUTPUT_DIR` 외부 경로 차단(Path Traversal 방지) 및 빈 요청 `400` 검증
      * 배치 생성 작업 진행 상태·취소 흐름 검증
-   * 기존 백엔드 테스트 18개 파일 전수 실행하여 회귀 없음 확인.
+   * 기존 백엔드 테스트 19개 파일(`test_pdf_viewer_api.py` 포함) 전수 실행하여 회귀 없음 확인.
 
 2. **프론트엔드 타입 검사 및 프로덕션 빌드**
    * `cd frontend && npx tsc --noEmit && npm run build`

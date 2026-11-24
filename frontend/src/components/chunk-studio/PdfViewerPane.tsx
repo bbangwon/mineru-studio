@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ExternalLink,
   FileText,
+  Hand,
   Link2,
   Loader2,
   RotateCcw,
@@ -63,8 +64,21 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
   const [isLoadingImage, setIsLoadingImage] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState<number>(0);
+  const [isHandMode, setIsHandMode] = useState<boolean>(true);
+  const [isSpacePressed, setIsSpacePressed] = useState<boolean>(false);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+
+  const isHandActive = isHandMode || isSpacePressed;
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const isPointerOverViewportRef = useRef<boolean>(false);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startScrollLeft: number;
+    startScrollTop: number;
+  } | null>(null);
   const prevPageRef = useRef<number>(currentPage);
   const prevFilenameRef = useRef<string | undefined>(filename);
 
@@ -165,6 +179,126 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
       });
     }
   }, [filename, safePage, maxPage, targetDpi, isLoadingImage, loadError]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.code !== 'Space' && e.key !== ' ') || e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
+
+      if (!viewportRef.current || viewportRef.current.offsetParent === null) {
+        return;
+      }
+
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (target?.closest('button, a, [role="button"]') && !isPointerOverViewportRef.current) {
+        return;
+      }
+
+      e.preventDefault();
+      if (!e.repeat) {
+        setIsSpacePressed(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space' || e.key === ' ') {
+        setIsSpacePressed(false);
+      }
+    };
+
+    const handleBlur = () => {
+      setIsSpacePressed(false);
+      dragStateRef.current = null;
+      setIsDragging(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
+
+  const endPanDrag = (pointerId?: number) => {
+    const currentDrag = dragStateRef.current;
+    if (!currentDrag) return;
+    if (pointerId !== undefined && currentDrag.pointerId !== pointerId) return;
+
+    try {
+      if (viewportRef.current?.hasPointerCapture(currentDrag.pointerId)) {
+        viewportRef.current.releasePointerCapture(currentDrag.pointerId);
+      }
+    } catch {
+      // Ignore if pointer capture was already released
+    }
+
+    dragStateRef.current = null;
+    setIsDragging(false);
+  };
+
+  const handleViewportPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!displayedUrl || e.pointerType === 'touch') return;
+
+    const isAllowedButton =
+      (e.button === 0 && isHandActive) || e.button === 1;
+    if (!isAllowedButton) return;
+
+    if ((e.target as HTMLElement | null)?.closest('button, a, input, select')) {
+      return;
+    }
+
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const rect = viewport.getBoundingClientRect();
+    const onVerticalScrollbar =
+      e.clientX >= rect.left + viewport.clientLeft + viewport.clientWidth;
+    const onHorizontalScrollbar =
+      e.clientY >= rect.top + viewport.clientTop + viewport.clientHeight;
+    if (onVerticalScrollbar || onHorizontalScrollbar) return;
+
+    e.preventDefault();
+    viewport.focus({ preventScroll: true });
+
+    dragStateRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startScrollLeft: viewport.scrollLeft,
+      startScrollTop: viewport.scrollTop,
+    };
+
+    try {
+      viewport.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore if pointer capture is unsupported
+    }
+    setIsDragging(true);
+  };
+
+  const handleViewportPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const currentDrag = dragStateRef.current;
+    const viewport = viewportRef.current;
+    if (!currentDrag || currentDrag.pointerId !== e.pointerId || !viewport) return;
+
+    viewport.scrollLeft = currentDrag.startScrollLeft - (e.clientX - currentDrag.startX);
+    viewport.scrollTop = currentDrag.startScrollTop - (e.clientY - currentDrag.startY);
+  };
 
   const commitPageInput = () => {
     const raw = draftPageInput ?? String(safePage);
@@ -340,6 +474,27 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
             </span>
           )}
 
+          {/* 손 도구(화면 드래그 이동) 토글 */}
+          <button
+            type="button"
+            disabled={!filename}
+            onClick={() => setIsHandMode((v) => !v)}
+            aria-pressed={isHandActive}
+            className={`px-2 py-1 rounded-lg border text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+              isHandActive
+                ? 'bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+            }`}
+            title={
+              isHandActive
+                ? '손 도구 활성: PDF 화면을 클릭해 드래그 이동 (Space 누른 상태 또는 휠 클릭 드래그로도 사용 가능)'
+                : '손 도구 꺼짐 (클릭하여 켜기, 또는 Space를 누른 채 드래그 / 휠 클릭 드래그)'
+            }
+          >
+            <Hand className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">손 도구</span>
+          </button>
+
           {/* 청크 자동 연동 토글 */}
           <button
             type="button"
@@ -451,7 +606,32 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
       {/* 뷰포트: 스크롤 가능한 페이지 캔버스 */}
       <div
         ref={viewportRef}
-        className="flex-1 overflow-auto bg-slate-200/70 dark:bg-slate-950 p-3 sm:p-4 relative"
+        tabIndex={-1}
+        onPointerEnter={() => {
+          isPointerOverViewportRef.current = true;
+        }}
+        onPointerLeave={() => {
+          isPointerOverViewportRef.current = false;
+        }}
+        onPointerDown={handleViewportPointerDown}
+        onPointerMove={handleViewportPointerMove}
+        onPointerUp={(e) => endPanDrag(e.pointerId)}
+        onPointerCancel={(e) => endPanDrag(e.pointerId)}
+        onLostPointerCapture={(e) => endPanDrag(e.pointerId)}
+        onMouseDown={(e) => {
+          if (e.button === 1 && displayedUrl) {
+            e.preventDefault();
+          }
+        }}
+        className={`flex-1 overflow-auto bg-slate-200/70 dark:bg-slate-950 p-3 sm:p-4 relative outline-none ${
+          displayedUrl
+            ? isDragging
+              ? 'cursor-grabbing select-none'
+              : isHandActive
+                ? 'cursor-grab'
+                : ''
+            : ''
+        }`}
       >
         {!filename ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500 dark:text-slate-400">

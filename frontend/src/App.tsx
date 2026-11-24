@@ -113,6 +113,33 @@ export function App() {
   // Responsive Sidebar States
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const isSidebarCollapsedRef = useRef(isSidebarCollapsed);
+  const sidebarCollapsedBeforePdfRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    isSidebarCollapsedRef.current = isSidebarCollapsed;
+  }, [isSidebarCollapsed]);
+
+  const handlePdfModeChange = useCallback((isOpen: boolean) => {
+    if (isOpen) {
+      if (sidebarCollapsedBeforePdfRef.current === null) {
+        sidebarCollapsedBeforePdfRef.current = isSidebarCollapsedRef.current;
+      }
+      if (!isSidebarCollapsedRef.current) {
+        setIsSidebarCollapsed(true);
+      }
+    } else if (sidebarCollapsedBeforePdfRef.current !== null) {
+      setIsSidebarCollapsed(sidebarCollapsedBeforePdfRef.current);
+      sidebarCollapsedBeforePdfRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'studio' && sidebarCollapsedBeforePdfRef.current !== null) {
+      setIsSidebarCollapsed(sidebarCollapsedBeforePdfRef.current);
+      sidebarCollapsedBeforePdfRef.current = null;
+    }
+  }, [activeTab]);
 
   const showToast = (message: string, isError = false) => {
     setToast({ message, isError });
@@ -799,6 +826,14 @@ export function App() {
   const editedChunksCount = etlData?.child_chunks.filter((c) => c.is_edited).length || 0;
   const ignoredChunksCount = etlData?.child_chunks.filter((c) => c.is_ignored).length || 0;
 
+  const selectedPdfItem = pdfList.find((p) => p.filename === selectedPdf);
+  const activePdfForViewer = selectedPdfItem?.relative_path || selectedPdf || etlData?.active_pdf;
+  const activePdfTotalPages =
+    (etlData?.active_pdf === selectedPdf ? etlData?.total_pages : undefined) ||
+    selectedPdfItem?.total_pages ||
+    etlData?.total_pages ||
+    undefined;
+
   return (
     <div className="bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 h-screen flex font-sans overflow-hidden transition-colors">
       {/* Toast Notification */}
@@ -949,6 +984,9 @@ export function App() {
             ) : (
               <ChunkStudio
                 docTitle={etlData?.doc_title || selectedPdf}
+                activePdf={activePdfForViewer}
+                totalPages={activePdfTotalPages}
+                onPdfModeChange={handlePdfModeChange}
                 parentSections={etlData?.sections || etlData?.parent_sections || []}
                 childChunks={etlData?.child_chunks || []}
                 parentChunks={etlData?.parent_chunks || []}

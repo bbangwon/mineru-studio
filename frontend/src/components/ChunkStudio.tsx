@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Network,
   Layers,
@@ -7,6 +7,8 @@ import {
   Scale,
   Edit2,
   GripVertical,
+  Columns3,
+  FileText,
 } from 'lucide-react';
 import type {
   ChildChunk,
@@ -23,6 +25,7 @@ import type {
 import { ChunkEditorPane } from './chunk-studio/ChunkEditorPane';
 import { HierarchyPane } from './chunk-studio/HierarchyPane';
 import { ChunkListPane } from './chunk-studio/ChunkListPane';
+import { PdfViewerPane } from './chunk-studio/PdfViewerPane';
 import { ChunkStudioProvider } from './chunk-studio/ChunkStudioContext';
 import { ChunkStudioModals } from './chunk-studio/ChunkStudioModals';
 import {
@@ -123,6 +126,9 @@ interface ChunkStudioProps {
   onReorderChildren?: (sourceChildId: string, targetChildId: string, position: 'before' | 'after') => void;
   onMoveChildToParent?: (sourceChildId: string, targetParentId: string, targetChildId?: string, position?: 'before' | 'after') => void;
   docTitle?: string;
+  activePdf?: string;
+  totalPages?: number;
+  onPdfModeChange?: (isOpen: boolean) => void;
   isLoading: boolean;
 }
 
@@ -132,6 +138,9 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   parentChunks,
   selectedSectionId,
   docTitle: docTitleProp,
+  activePdf,
+  totalPages,
+  onPdfModeChange,
   onSelectSection,
   onUpdateChunk,
   onUpdateSectionTitle,
@@ -376,8 +385,32 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   const [editingMetaType, setEditingMetaType] = useState<'text' | 'array'>('text');
 
   // Responsive Layout States for Mobile / Small Screens & Desktop Collapse
-  const [mobileTab, setMobileTab] = useState<'tree' | 'list' | 'editor'>('list');
+  const [mobileTab, setMobileTab] = useState<'tree' | 'list' | 'editor' | 'pdf'>('list');
   const [isTreeCollapsed, setIsTreeCollapsed] = useState(false);
+
+  // PDF Viewer (원본 대조 모드) States
+  const [isPdfViewerOpen, setIsPdfViewerOpen] = useState(false);
+  const [pdfOverlayPane, setPdfOverlayPane] = useState<'tree' | 'list' | null>(null);
+  const [pdfSplitRatio, setPdfSplitRatio] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('mineru_pdf_split_ratio');
+      if (saved) {
+        const parsed = parseFloat(saved);
+        if (!isNaN(parsed)) {
+          return Math.min(70, Math.max(30, parsed));
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return 50;
+  });
+  const [isResizingPdfSplit, setIsResizingPdfSplit] = useState(false);
+  const [pdfCurrentPage, setPdfCurrentPage] = useState<number>(1);
+  const [isPdfPageSynced, setIsPdfPageSynced] = useState<boolean>(true);
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
+  const prevActivePdfRef = useRef<string | undefined>(activePdf);
+  const activePointerCleanupRef = useRef<(() => void) | null>(null);
 
   // Parent Section Quick Lookup Map
   const parentMap = useMemo(() => {
@@ -579,7 +612,9 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     if (children.length > 0) {
       setSelectedChunkId(children[0].chunk_id);
     }
-    setMobileTab('list');
+    if (!pdfOverlayPane) {
+      setMobileTab('list');
+    }
   };
 
   const handleSelectChildChunkFromTree = (sectionId: string, chunkId: string) => {
@@ -587,7 +622,11 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       onSelectSection(sectionId);
     }
     setSelectedChunkId(chunkId);
-    setMobileTab('editor');
+    if (pdfOverlayPane) {
+      setPdfOverlayPane(null);
+    } else {
+      setMobileTab('editor');
+    }
 
     // Smooth scroll into view in Column 2
     setTimeout(() => {
@@ -895,6 +934,170 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
       setPageEndInput(activeChunk.page_end ? String(activeChunk.page_end) : '');
     }
   }, [activeChunk?.chunk_id, activeChunk?.page_number, activeChunk?.page_end]);
+
+  // Sequential chunk navigation & PDF viewer controls
+  const filteredChunksCount = filteredChunks.length;
+  const activeChunkIndex = useMemo(() => {
+    if (!activeChunkId) return -1;
+    return filteredChunks.findIndex((c) => c.chunk_id === activeChunkId);
+  }, [filteredChunks, activeChunkId]);
+
+  const goToPrevChunk = useCallback(() => {
+    if (activeChunkIndex > 0) {
+      setSelectedChunkId(filteredChunks[activeChunkIndex - 1].chunk_id);
+    }
+  }, [activeChunkIndex, filteredChunks]);
+
+  const goToNextChunk = useCallback(() => {
+    if (activeChunkIndex >= 0 && activeChunkIndex < filteredChunks.length - 1) {
+      setSelectedChunkId(filteredChunks[activeChunkIndex + 1].chunk_id);
+    }
+  }, [activeChunkIndex, filteredChunks]);
+
+  const clampPdfPage = useCallback(
+    (page: number) => {
+      const safe = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
+      if (totalPages && totalPages >= 1) {
+        return Math.min(safe, totalPages);
+      }
+      return safe;
+    },
+    [totalPages]
+  );
+
+  const handlePdfPageChange = useCallback(
+    (page: number) => {
+      setPdfCurrentPage(clampPdfPage(page));
+    },
+    [clampPdfPage]
+  );
+
+  const togglePdfViewer = useCallback(() => {
+    setIsPdfViewerOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setPdfCurrentPage(clampPdfPage(activeChunk?.page_number || 1));
+      }
+      setPdfOverlayPane(null);
+      return next;
+    });
+  }, [activeChunk?.page_number, clampPdfPage]);
+
+  const openPdfAtPage = useCallback(
+    (page: number) => {
+      setPdfCurrentPage(clampPdfPage(page));
+      setIsPdfViewerOpen(true);
+      setPdfOverlayPane(null);
+      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+        setMobileTab('pdf');
+      }
+    },
+    [clampPdfPage]
+  );
+
+  const closePdfOverlay = useCallback(() => {
+    setPdfOverlayPane(null);
+  }, []);
+
+  useEffect(() => {
+    onPdfModeChange?.(isPdfViewerOpen);
+  }, [isPdfViewerOpen, onPdfModeChange]);
+
+  useEffect(() => {
+    return () => {
+      onPdfModeChange?.(false);
+    };
+  }, [onPdfModeChange]);
+
+  const activeChunkPageNumber = activeChunk?.page_number;
+
+  useEffect(() => {
+    if (isPdfPageSynced && activeChunkId) {
+      setPdfCurrentPage(clampPdfPage(activeChunkPageNumber || 1));
+    }
+  }, [isPdfPageSynced, activeChunkId, activeChunkPageNumber, clampPdfPage]);
+
+  useEffect(() => {
+    if (prevActivePdfRef.current !== activePdf) {
+      prevActivePdfRef.current = activePdf;
+      setPdfOverlayPane(null);
+      setPdfCurrentPage(clampPdfPage(activeChunkPageNumber || 1));
+    }
+  }, [activePdf, activeChunkPageNumber, clampPdfPage]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mineru_pdf_split_ratio', String(pdfSplitRatio));
+    } catch {
+      // ignore storage errors
+    }
+  }, [pdfSplitRatio]);
+
+  const handlePdfSplitPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const container = splitContainerRef.current;
+    if (!container) return;
+
+    activePointerCleanupRef.current?.();
+    setIsResizingPdfSplit(true);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const rawPct = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.min(70, Math.max(30, Math.round(rawPct * 10) / 10));
+      setPdfSplitRatio(clamped);
+    };
+
+    const cleanup = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', cleanup);
+      window.removeEventListener('pointercancel', cleanup);
+      setIsResizingPdfSplit(false);
+      activePointerCleanupRef.current = null;
+    };
+
+    activePointerCleanupRef.current = cleanup;
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', cleanup);
+    window.addEventListener('pointercancel', cleanup);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      activePointerCleanupRef.current?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && pdfOverlayPane !== null && !editingSectionId) {
+        e.preventDefault();
+        setPdfOverlayPane(null);
+        return;
+      }
+
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyP' || e.key.toLowerCase() === 'p')) {
+        e.preventDefault();
+        togglePdfViewer();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pdfOverlayPane, editingSectionId, togglePdfViewer]);
 
   // 복합(composite) 청크의 raw_html에 문단 태그가 누락된 구버전 데이터 자동 복원
   // 단독 표(table) 청크가 <p> 태그로 오염된 경우 순수 tables[0].raw_html로 자가 복구
@@ -1713,6 +1916,20 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     displayLimit,
     setDisplayLimit,
     displayedChildCount,
+    activePdf,
+    pdfTotalPages: totalPages,
+    isPdfViewerOpen,
+    setIsPdfViewerOpen,
+    togglePdfViewer,
+    openPdfAtPage,
+    pdfOverlayPane,
+    setPdfOverlayPane,
+    closePdfOverlay,
+    isResizingPdfSplit,
+    activeChunkIndex,
+    filteredChunksCount,
+    goToPrevChunk,
+    goToNextChunk,
   };
 
   return (
@@ -1756,26 +1973,198 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
           <Edit2 className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">3. 에디터 {activeChunk ? `(${formatDisplayChunkId(activeChunk.chunk_id)})` : ''}</span>
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (activeChunk) {
+              setPdfCurrentPage(clampPdfPage(activeChunk.page_number || 1));
+            }
+            setMobileTab('pdf');
+          }}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            mobileTab === 'pdf'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <FileText className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">4. PDF</span>
+        </button>
       </div>
 
-      {/* Studio Workspace 3-Column Layout */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-slate-800 min-h-0 overflow-hidden">
-        
-        {/* ======================================================== */}
-        {/* COLUMN 1: 문서 위계 구조 (Hierarchy Tree Panel)         */}
-        {/* ======================================================== */}
-        <HierarchyPane />
+      {/* Studio Workspace Layout */}
+      {!isPdfViewerOpen ? (
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-slate-800 min-h-0 overflow-hidden">
+          {/* ======================================================== */}
+          {/* COLUMN 1: 문서 위계 구조 (Hierarchy Tree Panel)         */}
+          {/* ======================================================== */}
+          <HierarchyPane />
 
-        {/* ======================================================== */}
-        {/* COLUMN 2: 청크 타임라인 목록 (ChunkListPane)            */}
-        {/* ======================================================== */}
-        <ChunkListPane />
+          {/* ======================================================== */}
+          {/* COLUMN 2: 청크 타임라인 목록 (ChunkListPane)            */}
+          {/* ======================================================== */}
+          <ChunkListPane />
 
-        {/* ======================================================== */}
-        {/* COLUMN 3: 포커스 에디터 패널 (ChunkEditorPane)          */}
-        {/* ======================================================== */}
-        <ChunkEditorPane />
-      </div>
+          {/* ======================================================== */}
+          {/* COLUMN 3: 포커스 에디터 패널 (ChunkEditorPane)          */}
+          {/* ======================================================== */}
+          <ChunkEditorPane />
+
+          {/* Mobile PDF Viewer Tab (< lg) */}
+          <div className={`${mobileTab === 'pdf' ? 'flex' : 'hidden'} lg:hidden flex-col h-full min-h-0 overflow-hidden`}>
+            <PdfViewerPane
+              filename={activePdf}
+              currentPage={pdfCurrentPage}
+              totalPages={totalPages}
+              onPageChange={handlePdfPageChange}
+              isPageSynced={isPdfPageSynced}
+              onTogglePageSync={() => setIsPdfPageSynced((v) => !v)}
+              activeChunkPageStart={activeChunk?.page_number}
+              activeChunkPageEnd={activeChunk?.page_end}
+              onClose={() => setMobileTab('editor')}
+              className="flex-1"
+            />
+          </div>
+        </div>
+      ) : (
+        <div
+          className={`relative flex-1 flex min-h-0 overflow-hidden ${
+            isResizingPdfSplit ? 'select-none cursor-col-resize' : ''
+          }`}
+        >
+          {/* Left Slim Navigation Rail (Desktop lg+) */}
+          <aside className="hidden lg:flex w-10 shrink-0 flex-col items-center py-2.5 gap-2 bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-10 select-none">
+            <button
+              type="button"
+              onClick={() => setPdfOverlayPane((prev) => (prev === 'tree' ? null : 'tree'))}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center transition cursor-pointer ${
+                pdfOverlayPane === 'tree'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 hover:text-indigo-600 dark:hover:text-indigo-300'
+              }`}
+              title="1열 계층 구조 오버레이 열기/닫기"
+            >
+              <Network className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPdfOverlayPane((prev) => (prev === 'list' ? null : 'list'))}
+              className={`relative w-7 h-7 rounded-lg flex items-center justify-center transition cursor-pointer ${
+                pdfOverlayPane === 'list'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 hover:text-indigo-600 dark:hover:text-indigo-300'
+              }`}
+              title="2열 청크 목록 오버레이 열기/닫기"
+            >
+              <Layers className="w-4 h-4" />
+              {filteredChunks.length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-mono font-bold flex items-center justify-center leading-none border border-white dark:border-slate-900">
+                  {filteredChunks.length > 99 ? '99+' : filteredChunks.length}
+                </span>
+              )}
+            </button>
+
+            <div className="w-5 border-t border-slate-200 dark:border-slate-700 my-0.5" />
+
+            <button
+              type="button"
+              onClick={togglePdfViewer}
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 hover:text-indigo-600 dark:hover:text-indigo-300 transition cursor-pointer"
+              title="기본 3열 에디터로 복귀 (Alt+P)"
+            >
+              <Columns3 className="w-4 h-4" />
+            </button>
+          </aside>
+
+          {/* Split Container: PDF Viewer + Resize Handle + Chunk Editor */}
+          <div
+            ref={splitContainerRef}
+            className="flex-1 flex min-w-0 min-h-0 overflow-hidden"
+          >
+            {/* Mobile < lg Tree/List Views when isPdfViewerOpen is active */}
+            {mobileTab === 'tree' && (
+              <div className="flex flex-1 lg:hidden min-w-0 min-h-0 overflow-hidden">
+                <HierarchyPane isOverlayMode />
+              </div>
+            )}
+            {mobileTab === 'list' && (
+              <div className="flex flex-1 lg:hidden min-w-0 min-h-0 overflow-hidden">
+                <ChunkListPane isOverlayMode />
+              </div>
+            )}
+
+            {/* Left PDF Viewer Pane */}
+            <div
+              style={{ '--pdf-split': `${pdfSplitRatio}%` } as React.CSSProperties}
+              className={`${
+                mobileTab === 'pdf' ? 'flex flex-1' : 'hidden'
+              } lg:flex lg:flex-none lg:w-[var(--pdf-split)] flex-col min-w-0 min-h-0 overflow-hidden`}
+            >
+              <PdfViewerPane
+                filename={activePdf}
+                currentPage={pdfCurrentPage}
+                totalPages={totalPages}
+                onPageChange={handlePdfPageChange}
+                isPageSynced={isPdfPageSynced}
+                onTogglePageSync={() => setIsPdfPageSynced((v) => !v)}
+                activeChunkPageStart={activeChunk?.page_number}
+                activeChunkPageEnd={activeChunk?.page_end}
+                onClose={() => {
+                  if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                    setMobileTab('editor');
+                    setIsPdfViewerOpen(false);
+                  } else {
+                    togglePdfViewer();
+                  }
+                }}
+                className="flex-1"
+              />
+            </div>
+
+            {/* Drag Resize Handle (Desktop lg+) */}
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="PDF 뷰어와 에디터 폭 조절"
+              onPointerDown={handlePdfSplitPointerDown}
+              onDoubleClick={() => setPdfSplitRatio(50)}
+              className="hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-slate-200/80 dark:bg-slate-800 hover:bg-indigo-400/70 dark:hover:bg-indigo-600/70 transition-colors group"
+              title="드래그하여 좌우 폭 조절 (더블클릭 시 50:50 초기화)"
+            >
+              <div className="w-0.5 h-8 rounded-full bg-slate-400/70 dark:bg-slate-600 group-hover:bg-white transition-colors" />
+            </div>
+
+            {/* Right Editor Pane */}
+            <ChunkEditorPane />
+          </div>
+
+          {/* Desktop Temporary Overlay Drawer (1열 트리 / 2열 목록) */}
+          {pdfOverlayPane && (
+            <div className="hidden lg:block absolute inset-y-0 left-10 right-0 z-30">
+              {/* Backdrop */}
+              <div
+                onClick={closePdfOverlay}
+                className="absolute inset-0 bg-slate-900/35 backdrop-blur-[1px]"
+              />
+              {/* Drawer Panel */}
+              <div
+                className={`relative z-10 h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden ${
+                  pdfOverlayPane === 'tree'
+                    ? 'w-[340px] sm:w-[400px] max-w-[85%]'
+                    : 'w-[380px] sm:w-[440px] max-w-[85%]'
+                }`}
+              >
+                {pdfOverlayPane === 'tree' ? (
+                  <HierarchyPane isOverlayMode onCloseOverlay={closePdfOverlay} />
+                ) : (
+                  <ChunkListPane isOverlayMode onCloseOverlay={closePdfOverlay} />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <ChunkStudioModals
         isSplitModalOpen={isSplitModalOpen}

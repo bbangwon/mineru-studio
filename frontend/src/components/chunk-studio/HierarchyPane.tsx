@@ -32,7 +32,15 @@ import type {
 } from '../../types';
 import { useChunkStudio } from './ChunkStudioContext';
 
-export function HierarchyPane() {
+export interface HierarchyPaneProps {
+  isOverlayMode?: boolean;
+  onCloseOverlay?: () => void;
+}
+
+export function HierarchyPane({
+  isOverlayMode = false,
+  onCloseOverlay,
+}: HierarchyPaneProps = {}) {
   const {
     mobileTab,
     setMobileTab,
@@ -101,11 +109,15 @@ export function HierarchyPane() {
 
   return (
     <section
-          className={`${
-            mobileTab === 'tree' ? 'flex' : 'hidden'
-          } lg:flex ${
-            isTreeCollapsed ? 'lg:hidden' : 'lg:col-span-3'
-          } flex-col bg-white dark:bg-slate-900 min-h-0 overflow-hidden transition-all duration-200`}
+          className={
+            isOverlayMode
+              ? 'flex w-full h-full flex-col bg-white dark:bg-slate-900 min-h-0 overflow-hidden'
+              : `${
+                  mobileTab === 'tree' ? 'flex' : 'hidden'
+                } lg:flex ${
+                  isTreeCollapsed ? 'lg:hidden' : 'lg:col-span-3'
+                } flex-col bg-white dark:bg-slate-900 min-h-0 overflow-hidden transition-all duration-200`
+          }
         >
           {/* Header */}
           <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900 shrink-0">
@@ -146,15 +158,26 @@ export function HierarchyPane() {
                 </button>
               )}
 
-              {/* Desktop Collapse Button */}
-              <button
-                type="button"
-                onClick={() => setIsTreeCollapsed(true)}
-                className="hidden lg:inline-flex p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition cursor-pointer"
-                title="계층 패널 접기 (에디터 공간 넓히기)"
-              >
-                <PanelLeftClose className="w-3.5 h-3.5" />
-              </button>
+              {onCloseOverlay ? (
+                <button
+                  type="button"
+                  onClick={onCloseOverlay}
+                  className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition cursor-pointer"
+                  title="오버레이 닫기 (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              ) : (
+                /* Desktop Collapse Button */
+                <button
+                  type="button"
+                  onClick={() => setIsTreeCollapsed(true)}
+                  className="hidden lg:inline-flex p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition cursor-pointer"
+                  title="계층 패널 접기 (에디터 공간 넓히기)"
+                >
+                  <PanelLeftClose className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -544,7 +567,9 @@ export function HierarchyPane() {
                         if (!isEditingThis) {
                           onSelectSection(sec.id);
                           setManualExpandedState((prev: Record<string, boolean>) => ({ ...prev, [sec.id]: true }));
-                          setMobileTab('list');
+                          if (!onCloseOverlay) {
+                            setMobileTab('list');
+                          }
                         }
                       }}
                       onDoubleClick={(e) => startEditSection(sec, e)}
@@ -589,7 +614,10 @@ export function HierarchyPane() {
                             onChange={(e) => setEditingSectionTitle(e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') saveEditSection(sec.id);
-                              if (e.key === 'Escape') cancelEditSection();
+                              if (e.key === 'Escape') {
+                                e.stopPropagation();
+                                cancelEditSection();
+                              }
                             }}
                             autoFocus
                             className="flex-1 text-xs bg-white dark:bg-slate-800 border border-indigo-500 rounded px-2 py-1 font-semibold focus:outline-hidden ring-1 ring-indigo-500 text-slate-900 dark:text-slate-100"

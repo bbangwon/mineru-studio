@@ -5,10 +5,10 @@ import shutil
 import time
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from backend.app.common import (
@@ -27,6 +27,11 @@ from backend.app.services.embedding_svc import embedding_svc
 from backend.app.services.hierarchical_chunker import HierarchicalChunker
 from backend.app.services.job_manager import job_manager
 from backend.app.services.mineru_svc import find_all_parts_statuses, normalize_mineru_tier
+from backend.app.services.pdf_render_svc import (
+    PdfPageOutOfRangeError,
+    PdfRenderError,
+    render_pdf_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +449,67 @@ async def upload_pdf(file: UploadFile = File(...), folder: Optional[str] = None)
     }
 
 
+def _is_within_allowed_pdf_dirs(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    if resolved.suffix.lower() != ".pdf":
+        return False
+    allowed_roots = [DOCS_DIR.resolve(), (BASE_DIR / "pdfs").resolve()]
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _resolve_target_pdf_path(filename: Optional[str]) -> Optional[Path]:
+    clean_name = filename.strip() if filename else ""
+    if clean_name:
+        candidate = find_pdf_path(clean_name)
+    else:
+        candidate = job_manager.get_active_pdf_path()
+    if not candidate or not candidate.exists() or not candidate.is_file():
+        return None
+    if not _is_within_allowed_pdf_dirs(candidate):
+        return None
+    return candidate
+
+
+@router.get("/page-image")
+def get_pdf_page_image(
+    page: int = Query(1, ge=1),
+    filename: Optional[str] = Query(None),
+    dpi: int = Query(150, ge=72, le=300),
+    fmt: Literal["webp", "png"] = Query("webp"),
+):
+    """원본 PDF의 특정 1페이지를 이미지(WebP/PNG)로 렌더링하여 반환"""
+    pdf_path = _resolve_target_pdf_path(filename)
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    try:
+        result = render_pdf_page(pdf_path=pdf_path, page=page, dpi=dpi, fmt=fmt)
+    except PdfPageOutOfRangeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    except PdfRenderError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return Response(
+        content=result.image_bytes,
+        media_type=result.media_type,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-PDF-Total-Pages": str(result.total_pages),
+            "X-PDF-Page": str(result.page),
+        },
+    )
+
+
 @router.delete("/{filename}")
 async def delete_pdf_document(filename: str, delete_vectors: bool = True):
     """PDF 파일 및 모든 파싱 산출물, Qdrant 벡터 색인을 완전히 삭제 (서브폴더 지원)"""
@@ -460,9 +526,13 @@ async def delete_pdf_document(filename: str, delete_vectors: bool = True):
 
 
 @router.get("")
-async def get_pdf():
-    """현재 활성화된 원본 PDF 파일 스트리밍 서빙"""
-    pdf_path = job_manager.get_active_pdf_path()
-    if not pdf_path or not pdf_path.exists():
+async def get_pdf(filename: Optional[str] = Query(None)):
+    """지정된(또는 현재 활성화된) 원본 PDF 파일 스트리밍 서빙"""
+    pdf_path = _resolve_target_pdf_path(filename)
+    if not pdf_path:
         raise HTTPException(status_code=404, detail="PDF not found")
-    return FileResponse(pdf_path, media_type="application/pdf")
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline"},
+    )

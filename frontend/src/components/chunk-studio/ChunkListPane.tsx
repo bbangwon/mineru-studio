@@ -33,7 +33,15 @@ import { getChunkKind } from '../../utils/chunkKindUtils';
 import type { ChildChunk } from '../../types';
 import { useChunkStudio } from './ChunkStudioContext';
 
-export function ChunkListPane() {
+export interface ChunkListPaneProps {
+  isOverlayMode?: boolean;
+  onCloseOverlay?: () => void;
+}
+
+export function ChunkListPane({
+  isOverlayMode = false,
+  onCloseOverlay,
+}: ChunkListPaneProps = {}) {
   const {
     mobileTab,
     setMobileTab,
@@ -94,11 +102,15 @@ export function ChunkListPane() {
 
   return (
     <section
-      className={`${
-        mobileTab === 'list' ? 'flex' : 'hidden'
-      } lg:flex ${
-        isTreeCollapsed ? 'lg:col-span-5' : 'lg:col-span-4'
-      } flex-col bg-slate-50/50 dark:bg-slate-950/60 min-h-0 overflow-hidden transition-all duration-200`}
+      className={
+        isOverlayMode
+          ? 'flex w-full h-full flex-col bg-slate-50/50 dark:bg-slate-950/60 min-h-0 overflow-hidden'
+          : `${
+              mobileTab === 'list' ? 'flex' : 'hidden'
+            } lg:flex ${
+              isTreeCollapsed ? 'lg:col-span-5' : 'lg:col-span-4'
+            } flex-col bg-slate-50/50 dark:bg-slate-950/60 min-h-0 overflow-hidden transition-all duration-200`
+      }
     >
       {/* Header */}
       <div className="p-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between shrink-0">
@@ -114,7 +126,7 @@ export function ChunkListPane() {
           </button>
 
           {/* Desktop Expand Tree Button */}
-          {isTreeCollapsed && (
+          {isTreeCollapsed && !onCloseOverlay && (
             <button
               type="button"
               onClick={() => setIsTreeCollapsed(false)}
@@ -135,15 +147,26 @@ export function ChunkListPane() {
           <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
             총 <strong className="text-slate-900 dark:text-slate-100 font-semibold">{filteredChunks.length}</strong>개
           </span>
-          {/* Mobile Quick Switch to Editor button */}
-          {activeChunk && (
+          {onCloseOverlay ? (
             <button
               type="button"
-              onClick={() => setMobileTab('editor')}
-              className="lg:hidden px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 text-[11px] font-bold border border-indigo-200 dark:border-indigo-800"
+              onClick={onCloseOverlay}
+              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition cursor-pointer"
+              title="오버레이 닫기 (Esc)"
             >
-              에디터 →
+              <X className="w-4 h-4" />
             </button>
+          ) : (
+            /* Mobile Quick Switch to Editor button */
+            activeChunk && (
+              <button
+                type="button"
+                onClick={() => setMobileTab('editor')}
+                className="lg:hidden px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 text-[11px] font-bold border border-indigo-200 dark:border-indigo-800"
+              >
+                에디터 →
+              </button>
+            )
           )}
         </div>
       </div>
@@ -670,7 +693,11 @@ export function ChunkListPane() {
                           id={`chunk-card-${chunk.chunk_id}`}
                           onClick={() => {
                             setSelectedChunkId(chunk.chunk_id);
-                            setMobileTab('editor');
+                            if (onCloseOverlay) {
+                              onCloseOverlay();
+                            } else {
+                              setMobileTab('editor');
+                            }
                           }}
                           onDragOver={(e) => {
                             if (!draggedItem || draggedItem.type !== 'child' || draggedItem.id === chunk.chunk_id) return;

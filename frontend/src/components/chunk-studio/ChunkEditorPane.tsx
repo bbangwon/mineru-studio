@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   EyeOff,
   FolderTree,
+  ChevronLeft,
   ChevronRight,
   ChevronDown,
   ChevronUp,
@@ -130,15 +131,30 @@ export function ChunkEditorPane() {
     handleStudioRunAiSummarize,
     setSummarizeError,
     setOpenDiffChunkId,
+    activePdf,
+    isPdfViewerOpen,
+    togglePdfViewer,
+    openPdfAtPage,
+    activeChunkIndex,
+    filteredChunksCount,
+    goToPrevChunk,
+    goToNextChunk,
+    isResizingPdfSplit,
   } = useChunkStudio();
 
   return (
         <section
           className={`${
-            mobileTab === 'editor' ? 'flex' : 'hidden'
+            mobileTab === 'editor' ? 'flex flex-1' : 'hidden'
           } lg:flex ${
-            isTreeCollapsed ? 'lg:col-span-7' : 'lg:col-span-5'
-          } flex-col bg-white dark:bg-slate-900 min-h-0 overflow-hidden transition-all duration-200`}
+            isPdfViewerOpen
+              ? 'lg:flex-1 min-w-0'
+              : isTreeCollapsed
+              ? 'lg:col-span-7'
+              : 'lg:col-span-5'
+          } flex-col bg-white dark:bg-slate-900 min-h-0 overflow-hidden ${
+            isResizingPdfSplit ? '' : 'transition-all duration-200'
+          }`}
         >
           {activeChunk ? (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -195,13 +211,78 @@ export function ChunkEditorPane() {
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                      {formatChunkPageFull(activeChunk)} · 실시간 동기화
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={!activePdf}
+                        onClick={() => openPdfAtPage(activeChunk.page_number || 1)}
+                        className={`font-medium transition ${
+                          activePdf
+                            ? 'text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer'
+                            : 'text-slate-500 dark:text-slate-400 cursor-not-allowed'
+                        }`}
+                        title={activePdf ? '원본 PDF에서 해당 페이지 보기' : '선택된 PDF 문서가 없습니다'}
+                      >
+                        {formatChunkPageFull(activeChunk)}
+                      </button>
+                      <span>· 실시간 동기화</span>
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                  {isPdfViewerOpen && filteredChunksCount > 0 && (
+                    <div className="flex items-center gap-0.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 shadow-2xs">
+                      <button
+                        type="button"
+                        disabled={activeChunkIndex <= 0}
+                        onClick={goToPrevChunk}
+                        className="p-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-35 disabled:cursor-not-allowed transition cursor-pointer"
+                        title="이전 청크"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200 px-1.5 select-none">
+                        {activeChunkIndex >= 0 ? activeChunkIndex + 1 : 0} / {filteredChunksCount}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={activeChunkIndex < 0 || activeChunkIndex >= filteredChunksCount - 1}
+                        onClick={goToNextChunk}
+                        className="p-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-35 disabled:cursor-not-allowed transition cursor-pointer"
+                        title="다음 청크"
+                      >
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={!activePdf}
+                    onClick={() => {
+                      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                        openPdfAtPage(activeChunk.page_number || 1);
+                      } else {
+                        togglePdfViewer();
+                      }
+                    }}
+                    className={`text-xs px-2 sm:px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1 font-semibold shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ${
+                      isPdfViewerOpen
+                        ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600'
+                        : 'bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                    }`}
+                    title={
+                      activePdf
+                        ? isPdfViewerOpen
+                          ? '원본 PDF 대조 모드 닫기 (Alt+P)'
+                          : '원본 PDF 대조 모드 열기 (Alt+P)'
+                        : '선택된 PDF 문서가 없습니다'
+                    }
+                  >
+                    <FileText className="w-3.5 h-3.5 shrink-0" />
+                    <span className="hidden sm:inline">{isPdfViewerOpen ? 'PDF 닫기' : '원본 PDF'}</span>
+                  </button>
                   {onSplitChunk && getChunkKind(activeChunk) !== 'table' && (
                     <button
                       type="button"

@@ -55,6 +55,39 @@ export async function uploadPdf(file: File, folder?: string): Promise<{
   return res.json();
 }
 
+export interface PdfPageImageUrlParams {
+  filename?: string;
+  page: number;
+  dpi?: number;
+  fmt?: 'webp' | 'png';
+}
+
+export function getPdfPageImageUrl(params: PdfPageImageUrlParams): string {
+  const safePage = Number.isFinite(params.page) ? Math.max(1, Math.floor(params.page)) : 1;
+  const search = new URLSearchParams();
+  search.set('page', String(safePage));
+  if (params.filename) {
+    search.set('filename', params.filename);
+  }
+  if (params.dpi !== undefined) {
+    search.set('dpi', String(params.dpi));
+  }
+  if (params.fmt) {
+    search.set('fmt', params.fmt);
+  }
+  return `/api/pdf/page-image?${search.toString()}`;
+}
+
+export function getOriginalPdfUrl(filename?: string, page?: number): string {
+  const base = filename
+    ? `/api/pdf?filename=${encodeURIComponent(filename)}`
+    : '/api/pdf';
+  if (page !== undefined && Number.isFinite(page) && page >= 1) {
+    return `${base}#page=${Math.floor(page)}`;
+  }
+  return base;
+}
+
 export async function getEtlSample(strategy: string = 'general', filename?: string): Promise<EtlResult> {
   const params = new URLSearchParams({ strategy });
   if (filename) {

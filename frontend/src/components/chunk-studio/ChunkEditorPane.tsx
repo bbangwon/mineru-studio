@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Layers,
   Table2,
@@ -51,6 +51,7 @@ import {
   getChunkKindLabel,
   hasTableData,
 } from '../../utils/chunkKindUtils';
+import { copyToClipboard } from '../../utils/idUtils';
 import { useChunkStudio } from './ChunkStudioContext';
 export function ChunkEditorPane() {
   const {
@@ -141,6 +142,33 @@ export function ChunkEditorPane() {
     goToNextChunk,
     isResizingPdfSplit,
   } = useChunkStudio();
+
+  const [copiedParentTitle, setCopiedParentTitle] = useState(false);
+  const copyParentTitleTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyParentTitleTimerRef.current !== null) {
+        window.clearTimeout(copyParentTitleTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyParentTitle = async () => {
+    const title = activeParentChunk?.title;
+    if (!title) return;
+    const success = await copyToClipboard(title);
+    if (success) {
+      setCopiedParentTitle(true);
+      if (copyParentTitleTimerRef.current !== null) {
+        window.clearTimeout(copyParentTitleTimerRef.current);
+      }
+      copyParentTitleTimerRef.current = window.setTimeout(() => {
+        setCopiedParentTitle(false);
+        copyParentTitleTimerRef.current = null;
+      }, 1500);
+    }
+  };
 
   return (
         <section
@@ -430,6 +458,34 @@ export function ChunkEditorPane() {
                             <Sparkles className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400" />
                             Parent 요약 보유
                           </span>
+                        )}
+                        {activeParentChunk.title && (
+                          <button
+                            type="button"
+                            onClick={handleCopyParentTitle}
+                            className={`text-[11px] flex items-center gap-0.5 font-semibold ml-0.5 cursor-pointer transition-colors ${
+                              copiedParentTitle
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline'
+                            }`}
+                            title={
+                              copiedParentTitle
+                                ? `복사 완료: ${activeParentChunk.title}`
+                                : `Parent 제목 복사: ${activeParentChunk.title}`
+                            }
+                          >
+                            {copiedParentTitle ? (
+                              <>
+                                <Check className="w-2.5 h-2.5" />
+                                <span>복사됨</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-2.5 h-2.5" />
+                                <span>제목 복사</span>
+                              </>
+                            )}
+                          </button>
                         )}
                         {onUpdateParent && (
                           <button

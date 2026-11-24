@@ -2062,6 +2062,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
               activeChunkPageStart={activeChunk?.page_number}
               activeChunkPageEnd={activeChunk?.page_end}
               onClose={() => setMobileTab('editor')}
+              disableShortcuts={hasOpenModal}
               className="flex-1"
             />
           </div>
@@ -2158,6 +2159,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                     togglePdfViewer();
                   }
                 }}
+                disableShortcuts={hasOpenModal}
                 className="flex-1"
               />
             </div>

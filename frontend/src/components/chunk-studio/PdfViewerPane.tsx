@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ChevronLeft,
@@ -32,6 +32,7 @@ export interface PdfViewerPaneProps {
   activeChunkPageEnd?: number;
   onClose?: () => void;
   highlightBboxes?: PdfHighlightBbox[];
+  disableShortcuts?: boolean;
   className?: string;
 }
 
@@ -56,6 +57,7 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
   activeChunkPageEnd,
   onClose,
   highlightBboxes,
+  disableShortcuts = false,
   className = '',
 }) => {
   const [zoom, setZoom] = useState<ZoomOption>('fit');
@@ -180,12 +182,26 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
     }
   }, [filename, safePage, maxPage, targetDpi, isLoadingImage, loadError]);
 
+  const handleZoomOut = useCallback(() => {
+    setZoom((prev) => {
+      if (prev === 'fit') return 75;
+      const idx = NUMERIC_ZOOM_STEPS.indexOf(prev);
+      return idx > 0 ? NUMERIC_ZOOM_STEPS[idx - 1] : prev;
+    });
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((prev) => {
+      if (prev === 'fit') return 125;
+      const idx = NUMERIC_ZOOM_STEPS.indexOf(prev);
+      return idx !== -1 && idx < NUMERIC_ZOOM_STEPS.length - 1
+        ? NUMERIC_ZOOM_STEPS[idx + 1]
+        : prev;
+    });
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.code !== 'Space' && e.key !== ' ') || e.ctrlKey || e.metaKey || e.altKey) {
-        return;
-      }
-
       if (!viewportRef.current || viewportRef.current.offsetParent === null) {
         return;
       }
@@ -198,6 +214,23 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
         tag === 'SELECT' ||
         target?.isContentEditable
       ) {
+        return;
+      }
+
+      if (filename && !disableShortcuts && !e.isComposing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === '+' || e.key === '=' || e.code === 'Equal' || e.code === 'NumpadAdd') {
+          e.preventDefault();
+          handleZoomIn();
+          return;
+        }
+        if (!e.shiftKey && (e.key === '-' || e.code === 'Minus' || e.code === 'NumpadSubtract')) {
+          e.preventDefault();
+          handleZoomOut();
+          return;
+        }
+      }
+
+      if ((e.code !== 'Space' && e.key !== ' ') || e.ctrlKey || e.metaKey || e.altKey) {
         return;
       }
 
@@ -232,7 +265,7 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, []);
+  }, [filename, disableShortcuts, handleZoomIn, handleZoomOut]);
 
   const endPanDrag = (pointerId?: number) => {
     const currentDrag = dragStateRef.current;
@@ -312,28 +345,6 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
       : Math.max(1, parsed);
     if (clamped !== safePage) {
       onPageChange(clamped);
-    }
-  };
-
-  const handleZoomOut = () => {
-    if (zoom === 'fit') {
-      setZoom(75);
-      return;
-    }
-    const idx = NUMERIC_ZOOM_STEPS.indexOf(zoom);
-    if (idx > 0) {
-      setZoom(NUMERIC_ZOOM_STEPS[idx - 1]);
-    }
-  };
-
-  const handleZoomIn = () => {
-    if (zoom === 'fit') {
-      setZoom(125);
-      return;
-    }
-    const idx = NUMERIC_ZOOM_STEPS.indexOf(zoom);
-    if (idx !== -1 && idx < NUMERIC_ZOOM_STEPS.length - 1) {
-      setZoom(NUMERIC_ZOOM_STEPS[idx + 1]);
     }
   };
 
@@ -433,7 +444,7 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
               disabled={!filename || !canZoomOut}
               onClick={handleZoomOut}
               className="p-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
-              title="축소"
+              title="축소 (-)"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
@@ -459,7 +470,7 @@ export const PdfViewerPane: React.FC<PdfViewerPaneProps> = ({
               disabled={!filename || !canZoomIn}
               onClick={handleZoomIn}
               className="p-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
-              title="확대"
+              title="확대 (+)"
             >
               <ZoomIn className="w-3.5 h-3.5" />
             </button>

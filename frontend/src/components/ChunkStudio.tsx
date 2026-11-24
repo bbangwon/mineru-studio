@@ -1070,35 +1070,6 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
     };
   }, []);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && pdfOverlayPane !== null && !editingSectionId) {
-        e.preventDefault();
-        setPdfOverlayPane(null);
-        return;
-      }
-
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (
-        tag === 'INPUT' ||
-        tag === 'TEXTAREA' ||
-        tag === 'SELECT' ||
-        target?.isContentEditable
-      ) {
-        return;
-      }
-
-      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyP' || e.key.toLowerCase() === 'p')) {
-        e.preventDefault();
-        togglePdfViewer();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pdfOverlayPane, editingSectionId, togglePdfViewer]);
-
   // 복합(composite) 청크의 raw_html에 문단 태그가 누락된 구버전 데이터 자동 복원
   // 단독 표(table) 청크가 <p> 태그로 오염된 경우 순수 tables[0].raw_html로 자가 복구
   useEffect(() => {
@@ -1711,6 +1682,75 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
   const studioRefineError = activeChunk && refineError?.chunkId === activeChunk.chunk_id ? refineError.message : null;
   const studioSummarizeError = activeChunk && summarizeError?.chunkId === activeChunk.chunk_id ? summarizeError.message : null;
 
+  const hasOpenModal =
+    isSplitModalOpen ||
+    isMergeModalOpen ||
+    isAddSectionModalOpen ||
+    isAddParentModalOpen ||
+    isAddChildModalOpen ||
+    isEditParentModalOpen ||
+    isStudioDiffOpen ||
+    isBulkMetaModalOpen ||
+    isReparentModalOpen ||
+    isReparentChildModalOpen ||
+    isReassignParentSectionModalOpen ||
+    quickReparentModal.isOpen ||
+    tableEditorTarget !== null ||
+    tableDeleteConfirm !== null;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && pdfOverlayPane !== null && !editingSectionId) {
+        e.preventDefault();
+        setPdfOverlayPane(null);
+        return;
+      }
+
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyP' || e.key.toLowerCase() === 'p')) {
+        e.preventDefault();
+        togglePdfViewer();
+        return;
+      }
+
+      if (
+        isPdfViewerOpen &&
+        !hasOpenModal &&
+        !e.isComposing &&
+        !e.repeat &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        (typeof window === 'undefined' || window.innerWidth >= 1024)
+      ) {
+        if (e.code === 'Digit1' || e.key === '1') {
+          e.preventDefault();
+          setPdfOverlayPane((prev) => (prev === 'tree' ? null : 'tree'));
+          return;
+        }
+        if (e.code === 'Digit2' || e.key === '2') {
+          e.preventDefault();
+          setPdfOverlayPane((prev) => (prev === 'list' ? null : 'list'));
+          return;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pdfOverlayPane, editingSectionId, togglePdfViewer, isPdfViewerOpen, hasOpenModal]);
+
   const handleStudioRunAiRefine = async () => {
     if (!activeChunk) return;
     const currentChunkId = activeChunk.chunk_id;
@@ -2042,7 +2082,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 hover:text-indigo-600 dark:hover:text-indigo-300'
               }`}
-              title="1열 계층 구조 오버레이 열기/닫기"
+              title="1열 계층 구조 오버레이 열기/닫기 (1)"
             >
               <Network className="w-4 h-4" />
             </button>
@@ -2055,7 +2095,7 @@ export const ChunkStudio: React.FC<ChunkStudioProps> = ({
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 hover:text-indigo-600 dark:hover:text-indigo-300'
               }`}
-              title="2열 청크 목록 오버레이 열기/닫기"
+              title="2열 청크 목록 오버레이 열기/닫기 (2)"
             >
               <Layers className="w-4 h-4" />
               {filteredChunks.length > 0 && (
